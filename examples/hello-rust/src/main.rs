@@ -26,6 +26,22 @@ mod my_console {
     wasm_lite::import! { "console" { fn log(n: f64); } }
 }
 
+// JS object handles: pass/return live JS values via the value table.
+mod jsapi {
+    use wasm_lite::JsValue;
+    wasm_lite::import! {
+        "JSON" {
+            fn parse(text: &str) -> JsValue;   // returns an object handle
+        }
+        "Array" {
+            fn push(this: &JsValue, value: f64) -> f64;  // method on a handle
+        }
+        "console" {
+            fn log_value(value: &JsValue) as "log";      // handle as an argument
+        }
+    }
+}
+
 fn main() {
     wasm_lite::console::log("hello, world from rust");
     wasm_lite::console::error("this is console.error from rust");
@@ -42,4 +58,11 @@ fn main() {
 
     // A second, independent binding of console.log (number signature).
     my_console::log(42.0);
+
+    // Value-table handles: parse a JS array, call a method on it, log the object.
+    let arr = jsapi::parse("[1, 2, 3]"); // -> JsValue handle to a JS array
+    let new_len = jsapi::push(&arr, 4.0); // arr.push(4) -> new length
+    wasm_lite::console::log(&format!("after push, array length = {new_len}"));
+    jsapi::log_value(&arr); // console.log(arr) -> shows the live JS array
+    // `arr` drops here, freeing its value-table slot via __wl_drop.
 }

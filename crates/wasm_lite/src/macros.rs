@@ -54,11 +54,13 @@ macro_rules! import {
         // public wrapper fns share the module's namespace, so the only real
         // conflict left is declaring the same function name twice.)
         const _: () = {
-            // `ns|import_name|js_name|argtags|rettag\n`. import_name is the wasm
-            // import symbol — made unique per (crate, module, fn) via
-            // `module_path!()` so independent crates never collide; it must match
-            // the `#[link_name]` above exactly. js_name is what the shim calls.
+            // `kind|ns|import_name|js_name|argtags|rettag\n`. kind is `f`/`m`.
+            // import_name is the wasm import symbol — made unique per (crate,
+            // module, fn) via `module_path!()` so independent crates never
+            // collide; it must match the `#[link_name]` above exactly. js_name
+            // is what the shim calls.
             const DESCR_STR: &str = concat!( $( $(
+                $crate::__import_kind!($($args)*), "|",
                 $ns, "|", concat!(module_path!(), "::", stringify!($fname)), "|",
                 $crate::__js_name!($fname $(, $jsname)?), "|",
                 $crate::__import_descr_args!($($args)*), "|",
@@ -103,6 +105,22 @@ macro_rules! __import_fn {
         $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
             orig=($($orig)*), flat=($($flat)* _: *const u8, _: usize,),
             call=($($call)* $a.as_ptr(), $a.len(),), rest=( ));
+    };
+
+    // &JsValue -> u32 (a borrowed value-table handle)
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : & JsValue , $($rest:tt)* )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+            orig=($($orig)*), flat=($($flat)* _: u32,),
+            call=($($call)* $a.__wl_abi(),), rest=( $($rest)* ));
+    };
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : & JsValue )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+            orig=($($orig)*), flat=($($flat)* _: u32,),
+            call=($($call)* $a.__wl_abi(),), rest=( ));
     };
 
     // bool -> i32
@@ -163,6 +181,19 @@ macro_rules! __import_fn {
             unsafe { $fname($($call)*) != 0 }
         }
     };
+    // Terminal: JsValue return (a value-table handle: ABI is the u32 index).
+    (@munch ns=$ns:literal, name=$fname:ident, ret=(JsValue),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( )) => {
+        pub fn $fname($($orig)*) -> $crate::JsValue {
+            #[link(wasm_import_module = $ns)]
+            unsafe extern "C" {
+                #[link_name = concat!(module_path!(), "::", stringify!($fname))]
+                fn $fname($($flat)*) -> u32;
+            }
+            $crate::JsValue::__wl_from_abi(unsafe { $fname($($call)*) })
+        }
+    };
     // Terminal: numeric return.
     (@munch ns=$ns:literal, name=$fname:ident, ret=($ret:ident),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
@@ -187,6 +218,10 @@ macro_rules! __import_descr_args {
     ( $a:ident : & str , $($rest:tt)* ) => {
         concat!("str,", $crate::__import_descr_args!($($rest)*))
     };
+    ( $a:ident : & JsValue ) => { "handle" };
+    ( $a:ident : & JsValue , $($rest:tt)* ) => {
+        concat!("handle,", $crate::__import_descr_args!($($rest)*))
+    };
     ( $a:ident : bool ) => { "bool" };
     ( $a:ident : bool , $($rest:tt)* ) => {
         concat!("bool,", $crate::__import_descr_args!($($rest)*))
@@ -202,6 +237,7 @@ macro_rules! __import_descr_args {
 #[macro_export]
 macro_rules! __import_descr_ret {
     () => { "" };
+    ( JsValue ) => { "handle" };
     ( $r:ident ) => { stringify!($r) };
 }
 
@@ -211,4 +247,13 @@ macro_rules! __import_descr_ret {
 macro_rules! __js_name {
     ($fname:ident) => { stringify!($fname) };
     ($fname:ident, $js:literal) => { $js };
+}
+
+/// Classify an import: `m` (method) if the first param is `this: &JsValue`,
+/// otherwise `f` (a namespaced free function).
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __import_kind {
+    ( this : & JsValue $($rest:tt)* ) => { "m" };
+    ( $($other:tt)* ) => { "f" };
 }

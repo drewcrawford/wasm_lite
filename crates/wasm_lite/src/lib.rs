@@ -6,9 +6,12 @@
 //! matching JavaScript shims, so no JS is hand-written per import.
 
 mod macros;
+mod value;
 
 pub mod console;
 pub mod performance;
+
+pub use value::JsValue;
 
 /// Copy a `&str`'s bytes into a fixed-size array at compile time.
 ///
