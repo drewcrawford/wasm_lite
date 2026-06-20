@@ -1,0 +1,14 @@
+[package]
+name = "interop"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wasm_lite = { path = "../../crates/wasm_lite", features = ["wasm-bindgen"] }
+wb_widget = { path = "wb_widget" }
+# Pins the exact wasm-bindgen version to match the installed CLI.
+wasm-bindgen = "=0.2.125"
+
+# Standalone workspace: pulls in wasm-bindgen, built only for wasm32.
+[workspace]
+members = ["wb_widget"]

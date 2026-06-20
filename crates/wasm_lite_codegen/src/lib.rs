@@ -11,13 +11,24 @@
 
 mod descriptor;
 mod generate;
+mod interop;
 mod wasm;
 
 pub use descriptor::{AbiArg, Descriptor};
 pub use generate::generate_glue;
+pub use interop::{InteropBundle, build_interop, patch_wasm_bindgen_glue};
 
 /// Name of the custom section the `import!` macro writes descriptors into.
 pub const SECTION_NAME: &str = "__wasm_lite_imports";
+
+/// Returns true if the module was produced with wasm-bindgen (carries its
+/// schema section), meaning it needs the wasm-bindgen CLI before it can run.
+pub fn uses_wasm_bindgen(wasm: &[u8]) -> bool {
+    matches!(
+        wasm::custom_section(wasm, "__wasm_bindgen_unstable"),
+        Ok(Some(_))
+    )
+}
 
 /// Read import descriptors from a compiled wasm module.
 ///

@@ -11,6 +11,10 @@ mod value;
 pub mod console;
 pub mod performance;
 
+/// Bridge to `wasm_bindgen::JsValue` (enable the `wasm-bindgen` feature).
+#[cfg(feature = "wasm-bindgen")]
+pub mod interop;
+
 pub use value::JsValue;
 
 /// Copy a `&str`'s bytes into a fixed-size array at compile time.

@@ -1,5 +1,4 @@
 wasm-bindgen
-/target
+**/target
 Cargo.lock
 .idea
-examples/hello-rust/target/

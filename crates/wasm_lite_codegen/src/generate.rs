@@ -38,6 +38,12 @@ export async function instantiate(wasmUrl) {
     __wl_memory = instance.exports.memory;
     return instance;
 }
+
+// Used by the interop loader, which instantiates the merged module itself and
+// then hands us the memory.
+export function setMemory(memory) {
+    __wl_memory = memory;
+}
 ";
 
 /// Generate the JS glue module for the given imports.

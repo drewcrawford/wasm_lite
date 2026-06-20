@@ -18,6 +18,10 @@ use std::process::Command;
 const PROGRAM_JS: &str = "/program.js";
 /// Path under which a wasm module is served.
 const PROGRAM_WASM: &str = "/program.wasm";
+/// Interop only: the wasm_lite-generated glue module.
+const WL_GLUE_JS: &str = "/wl_glue.js";
+/// Interop only: the (patched) wasm-bindgen-generated glue module.
+const WB_GLUE_JS: &str = "/wb_glue.js";
 
 /// A single static resource served by the runner.
 struct Route {
@@ -92,23 +96,49 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
         }
         "wasm" => {
             let module = read(program)?;
-            let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
-            let glue = wasm_lite_codegen::generate_glue(&descriptors);
-            // The codegen glue exports `instantiate`; the runner appends a
-            // bootstrap that runs the module's `main`.
-            let program_js = format!(
-                "{glue}\nconst instance = await instantiate({PROGRAM_WASM:?});\ninstance.exports.main();\n"
-            );
-            routes.push(Route {
-                path: PROGRAM_JS,
-                content_type: "text/javascript; charset=utf-8",
-                body: program_js.into_bytes(),
-            });
-            routes.push(Route {
-                path: PROGRAM_WASM,
-                content_type: "application/wasm",
-                body: module,
-            });
+            if wasm_lite_codegen::uses_wasm_bindgen(&module) {
+                // The module also contains wasm-bindgen code: codegen finalizes
+                // it with the wasm-bindgen CLI and assembles a merged loader.
+                let bundle = wasm_lite_codegen::build_interop(program)?;
+                routes.push(Route {
+                    path: PROGRAM_JS,
+                    content_type: "text/javascript; charset=utf-8",
+                    body: bundle.loader_js.into_bytes(),
+                });
+                routes.push(Route {
+                    path: WL_GLUE_JS,
+                    content_type: "text/javascript; charset=utf-8",
+                    body: bundle.wl_glue_js.into_bytes(),
+                });
+                routes.push(Route {
+                    path: WB_GLUE_JS,
+                    content_type: "text/javascript; charset=utf-8",
+                    body: bundle.wb_glue_js.into_bytes(),
+                });
+                routes.push(Route {
+                    path: PROGRAM_WASM,
+                    content_type: "application/wasm",
+                    body: bundle.wasm,
+                });
+            } else {
+                let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
+                let glue = wasm_lite_codegen::generate_glue(&descriptors);
+                // The codegen glue exports `instantiate`; the runner appends a
+                // bootstrap that runs the module's `main`.
+                let program_js = format!(
+                    "{glue}\nconst instance = await instantiate({PROGRAM_WASM:?});\ninstance.exports.main();\n"
+                );
+                routes.push(Route {
+                    path: PROGRAM_JS,
+                    content_type: "text/javascript; charset=utf-8",
+                    body: program_js.into_bytes(),
+                });
+                routes.push(Route {
+                    path: PROGRAM_WASM,
+                    content_type: "application/wasm",
+                    body: module,
+                });
+            }
         }
         other => {
             return Err(format!(
