@@ -44,7 +44,8 @@ pub fn generate_glue(descriptors: &[Descriptor]) -> String {
 /// the real `globalThis[namespace][name]`.
 fn emit_shim(js: &mut String, d: &Descriptor) {
     let ns = js_string(&d.namespace);
-    let name = js_string(&d.name);
+    let import_name = js_string(&d.import_name);
+    let js_name = js_string(&d.js_name);
 
     // Build the wasm-level parameter list and the marshalled JS arguments.
     let mut params = Vec::new();
@@ -70,11 +71,12 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
     let params = params.join(", ");
     let js_args = js_args.join(", ");
 
-    // `imports[ns] ||= {}` then assign the shim.
+    // `imports[ns] ||= {}` then assign the shim. The slot is keyed on the wasm
+    // import name; the shim calls the (possibly different) JS function name.
     let _ = writeln!(js, "    imports[{ns}] = imports[{ns}] || {{}};");
     let _ = writeln!(
         js,
-        "    imports[{ns}][{name}] = ({params}) => globalThis[{ns}][{name}]({js_args});"
+        "    imports[{ns}][{import_name}] = ({params}) => globalThis[{ns}][{js_name}]({js_args});"
     );
 }
 
@@ -110,13 +112,15 @@ mod tests {
         let descriptors = vec![
             Descriptor {
                 namespace: "console".into(),
-                name: "log".into(),
+                import_name: "log".into(),
+                js_name: "log".into(),
                 args: vec![AbiArg::Str],
                 ret: None,
             },
             Descriptor {
                 namespace: "performance".into(),
-                name: "now".into(),
+                import_name: "now".into(),
+                js_name: "now".into(),
                 args: vec![],
                 ret: Some("f64".into()),
             },
@@ -125,5 +129,20 @@ mod tests {
         assert!(js.contains("imports[\"console\"][\"log\"] = (p0, p1) => globalThis[\"console\"][\"log\"](__wl_str(p0, p1));"));
         assert!(js.contains("imports[\"performance\"][\"now\"] = () => globalThis[\"performance\"][\"now\"]();"));
         assert!(js.contains("export async function instantiate"));
+    }
+
+    #[test]
+    fn overload_keys_slot_on_import_name_but_calls_js_name() {
+        let descriptors = vec![Descriptor {
+            namespace: "Math".into(),
+            import_name: "max2".into(),
+            js_name: "max".into(),
+            args: vec![AbiArg::Num, AbiArg::Num],
+            ret: Some("f64".into()),
+        }];
+        let js = generate_glue(&descriptors);
+        assert!(js.contains(
+            "imports[\"Math\"][\"max2\"] = (p0, p1) => globalThis[\"Math\"][\"max\"](p0, p1);"
+        ));
     }
 }

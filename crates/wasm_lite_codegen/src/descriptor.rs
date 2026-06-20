@@ -1,16 +1,23 @@
 //! The descriptor format written by the `import!` macro.
 //!
-//! Each import is one line: `namespace|name|argtags|rettag\n`, where `argtags`
-//! is a comma-separated list (possibly empty) and `rettag` is empty for a
-//! function that returns nothing.
+//! Each import is one line: `namespace|import_name|js_name|argtags|rettag\n`,
+//! where `argtags` is a comma-separated list (possibly empty) and `rettag` is
+//! empty for a function that returns nothing.
+//!
+//! `import_name` is the wasm import symbol (unique per binding — it's the Rust
+//! fn name); `js_name` is the JavaScript function the shim actually calls. They
+//! differ when several Rust functions bind the same (possibly overloaded) JS
+//! function.
 
 /// A single imported JavaScript function.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Descriptor {
     /// JS namespace, e.g. `console` (the object the function hangs off).
     pub namespace: String,
-    /// Function name within the namespace, e.g. `log`.
-    pub name: String,
+    /// The wasm import name (the Rust fn name); keys the import object slot.
+    pub import_name: String,
+    /// The JavaScript function name the shim calls (may differ from `import_name`).
+    pub js_name: String,
     /// Argument types, in declaration order.
     pub args: Vec<AbiArg>,
     /// Return type tag (e.g. `f64`), or `None` for no return value.
@@ -58,11 +65,12 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
 
         let mut fields = line.split('|');
         let namespace = fields.next().unwrap_or_default();
-        let name = fields.next().unwrap_or_default();
+        let import_name = fields.next().unwrap_or_default();
+        let js_name = fields.next().unwrap_or_default();
         let arg_tags = fields.next().unwrap_or_default();
         let ret_tag = fields.next().unwrap_or_default();
 
-        if namespace.is_empty() || name.is_empty() {
+        if namespace.is_empty() || import_name.is_empty() || js_name.is_empty() {
             return Err(format!("malformed descriptor line: {line:?}"));
         }
 
@@ -79,7 +87,8 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
 
         descriptors.push(Descriptor {
             namespace: namespace.to_string(),
-            name: name.to_string(),
+            import_name: import_name.to_string(),
+            js_name: js_name.to_string(),
             args,
             ret,
         });
@@ -94,27 +103,31 @@ mod tests {
 
     #[test]
     fn parses_example_descriptors() {
-        let section = b"console|log|str|\nconsole|error|str|\nperformance|now||f64\n";
+        // Includes an overload: two import names mapping to the JS `max`.
+        let section = b"console|log|log|str|\nperformance|now|now||f64\nMath|max2|max|f64,f64|f64\n";
         let got = parse(section).unwrap();
         assert_eq!(
             got,
             vec![
                 Descriptor {
                     namespace: "console".into(),
-                    name: "log".into(),
-                    args: vec![AbiArg::Str],
-                    ret: None,
-                },
-                Descriptor {
-                    namespace: "console".into(),
-                    name: "error".into(),
+                    import_name: "log".into(),
+                    js_name: "log".into(),
                     args: vec![AbiArg::Str],
                     ret: None,
                 },
                 Descriptor {
                     namespace: "performance".into(),
-                    name: "now".into(),
+                    import_name: "now".into(),
+                    js_name: "now".into(),
                     args: vec![],
+                    ret: Some("f64".into()),
+                },
+                Descriptor {
+                    namespace: "Math".into(),
+                    import_name: "max2".into(),
+                    js_name: "max".into(),
+                    args: vec![AbiArg::Num, AbiArg::Num],
                     ret: Some("f64".into()),
                 },
             ]

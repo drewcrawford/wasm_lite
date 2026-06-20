@@ -34,12 +34,14 @@ macro_rules! import {
         $(
             $ns:literal {
                 $(
-                    fn $fname:ident ( $($args:tt)* ) $( -> $ret:ident )? ;
+                    fn $fname:ident ( $($args:tt)* ) $( -> $ret:ident )? $( as $jsname:literal )? ;
                 )*
             }
         )*
     ) => {
-        // Safe wrappers + flattened imports, one per function.
+        // Safe wrappers + flattened imports, one per function. The wrapper and
+        // its wasm import are keyed on the Rust fn name; the JS call target
+        // (which may differ, to allow overloads) is recorded in the descriptor.
         $( $(
             $crate::__import_fn!($ns, $fname, ( $($args)* ) $( -> $ret )? );
         )* )*
@@ -52,8 +54,11 @@ macro_rules! import {
         // public wrapper fns share the module's namespace, so the only real
         // conflict left is declaring the same function name twice.)
         const _: () = {
+            // `ns|import_name|js_name|argtags|rettag\n`. import_name is the wasm
+            // import symbol (the Rust fn name); js_name is what the shim calls.
             const DESCR_STR: &str = concat!( $( $(
                 $ns, "|", stringify!($fname), "|",
+                $crate::__js_name!($fname $(, $jsname)?), "|",
                 $crate::__import_descr_args!($($args)*), "|",
                 $crate::__import_descr_ret!($( $ret )?), "\n",
             )* )* );
@@ -187,4 +192,12 @@ macro_rules! __import_descr_args {
 macro_rules! __import_descr_ret {
     () => { "" };
     ( $r:ident ) => { stringify!($r) };
+}
+
+/// Pick the JS call target: an explicit `as "name"` override, or the Rust name.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __js_name {
+    ($fname:ident) => { stringify!($fname) };
+    ($fname:ident, $js:literal) => { $js };
 }
