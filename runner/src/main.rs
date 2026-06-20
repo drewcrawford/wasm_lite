@@ -1,31 +1,45 @@
 //! wasm_lite runner.
 //!
 //! Serves a single program over a local HTTP server and opens it in the
-//! system default browser. For this first milestone the program is plain JS;
-//! the runner is intentionally dependency-free and built on `std` only.
+//! system default browser. The program may be:
+//!
+//!   * a `.js` file — served as-is and loaded as an ES module, or
+//!   * a `.wasm` file — served as `application/wasm` alongside a generated
+//!     loader that supplies the host imports and calls the module's `main`.
+//!
+//! The runner is intentionally dependency-free and built on `std` only.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Path under which the served HTML references the program.
-const PROGRAM_PATH: &str = "/program.js";
+/// Path under which the HTML shell loads the program (an ES module).
+const PROGRAM_JS: &str = "/program.js";
+/// Path under which a wasm module is served.
+const PROGRAM_WASM: &str = "/program.wasm";
+
+/// A single static resource served by the runner.
+struct Route {
+    path: &'static str,
+    content_type: &'static str,
+    body: Vec<u8>,
+}
 
 fn main() {
     let program = match parse_args() {
         Ok(p) => p,
         Err(msg) => {
             eprintln!("{msg}");
-            eprintln!("usage: runner <program.js>");
+            eprintln!("usage: runner <program.js|program.wasm>");
             std::process::exit(2);
         }
     };
 
-    let source = match std::fs::read(&program) {
-        Ok(bytes) => bytes,
+    let routes = match build_routes(&program) {
+        Ok(routes) => routes,
         Err(err) => {
-            eprintln!("error: failed to read {}: {err}", program.display());
+            eprintln!("error: {err}");
             std::process::exit(1);
         }
     };
@@ -41,8 +55,7 @@ fn main() {
     open_browser(&url);
     println!("opening browser... (ctrl-c to stop)");
 
-    let html = index_html(&program);
-    serve(listener, html.as_bytes(), &source);
+    serve(listener, &routes);
 }
 
 /// Parse command-line arguments into the program path.
@@ -57,6 +70,54 @@ fn parse_args() -> Result<PathBuf, String> {
     Ok(PathBuf::from(program))
 }
 
+/// Build the route table for the given program, dispatching on its extension.
+fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
+    let ext = program.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let html = index_html(program).into_bytes();
+
+    let mut routes = vec![Route {
+        path: "/",
+        content_type: "text/html; charset=utf-8",
+        body: html,
+    }];
+
+    match ext {
+        "js" => {
+            let source = read(program)?;
+            routes.push(Route {
+                path: PROGRAM_JS,
+                content_type: "text/javascript; charset=utf-8",
+                body: source,
+            });
+        }
+        "wasm" => {
+            let module = read(program)?;
+            routes.push(Route {
+                path: PROGRAM_JS,
+                content_type: "text/javascript; charset=utf-8",
+                body: WASM_LOADER.as_bytes().to_vec(),
+            });
+            routes.push(Route {
+                path: PROGRAM_WASM,
+                content_type: "application/wasm",
+                body: module,
+            });
+        }
+        other => {
+            return Err(format!(
+                "unsupported program type {other:?}; expected .js or .wasm"
+            ));
+        }
+    }
+
+    Ok(routes)
+}
+
+/// Read a file, mapping IO errors to a descriptive message.
+fn read(path: &Path) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|err| format!("failed to read {}: {err}", path.display()))
+}
+
 /// Bind to localhost, preferring port 8080 but falling back to any free port.
 fn bind() -> std::io::Result<TcpListener> {
     let preferred = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080));
@@ -68,7 +129,10 @@ fn bind() -> std::io::Result<TcpListener> {
 
 /// The HTML shell that loads the program as an ES module.
 fn index_html(program: &Path) -> String {
-    let title = program.file_name().and_then(|n| n.to_str()).unwrap_or("program");
+    let title = program
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("program");
     format!(
         "<!DOCTYPE html>\n\
          <html lang=\"en\">\n\
@@ -78,18 +142,18 @@ fn index_html(program: &Path) -> String {
          </head>\n\
          <body>\n\
          <pre id=\"output\"></pre>\n\
-         <script type=\"module\" src=\"{PROGRAM_PATH}\"></script>\n\
+         <script type=\"module\" src=\"{PROGRAM_JS}\"></script>\n\
          </body>\n\
          </html>\n"
     )
 }
 
-/// Accept connections forever, serving the HTML shell and the program.
-fn serve(listener: TcpListener, html: &[u8], program: &[u8]) -> ! {
+/// Accept connections forever, serving the route table.
+fn serve(listener: TcpListener, routes: &[Route]) -> ! {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                if let Err(err) = handle(stream, html, program) {
+                if let Err(err) = handle(stream, routes) {
                     eprintln!("warning: request failed: {err}");
                 }
             }
@@ -99,17 +163,16 @@ fn serve(listener: TcpListener, html: &[u8], program: &[u8]) -> ! {
     unreachable!("incoming() yields forever")
 }
 
-/// Handle a single HTTP request.
-fn handle(mut stream: TcpStream, html: &[u8], program: &[u8]) -> std::io::Result<()> {
+/// Handle a single HTTP request against the route table.
+fn handle(mut stream: TcpStream, routes: &[Route]) -> std::io::Result<()> {
     let path = match read_request_target(&mut stream)? {
         Some(path) => path,
         None => return Ok(()),
     };
 
-    match path.as_str() {
-        "/" => respond(&mut stream, 200, "text/html; charset=utf-8", html),
-        PROGRAM_PATH => respond(&mut stream, 200, "text/javascript; charset=utf-8", program),
-        _ => respond(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
+    match routes.iter().find(|r| r.path == path) {
+        Some(route) => respond(&mut stream, 200, route.content_type, &route.body),
+        None => respond(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
     }
 }
 
@@ -138,7 +201,12 @@ fn read_request_target(stream: &mut TcpStream) -> std::io::Result<Option<String>
 }
 
 /// Write a complete HTTP/1.1 response and close the connection.
-fn respond(stream: &mut TcpStream, status: u16, content_type: &str, body: &[u8]) -> std::io::Result<()> {
+fn respond(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
         404 => "Not Found",
@@ -172,3 +240,36 @@ fn open_browser(url: &str) {
         eprintln!("open this URL manually: {url}");
     }
 }
+
+/// Loader served for `.wasm` programs.
+///
+/// It instantiates the module with the `wasm_lite` host imports, then calls the
+/// exported `main`. `console_log` reads `(ptr, len)` UTF-8 bytes straight out of
+/// the module's linear memory. The memory view is recreated on every call so it
+/// stays valid even if the module grows its memory.
+const WASM_LOADER: &str = r#"// Generated by the wasm_lite runner.
+let memory;
+
+function logBytes(ptr, len) {
+    const bytes = new Uint8Array(memory.buffer, ptr, len);
+    const text = new TextDecoder("utf-8").decode(bytes);
+    console.log(text);
+    const output = document.getElementById("output");
+    if (output) {
+        output.textContent += text + "\n";
+    }
+}
+
+const imports = {
+    wasm_lite: {
+        console_log: logBytes,
+    },
+};
+
+const { instance } = await WebAssembly.instantiateStreaming(
+    fetch("/program.wasm"),
+    imports,
+);
+memory = instance.exports.memory;
+instance.exports.main();
+"#;

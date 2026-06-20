@@ -1,3 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["runner"]
+members = ["runner", "crates/wasm_lite"]
+# The wasm example is its own detached crate: it's a `bin` that links against a
+# wasm-only import, so it must never be built for the host target. Build it
+# explicitly for wasm32. (`wasm_lite` itself is an rlib and builds fine on the
+# host, so it stays a workspace member for IDE/CI coverage.)
+exclude = ["examples/hello-rust"]

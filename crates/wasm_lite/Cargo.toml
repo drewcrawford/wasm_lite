@@ -1,0 +1,7 @@
+[package]
+name = "wasm_lite"
+version = "0.1.0"
+edition = "2024"
+description = "Minimal JS bindings for Rust compiled to wasm."
+
+[dependencies]
