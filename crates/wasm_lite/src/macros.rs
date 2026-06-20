@@ -55,9 +55,11 @@ macro_rules! import {
         // conflict left is declaring the same function name twice.)
         const _: () = {
             // `ns|import_name|js_name|argtags|rettag\n`. import_name is the wasm
-            // import symbol (the Rust fn name); js_name is what the shim calls.
+            // import symbol — made unique per (crate, module, fn) via
+            // `module_path!()` so independent crates never collide; it must match
+            // the `#[link_name]` above exactly. js_name is what the shim calls.
             const DESCR_STR: &str = concat!( $( $(
-                $ns, "|", stringify!($fname), "|",
+                $ns, "|", concat!(module_path!(), "::", stringify!($fname)), "|",
                 $crate::__js_name!($fname $(, $jsname)?), "|",
                 $crate::__import_descr_args!($($args)*), "|",
                 $crate::__import_descr_ret!($( $ret )?), "\n",
@@ -141,7 +143,10 @@ macro_rules! __import_fn {
             rest=( )) => {
         pub fn $fname($($orig)*) {
             #[link(wasm_import_module = $ns)]
-            unsafe extern "C" { fn $fname($($flat)*); }
+            unsafe extern "C" {
+                #[link_name = concat!(module_path!(), "::", stringify!($fname))]
+                fn $fname($($flat)*);
+            }
             unsafe { $fname($($call)*) }
         }
     };
@@ -151,7 +156,10 @@ macro_rules! __import_fn {
             rest=( )) => {
         pub fn $fname($($orig)*) -> bool {
             #[link(wasm_import_module = $ns)]
-            unsafe extern "C" { fn $fname($($flat)*) -> i32; }
+            unsafe extern "C" {
+                #[link_name = concat!(module_path!(), "::", stringify!($fname))]
+                fn $fname($($flat)*) -> i32;
+            }
             unsafe { $fname($($call)*) != 0 }
         }
     };
@@ -161,7 +169,10 @@ macro_rules! __import_fn {
             rest=( )) => {
         pub fn $fname($($orig)*) -> $ret {
             #[link(wasm_import_module = $ns)]
-            unsafe extern "C" { fn $fname($($flat)*) -> $ret; }
+            unsafe extern "C" {
+                #[link_name = concat!(module_path!(), "::", stringify!($fname))]
+                fn $fname($($flat)*) -> $ret;
+            }
             unsafe { $fname($($call)*) }
         }
     };

@@ -18,6 +18,14 @@ mod js {
     wasm_lite::import! { "Date" { fn now() -> f64; } }
 }
 
+// Independently bind `console.log` with a *different* signature (a number) than
+// `wasm_lite::console::log` (which takes `&str`). Both are import `(console, log)`
+// by JS name — before per-binding-unique symbols this was a hard link conflict;
+// now each gets a distinct wasm symbol, so they coexist.
+mod my_console {
+    wasm_lite::import! { "console" { fn log(n: f64); } }
+}
+
 fn main() {
     wasm_lite::console::log("hello, world from rust");
     wasm_lite::console::error("this is console.error from rust");
@@ -31,4 +39,7 @@ fn main() {
     // Both call JS `Math.max`, with different arities.
     wasm_lite::console::log(&format!("Math.max(3, 7) = {}", js::max2(3.0, 7.0)));
     wasm_lite::console::log(&format!("Math.max(3, 7, 5) = {}", js::max3(3.0, 7.0, 5.0)));
+
+    // A second, independent binding of console.log (number signature).
+    my_console::log(42.0);
 }
