@@ -13,6 +13,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+mod test_runner;
+mod webdriver;
 
 /// Path under which the HTML shell loads the program (an ES module).
 const PROGRAM_JS: &str = "/program.js";
@@ -31,15 +33,22 @@ struct Route {
 }
 
 fn main() {
-    let program = match parse_args() {
-        Ok(p) => p,
+    let args = match parse_args() {
+        Ok(a) => a,
         Err(msg) => {
             eprintln!("{msg}");
-            eprintln!("usage: runner <program.js|program.wasm>");
+            eprintln!("usage: runner [--test] <program.js|program.wasm>");
             std::process::exit(2);
         }
     };
 
+    // `--test`: run headless in a browser, report results, and exit with a
+    // status code (for use as a Cargo test runner). Otherwise serve + open.
+    if args.test {
+        std::process::exit(test_runner::run(&args.program));
+    }
+
+    let program = args.program;
     let routes = match build_routes(&program) {
         Ok(routes) => routes,
         Err(err) => {
@@ -62,16 +71,33 @@ fn main() {
     serve(listener, &routes);
 }
 
-/// Parse command-line arguments into the program path.
-fn parse_args() -> Result<PathBuf, String> {
-    let mut args = std::env::args_os().skip(1);
-    let program = args
-        .next()
-        .ok_or_else(|| "error: missing program path".to_string())?;
-    if args.next().is_some() {
-        return Err("error: too many arguments".to_string());
+/// Parsed command-line arguments.
+struct Args {
+    program: PathBuf,
+    test: bool,
+}
+
+/// Parse command-line arguments.
+///
+/// The first non-flag argument is the program (`.js` or `.wasm`); `--test`
+/// selects headless test mode. Any other arguments are ignored, so the runner
+/// can be used directly as a Cargo runner
+/// (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`), where Cargo invokes it as
+/// `runner [--test] <artifact.wasm> [harness args…]`.
+fn parse_args() -> Result<Args, String> {
+    let mut program = None;
+    let mut test = false;
+    for arg in std::env::args_os().skip(1) {
+        if arg == "--test" {
+            test = true;
+        } else if program.is_none() {
+            program = Some(PathBuf::from(arg));
+        }
     }
-    Ok(PathBuf::from(program))
+    Ok(Args {
+        program: program.ok_or_else(|| "error: missing program path".to_string())?,
+        test,
+    })
 }
 
 /// Build the route table for the given program, dispatching on its extension.
