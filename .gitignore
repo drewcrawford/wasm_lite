@@ -2,3 +2,4 @@ wasm-bindgen
 /target
 Cargo.lock
 .idea
+examples/hello-rust/target/

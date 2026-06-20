@@ -5,3 +5,4 @@ edition = "2024"
 description = "Serves a wasm_lite program over local HTTP and opens it in the default browser."
 
 [dependencies]
+wasm_lite_codegen = { path = "../crates/wasm_lite_codegen" }

@@ -1,8 +1,27 @@
 //! wasm_lite: minimal JavaScript bindings for Rust compiled to wasm.
 //!
-//! For now this crate hand-writes a single binding — `console.log` — to nail
-//! down the layering between Rust, the wasm import boundary, and the JS host.
-//! Generalizing this (a macro + codegen for arbitrary imports/exports) comes
-//! later.
+//! Imports are declared with the [`import!`] macro, which records a descriptor
+//! for each import into the `__wasm_lite_imports` custom wasm section. The
+//! host-side `wasm_lite_codegen` crate reads that section and generates the
+//! matching JavaScript shims, so no JS is hand-written per import.
+
+mod macros;
 
 pub mod console;
+pub mod performance;
+
+/// Copy a `&str`'s bytes into a fixed-size array at compile time.
+///
+/// Used by [`import!`] to place its descriptor text into a `#[link_section]`
+/// static (which must be an array by value, not a reference).
+#[doc(hidden)]
+pub const fn descriptor_bytes<const N: usize>(s: &str) -> [u8; N] {
+    let src = s.as_bytes();
+    let mut out = [0u8; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = src[i];
+        i += 1;
+    }
+    out
+}

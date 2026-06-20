@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["runner", "crates/wasm_lite"]
+members = [
+    "runner",
+    "crates/wasm_lite",
+    "crates/wasm_lite_codegen",
+    "crates/wasm_lite_cli",
+]
 # The wasm example is its own detached crate: it's a `bin` that links against a
 # wasm-only import, so it must never be built for the host target. Build it
 # explicitly for wasm32. (`wasm_lite` itself is an rlib and builds fine on the

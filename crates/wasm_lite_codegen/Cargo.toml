@@ -1,0 +1,7 @@
+[package]
+name = "wasm_lite_codegen"
+version = "0.1.0"
+edition = "2024"
+description = "Reads wasm_lite import descriptors from a wasm module and generates the matching JavaScript glue."
+
+[dependencies]

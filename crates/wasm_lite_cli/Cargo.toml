@@ -1,0 +1,12 @@
+[package]
+name = "wasm_lite_cli"
+version = "0.1.0"
+edition = "2024"
+description = "CLI that generates wasm_lite JavaScript glue from a compiled wasm module."
+
+[[bin]]
+name = "wasm-lite"
+path = "src/main.rs"
+
+[dependencies]
+wasm_lite_codegen = { path = "../wasm_lite_codegen" }

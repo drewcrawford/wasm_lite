@@ -1,0 +1,190 @@
+//! The `import!` macro and its internal helpers.
+//!
+//! `import!` turns a declaration like
+//!
+//! ```ignore
+//! wasm_lite::import! {
+//!     "console" {
+//!         fn log(msg: &str);
+//!         fn error(msg: &str);
+//!     }
+//! }
+//! ```
+//!
+//! into, for each function:
+//!
+//!   * a safe Rust wrapper (`pub fn log(msg: &str)`),
+//!   * a function-local wasm import declaration with a *flattened* ABI
+//!     (`&str` becomes `*const u8, usize`), and
+//!   * a line in the `__wasm_lite_imports` custom wasm section describing the
+//!     import so the host-side codegen can generate a matching JS shim.
+//!
+//! Multiple `#[link_section]` statics with the same name concatenate, so each
+//! `import!` invocation contributes its descriptors to one shared section.
+//!
+//! Supported argument types: `&str`, `bool`, and numeric idents (`i32`, `u32`,
+//! `f64`, ...). Supported return types: none, `bool`, or a numeric ident.
+//! Only one `import!` invocation is allowed per module (the descriptor static
+//! has a fixed name).
+
+/// Declare imported JavaScript functions grouped by JS namespace.
+#[macro_export]
+macro_rules! import {
+    (
+        $(
+            $ns:literal {
+                $(
+                    fn $fname:ident ( $($args:tt)* ) $( -> $ret:ident )? ;
+                )*
+            }
+        )*
+    ) => {
+        // Safe wrappers + flattened imports, one per function.
+        $( $(
+            $crate::__import_fn!($ns, $fname, ( $($args)* ) $( -> $ret )? );
+        )* )*
+
+        // Descriptors for this invocation: `ns|name|argtags|rettag\n` per fn.
+        //
+        // Wrapped in an anonymous `const _: () = { ... }` so multiple `import!`
+        // calls can coexist in one module: each `const _` and its inner items
+        // are independently scoped, so the fixed names don't collide. (Only the
+        // public wrapper fns share the module's namespace, so the only real
+        // conflict left is declaring the same function name twice.)
+        const _: () = {
+            const DESCR_STR: &str = concat!( $( $(
+                $ns, "|", stringify!($fname), "|",
+                $crate::__import_descr_args!($($args)*), "|",
+                $crate::__import_descr_ret!($( $ret )?), "\n",
+            )* )* );
+
+            // The descriptor section only matters for the wasm build; on other
+            // targets `link_section` names like this are invalid (e.g. mach-O
+            // wants `segment,section`), so restrict it to wasm.
+            #[used]
+            #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wasm_lite_imports"))]
+            static DESCR: [u8; DESCR_STR.len()] =
+                $crate::descriptor_bytes::<{ DESCR_STR.len() }>(DESCR_STR);
+        };
+    };
+}
+
+/// Emit one safe wrapper + its flattened, function-local wasm import.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __import_fn {
+    // Entry: start munching the argument list into flattened forms.
+    ($ns:literal, $fname:ident, ( $($args:tt)* ) $( -> $ret:ident )? ) => {
+        $crate::__import_fn!(@munch
+            ns = $ns, name = $fname, ret = ( $( $ret )? ),
+            orig = ( $($args)* ), flat = ( ), call = ( ),
+            rest = ( $($args)* )
+        );
+    };
+
+    // &str -> (*const u8, usize)
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : & str , $($rest:tt)* )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+            orig=($($orig)*), flat=($($flat)* _: *const u8, _: usize,),
+            call=($($call)* $a.as_ptr(), $a.len(),), rest=( $($rest)* ));
+    };
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : & str )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+            orig=($($orig)*), flat=($($flat)* _: *const u8, _: usize,),
+            call=($($call)* $a.as_ptr(), $a.len(),), rest=( ));
+    };
+
+    // bool -> i32
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : bool , $($rest:tt)* )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+            orig=($($orig)*), flat=($($flat)* _: i32,),
+            call=($($call)* $a as i32,), rest=( $($rest)* ));
+    };
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : bool )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+            orig=($($orig)*), flat=($($flat)* _: i32,),
+            call=($($call)* $a as i32,), rest=( ));
+    };
+
+    // numeric ident (i32, u32, f64, ...) -> itself
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : $t:ident , $($rest:tt)* )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+            orig=($($orig)*), flat=($($flat)* _: $t,),
+            call=($($call)* $a,), rest=( $($rest)* ));
+    };
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : $t:ident )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+            orig=($($orig)*), flat=($($flat)* _: $t,),
+            call=($($call)* $a,), rest=( ));
+    };
+
+    // Terminal: no return.
+    (@munch ns=$ns:literal, name=$fname:ident, ret=(),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( )) => {
+        pub fn $fname($($orig)*) {
+            #[link(wasm_import_module = $ns)]
+            unsafe extern "C" { fn $fname($($flat)*); }
+            unsafe { $fname($($call)*) }
+        }
+    };
+    // Terminal: bool return (i32 at the ABI).
+    (@munch ns=$ns:literal, name=$fname:ident, ret=(bool),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( )) => {
+        pub fn $fname($($orig)*) -> bool {
+            #[link(wasm_import_module = $ns)]
+            unsafe extern "C" { fn $fname($($flat)*) -> i32; }
+            unsafe { $fname($($call)*) != 0 }
+        }
+    };
+    // Terminal: numeric return.
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($ret:ident),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( )) => {
+        pub fn $fname($($orig)*) -> $ret {
+            #[link(wasm_import_module = $ns)]
+            unsafe extern "C" { fn $fname($($flat)*) -> $ret; }
+            unsafe { $fname($($call)*) }
+        }
+    };
+}
+
+/// Build the comma-separated argument type tags for a descriptor line.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __import_descr_args {
+    () => { "" };
+    ( $a:ident : & str ) => { "str" };
+    ( $a:ident : & str , $($rest:tt)* ) => {
+        concat!("str,", $crate::__import_descr_args!($($rest)*))
+    };
+    ( $a:ident : bool ) => { "bool" };
+    ( $a:ident : bool , $($rest:tt)* ) => {
+        concat!("bool,", $crate::__import_descr_args!($($rest)*))
+    };
+    ( $a:ident : $t:ident ) => { stringify!($t) };
+    ( $a:ident : $t:ident , $($rest:tt)* ) => {
+        concat!(stringify!($t), ",", $crate::__import_descr_args!($($rest)*))
+    };
+}
+
+/// Build the return type tag for a descriptor line (empty for no return).
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __import_descr_ret {
+    () => { "" };
+    ( $r:ident ) => { stringify!($r) };
+}
