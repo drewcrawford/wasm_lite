@@ -17,6 +17,18 @@ pub mod interop;
 
 pub use value::JsValue;
 
+/// Install a panic hook that reports the panic message via `console.error`.
+///
+/// On `wasm32-unknown-unknown` a panic aborts (a trap) and the default hook has
+/// nowhere to write, so without this the runner only sees "unreachable". Called
+/// by [`tests!`] before each test.
+#[doc(hidden)]
+pub fn __set_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        crate::console::error(&format!("{info}"));
+    }));
+}
+
 /// Copy a `&str`'s bytes into a fixed-size array at compile time.
 ///
 /// Used by [`import!`] to place its descriptor text into a `#[link_section]`

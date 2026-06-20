@@ -1,0 +1,14 @@
+# Build this example for wasm by default, so `cargo run` / `cargo build` target
+# wasm32 without `--target`.
+[build]
+target = "wasm32-unknown-unknown"
+
+# Use the wasm_lite runner for `cargo run` (and, later, `cargo test`). Either set
+# the absolute path here:
+#
+#   [target.wasm32-unknown-unknown]
+#   runner = "/abs/path/to/wasm_lite/target/debug/runner"
+#
+# or set the env var, e.g.:
+#
+#   CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=../../target/debug/runner cargo run

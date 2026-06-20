@@ -42,9 +42,10 @@ fn main() {
         }
     };
 
-    // `--test`: run headless in a browser, report results, and exit with a
-    // status code (for use as a Cargo test runner). Otherwise serve + open.
-    if args.test {
+    // Run headless and exit with a status code (for use as a Cargo test runner)
+    // when asked with `--test`, or automatically for a `tests!` harness wasm.
+    // Otherwise serve + open a browser.
+    if args.test || test_runner::is_test(&args.program) {
         std::process::exit(test_runner::run(&args.program));
     }
 
@@ -261,8 +262,11 @@ fn read_request_target(stream: &mut TcpStream) -> std::io::Result<Option<String>
         return Ok(None);
     }
 
-    // "GET /path HTTP/1.1"
-    let path = request_line.split_whitespace().nth(1).map(str::to_string);
+    // "GET /path?query HTTP/1.1" — match on the path, ignoring any query string.
+    let path = request_line
+        .split_whitespace()
+        .nth(1)
+        .map(|target| target.split(['?', '#']).next().unwrap_or(target).to_string());
 
     // Drain headers up to the blank line so the client is satisfied.
     let mut header = String::new();

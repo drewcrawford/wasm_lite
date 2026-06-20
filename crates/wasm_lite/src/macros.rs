@@ -257,3 +257,46 @@ macro_rules! __import_kind {
     ( this : & JsValue $($rest:tt)* ) => { "m" };
     ( $($other:tt)* ) => { "f" };
 }
+
+/// Define a wasm_lite test suite from a list of test functions.
+///
+/// ```ignore
+/// fn adds() { assert_eq!(2 + 2, 4); }
+/// fn fails() { panic!("nope"); }
+/// wasm_lite::tests! { adds, fails }
+/// ```
+///
+/// Generates the entry point and a per-test dispatch (`__wl_run_test`) the
+/// runner drives, plus a `__wasm_lite_tests` section naming the tests so the
+/// runner auto-detects test mode. Use in a `harness = false` test target.
+#[macro_export]
+macro_rules! tests {
+    ( $( $name:ident ),* $(,)? ) => {
+        // Test names (one per line) in a dedicated section, for the runner.
+        const __WL_TEST_NAMES: &str = concat!( $( stringify!($name), "\n", )* );
+        #[used]
+        #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wasm_lite_tests"))]
+        static __WL_TESTS: [u8; __WL_TEST_NAMES.len()] =
+            $crate::descriptor_bytes::<{ __WL_TEST_NAMES.len() }>(__WL_TEST_NAMES);
+
+        // Run the test at `index`. A panic aborts (a wasm trap) → the runner
+        // records a failure; the panic hook logs the message via console.error
+        // first, so the runner can show why.
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __wl_run_test(index: u32) {
+            $crate::__set_panic_hook();
+            let mut current = 0u32;
+            $(
+                if current == index {
+                    return $name();
+                }
+                current += 1;
+            )*
+            let _ = current;
+        }
+
+        // `harness = false` test targets need a `main`; the runner doesn't use
+        // it (it calls `__wl_run_test` per test).
+        fn main() {}
+    };
+}

@@ -30,6 +30,21 @@ pub fn uses_wasm_bindgen(wasm: &[u8]) -> bool {
     )
 }
 
+/// Names of the tests declared via `wasm_lite::tests!`, in order.
+///
+/// Empty if the module has no test section (i.e. it isn't a test harness).
+pub fn test_names(wasm: &[u8]) -> Vec<String> {
+    match wasm::custom_section(wasm, "__wasm_lite_tests") {
+        Ok(Some(bytes)) => std::str::from_utf8(bytes)
+            .unwrap_or("")
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Read import descriptors from a compiled wasm module.
 ///
 /// Returns an empty vector if the module has no descriptor section (e.g. it was

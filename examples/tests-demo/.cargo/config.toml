@@ -1,0 +1,10 @@
+# Build/test for wasm by default.
+[build]
+target = "wasm32-unknown-unknown"
+
+# `cargo test` invokes the wasm_lite runner; it auto-detects the test harness
+# section and runs headless, exiting with a status code. Set the path here or
+# via CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER, e.g.:
+#   runner = "/abs/path/to/wasm_lite/target/debug/runner"
+[target.wasm32-unknown-unknown]
+# runner = "..."  # uncomment + set, or use the env var
