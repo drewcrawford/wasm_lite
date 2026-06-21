@@ -10,9 +10,13 @@ test = false
 [dependencies]
 wasm_lite = { path = "../../crates/wasm_lite" }
 
-# A harness-less integration test: `wasm_lite::tests!` provides the entry point.
+# Harness-less integration tests: `#[wasm_lite_test]` + `test_main!` drive them.
 [[test]]
 name = "suite"
+harness = false
+
+[[test]]
+name = "passing"
 harness = false
 
 [workspace]

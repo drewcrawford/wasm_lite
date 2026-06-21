@@ -1,21 +1,20 @@
-//! A wasm_lite test suite. Built with `harness = false`; `#[wasm_lite_test]`
-//! generates each test's entry point and `test_main!` supplies `fn main`.
+//! Covers the three outcomes: a pass, a failed assertion, and an explicit panic.
 
-use wasm_lite::{console, wasm_lite_test};
+use wasm_lite::wasm_lite_test;
 
 #[wasm_lite_test]
-fn arithmetic_works() {
+fn passes() {
     assert_eq!(2 + 2, 4);
 }
 
 #[wasm_lite_test]
-fn can_log() {
-    console::log("can_log ran inside the test harness");
+fn fails_assertion() {
+    assert_eq!(2 + 2, 5, "math is definitely broken");
 }
 
 #[wasm_lite_test]
-fn deliberately_fails() {
-    assert_eq!(2 + 2, 5, "math is definitely broken");
+fn explicit_panic() {
+    panic!("something went terribly wrong");
 }
 
 wasm_lite::test_main!();
