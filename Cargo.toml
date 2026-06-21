@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "runner",
     "crates/wasm_lite",
+    "crates/wasm_lite_macro",
     "crates/wasm_lite_codegen",
     "crates/wasm_lite_cli",
 ]

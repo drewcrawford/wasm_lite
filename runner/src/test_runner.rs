@@ -137,8 +137,8 @@ fn run_suite(browser: &Browser, port: u16, names: &[String]) -> Result<i32, Stri
     println!("\nrunning {} test{}", names.len(), plural(names.len()));
     let mut failed = 0;
 
-    for (i, name) in names.iter().enumerate() {
-        browser.goto(&format!("http://127.0.0.1:{port}/?test={i}"))?;
+    for name in names {
+        browser.goto(&format!("http://127.0.0.1:{port}/?test={name}"))?;
         wait_done(browser)?;
 
         if browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
@@ -212,12 +212,12 @@ try {
 }
 "#;
 
-/// Bootstrap for a `tests!` harness: run the single test named by `?test=i`.
+/// Bootstrap for a test harness: run the single test named by `?test=<name>`.
 const HARNESS_BOOTSTRAP: &str = r#"
-const idx = parseInt(new URLSearchParams(location.search).get("test") || "0", 10);
+const name = new URLSearchParams(location.search).get("test");
 try {
     const instance = await instantiate("/program.wasm");
-    instance.exports.__wl_run_test(idx);
+    instance.exports["__wl_test_" + name]();
     globalThis.__wl_done = { ok: true, error: "" };
 } catch (e) {
     globalThis.__wl_done = { ok: false, error: String((e && e.stack) || e) };

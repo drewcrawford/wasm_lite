@@ -1,0 +1,10 @@
+[package]
+name = "wasm_lite_macro"
+version = "0.1.0"
+edition = "2024"
+description = "Procedural macros for wasm_lite (zero external dependencies)."
+
+[lib]
+proc-macro = true
+
+[dependencies]

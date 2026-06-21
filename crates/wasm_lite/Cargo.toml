@@ -5,6 +5,7 @@ edition = "2024"
 description = "Minimal JS bindings for Rust compiled to wasm."
 
 [dependencies]
+wasm_lite_macro = { path = "../wasm_lite_macro" }
 # Optional: enables the `interop` module bridging to wasm-bindgen's JsValue.
 # Use a permissive range; callers pin the exact version to match their CLI.
 wasm-bindgen = { version = "0.2", optional = true }

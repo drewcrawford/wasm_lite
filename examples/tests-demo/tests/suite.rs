@@ -1,22 +1,21 @@
-//! A wasm_lite test suite. Built with `harness = false`, so `wasm_lite::tests!`
-//! supplies the entry point and the runner drives each test in its own page.
+//! A wasm_lite test suite. Built with `harness = false`; `#[wasm_lite_test]`
+//! generates each test's entry point and `test_main!` supplies `fn main`.
 
-use wasm_lite::console;
+use wasm_lite::{console, wasm_lite_test};
 
+#[wasm_lite_test]
 fn arithmetic_works() {
     assert_eq!(2 + 2, 4);
 }
 
+#[wasm_lite_test]
 fn can_log() {
     console::log("can_log ran inside the test harness");
 }
 
+#[wasm_lite_test]
 fn deliberately_fails() {
     assert_eq!(2 + 2, 5, "math is definitely broken");
 }
 
-wasm_lite::tests! {
-    arithmetic_works,
-    can_log,
-    deliberately_fails,
-}
+wasm_lite::test_main!();
