@@ -24,6 +24,15 @@ function __wl_pass_str(s) {
     return [ptr, bytes.length];
 }
 
+// Copy bytes into wasm memory for an export argument; returns [ptr, len]. Accepts
+// a Uint8Array (or anything Uint8Array's constructor coerces, e.g. a number[]).
+function __wl_pass_bytes(a) {
+    const bytes = a instanceof Uint8Array ? a : new Uint8Array(a);
+    const ptr = __wl_instance.exports.__wl_malloc(bytes.length);
+    new Uint8Array(__wl_memory.buffer, ptr, bytes.length).set(bytes);
+    return [ptr, bytes.length];
+}
+
 // Value table: opaque handles to JS values. Rust holds an index; the table
 // holds the real object. Freed slots are reused.
 const __wl_heap = [];
@@ -100,6 +109,12 @@ fn emit_export(js: &mut String, export: &Export) {
                 wasm_args.push(format!("__a{i}l"));
                 frees.push(format!("__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"));
             }
+            ExportArg::Bytes => {
+                lines.push(format!("const [__a{i}p, __a{i}l] = __wl_pass_bytes(p{i});"));
+                wasm_args.push(format!("__a{i}p"));
+                wasm_args.push(format!("__a{i}l"));
+                frees.push(format!("__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"));
+            }
         }
     }
 
@@ -134,6 +149,16 @@ fn emit_export(js: &mut String, export: &Export) {
             lines.push("__wl_instance.exports.__wl_free(__p, __l);".into());
             lines.push("return __s;".into());
         }
+        ExportRet::Bytes => {
+            lines.push(format!("const __ret = {call};"));
+            lines.extend(frees);
+            lines.push("const __packed = BigInt.asUintN(64, __ret);".into());
+            lines.push("const __p = Number(__packed >> 32n), __l = Number(__packed & 0xffffffffn);".into());
+            // Copy out of wasm memory before freeing (a view would dangle after free).
+            lines.push("const __b = new Uint8Array(__wl_memory.buffer, __p, __l).slice();".into());
+            lines.push("__wl_instance.exports.__wl_free(__p, __l);".into());
+            lines.push("return __b;".into());
+        }
     }
 
     let _ = writeln!(
@@ -166,6 +191,12 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                 let ptr = next_param(&mut params);
                 let len = next_param(&mut params);
                 format!("__wl_str({ptr}, {len})")
+            }
+            AbiArg::Bytes => {
+                // A transient view into wasm memory — valid for the call's duration.
+                let ptr = next_param(&mut params);
+                let len = next_param(&mut params);
+                format!("new Uint8Array(__wl_memory.buffer, {ptr}, {len})")
             }
             AbiArg::Bool => format!("Boolean({})", next_param(&mut params)),
             AbiArg::Num => next_param(&mut params),
@@ -201,6 +232,19 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                 "    imports[{ns}][{import_name}] = ({params}) => {{ \
                      const __r = {call}; \
                      const __b = new TextEncoder().encode(__r); \
+                     const __p = __wl_instance.exports.__wl_malloc(__b.length); \
+                     new Uint8Array(__wl_memory.buffer, __p, __b.length).set(__b); \
+                     return (BigInt(__p) << 32n) | BigInt(__b.length); \
+                 }};"
+            );
+        }
+        // A bytes return: coerce to a Uint8Array, copy into wasm memory, hand off.
+        Ret::Bytes => {
+            let _ = writeln!(
+                js,
+                "    imports[{ns}][{import_name}] = ({params}) => {{ \
+                     const __r = {call}; \
+                     const __b = __r instanceof Uint8Array ? __r : new Uint8Array(__r); \
                      const __p = __wl_instance.exports.__wl_malloc(__b.length); \
                      new Uint8Array(__wl_memory.buffer, __p, __b.length).set(__b); \
                      return (BigInt(__p) << 32n) | BigInt(__b.length); \

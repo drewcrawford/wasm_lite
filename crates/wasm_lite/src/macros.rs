@@ -22,10 +22,9 @@
 //! Multiple `#[link_section]` statics with the same name concatenate, so each
 //! `import!` invocation contributes its descriptors to one shared section.
 //!
-//! Supported argument types: `&str`, `bool`, and numeric idents (`i32`, `u32`,
-//! `f64`, ...). Supported return types: none, `bool`, or a numeric ident.
-//! Only one `import!` invocation is allowed per module (the descriptor static
-//! has a fixed name).
+//! Supported argument types: `&str`, `&[u8]`, `&JsValue`, `bool`, and numeric
+//! idents (`i32`, `u32`, `f64`, ...). Supported return types: none, `bool`,
+//! `String`, `Vec<u8>`, `JsValue`, or a numeric ident.
 
 /// Declare imported JavaScript functions grouped by JS namespace.
 #[macro_export]
@@ -34,7 +33,7 @@ macro_rules! import {
         $(
             $ns:literal {
                 $(
-                    fn $fname:ident ( $($args:tt)* ) $( -> $ret:ident )? $( as $jsname:literal )? ;
+                    fn $fname:ident ( $($args:tt)* ) $( -> $ret:ident $( < $relem:ident > )? )? $( as $jsname:literal )? ;
                 )*
             }
         )*
@@ -43,7 +42,7 @@ macro_rules! import {
         // its wasm import are keyed on the Rust fn name; the JS call target
         // (which may differ, to allow overloads) is recorded in the descriptor.
         $( $(
-            $crate::__import_fn!($ns, $fname, ( $($args)* ) $( -> $ret )? );
+            $crate::__import_fn!($ns, $fname, ( $($args)* ) $( -> $ret $( < $relem > )? )? );
         )* )*
 
         // Descriptors for this invocation: `ns|name|argtags|rettag\n` per fn.
@@ -64,7 +63,7 @@ macro_rules! import {
                 $ns, "|", concat!(module_path!(), "::", stringify!($fname)), "|",
                 $crate::__js_name!($fname $(, $jsname)?), "|",
                 $crate::__import_descr_args!($($args)*), "|",
-                $crate::__import_descr_ret!($( $ret )?), "\n",
+                $crate::__import_descr_ret!($( $ret $( < $relem > )? )?), "\n",
             )* )* );
 
             // The descriptor section only matters for the wasm build; on other
@@ -82,75 +81,93 @@ macro_rules! import {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __import_fn {
-    // Entry: start munching the argument list into flattened forms.
-    ($ns:literal, $fname:ident, ( $($args:tt)* ) $( -> $ret:ident )? ) => {
+    // Entry: start munching the argument list into flattened forms. The return
+    // is captured as raw tokens (greedy is fine — nothing follows it here), so
+    // multi-token types like `Vec<u8>` pass through to the terminal arms.
+    ($ns:literal, $fname:ident, ( $($args:tt)* ) $( -> $($rettok:tt)+ )? ) => {
         $crate::__import_fn!(@munch
-            ns = $ns, name = $fname, ret = ( $( $ret )? ),
+            ns = $ns, name = $fname, ret = ( $( $($rettok)+ )? ),
             orig = ( $($args)* ), flat = ( ), call = ( ),
             rest = ( $($args)* )
         );
     };
 
     // &str -> (*const u8, usize)
-    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
             rest=( $a:ident : & str , $($rest:tt)* )) => {
-        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
             orig=($($orig)*), flat=($($flat)* _: *const u8, _: usize,),
             call=($($call)* $a.as_ptr(), $a.len(),), rest=( $($rest)* ));
     };
-    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
             rest=( $a:ident : & str )) => {
-        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: *const u8, _: usize,),
+            call=($($call)* $a.as_ptr(), $a.len(),), rest=( ));
+    };
+
+    // &[u8] -> (*const u8, usize) (a borrowed byte slice; like &str without UTF-8)
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : & [u8] , $($rest:tt)* )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: *const u8, _: usize,),
+            call=($($call)* $a.as_ptr(), $a.len(),), rest=( $($rest)* ));
+    };
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : & [u8] )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
             orig=($($orig)*), flat=($($flat)* _: *const u8, _: usize,),
             call=($($call)* $a.as_ptr(), $a.len(),), rest=( ));
     };
 
     // &JsValue -> u32 (a borrowed value-table handle)
-    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
             rest=( $a:ident : & JsValue , $($rest:tt)* )) => {
-        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
             orig=($($orig)*), flat=($($flat)* _: u32,),
             call=($($call)* $a.__wl_abi(),), rest=( $($rest)* ));
     };
-    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
             rest=( $a:ident : & JsValue )) => {
-        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
             orig=($($orig)*), flat=($($flat)* _: u32,),
             call=($($call)* $a.__wl_abi(),), rest=( ));
     };
 
     // bool -> i32
-    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
             rest=( $a:ident : bool , $($rest:tt)* )) => {
-        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
             orig=($($orig)*), flat=($($flat)* _: i32,),
             call=($($call)* $a as i32,), rest=( $($rest)* ));
     };
-    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
             rest=( $a:ident : bool )) => {
-        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
             orig=($($orig)*), flat=($($flat)* _: i32,),
             call=($($call)* $a as i32,), rest=( ));
     };
 
     // numeric ident (i32, u32, f64, ...) -> itself
-    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
             rest=( $a:ident : $t:ident , $($rest:tt)* )) => {
-        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
             orig=($($orig)*), flat=($($flat)* _: $t,),
             call=($($call)* $a,), rest=( $($rest)* ));
     };
-    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:ident)?),
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
             rest=( $a:ident : $t:ident )) => {
-        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)?),
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
             orig=($($orig)*), flat=($($flat)* _: $t,),
             call=($($call)* $a,), rest=( ));
     };
@@ -218,6 +235,29 @@ macro_rules! __import_fn {
             static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = $crate::__wl_malloc;
         };
     };
+    // Terminal: Vec<u8> return. Like String, but the bytes are taken verbatim.
+    (@munch ns=$ns:literal, name=$fname:ident, ret=(Vec<u8>),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( )) => {
+        pub fn $fname($($orig)*) -> ::std::vec::Vec<u8> {
+            #[link(wasm_import_module = $ns)]
+            unsafe extern "C" {
+                #[link_name = concat!(module_path!(), "::", stringify!($fname))]
+                fn $fname($($flat)*) -> i64;
+            }
+            let __packed = unsafe { $fname($($call)*) } as u64;
+            let __ptr = (__packed >> 32) as usize as *mut u8;
+            let __len = (__packed & 0xffff_ffff) as usize;
+            // SAFETY: the host allocated `__len` bytes (align 1) with `__wl_malloc`,
+            // matching Vec<u8>'s allocator, and transfers ownership.
+            unsafe { ::std::vec::Vec::from_raw_parts(__ptr, __len, __len) }
+        }
+        // The host calls `__wl_malloc` to build the returned bytes; keep it exported.
+        const _: () = {
+            #[used]
+            static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = $crate::__wl_malloc;
+        };
+    };
     // Terminal: numeric return.
     (@munch ns=$ns:literal, name=$fname:ident, ret=($ret:ident),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
@@ -242,6 +282,10 @@ macro_rules! __import_descr_args {
     ( $a:ident : & str , $($rest:tt)* ) => {
         concat!("str,", $crate::__import_descr_args!($($rest)*))
     };
+    ( $a:ident : & [u8] ) => { "bytes" };
+    ( $a:ident : & [u8] , $($rest:tt)* ) => {
+        concat!("bytes,", $crate::__import_descr_args!($($rest)*))
+    };
     ( $a:ident : & JsValue ) => { "handle" };
     ( $a:ident : & JsValue , $($rest:tt)* ) => {
         concat!("handle,", $crate::__import_descr_args!($($rest)*))
@@ -263,6 +307,7 @@ macro_rules! __import_descr_ret {
     () => { "" };
     ( JsValue ) => { "handle" };
     ( String ) => { "str" };
+    ( Vec<u8> ) => { "bytes" };
     ( $r:ident ) => { stringify!($r) };
 }
 

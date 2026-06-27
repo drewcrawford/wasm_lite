@@ -75,6 +75,15 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 call_args.push(name.clone());
                 arg_tags.push("str");
             }
+            "&[u8]" => {
+                flat_params.push(format!("{name}_ptr: *const u8"));
+                flat_params.push(format!("{name}_len: usize"));
+                pre.push_str(&format!(
+                    "let {name} = unsafe {{ ::core::slice::from_raw_parts({name}_ptr, {name}_len) }};"
+                ));
+                call_args.push(name.clone());
+                arg_tags.push("bytes");
+            }
             "i32" | "u32" | "f64" => {
                 flat_params.push(format!("{name}: {ty}"));
                 call_args.push(name.clone());
@@ -111,6 +120,18 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
                  (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
             ),
         ),
+        Some("Vec<u8>") => (
+            " -> i64".to_string(),
+            "bytes",
+            // Same packing as a String, but the bytes are returned verbatim.
+            format!(
+                "let __r: ::std::vec::Vec<u8> = {call}; \
+                 let __len = __r.len(); \
+                 let __ptr = ::wasm_lite::__wl_malloc(__len); \
+                 unsafe {{ ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }} \
+                 (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
+            ),
+        ),
         Some(other) => {
             return compile_error(&format!("#[wasm_lite::export]: unsupported return type `{other}`"));
         }
@@ -118,7 +139,9 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // String marshalling needs the allocator exported even when the shim itself
     // doesn't call it (e.g. only `&str` args). Force-keep both.
-    let needs_alloc = sig.params.iter().any(|(_, t)| t == "&str") || ret_tag == "str";
+    let needs_alloc = sig.params.iter().any(|(_, t)| t == "&str" || t == "&[u8]")
+        || ret_tag == "str"
+        || ret_tag == "bytes";
     let keep_alloc = if needs_alloc {
         "const _: () = { \
             #[used] static __WL_KEEP_MALLOC: extern \"C\" fn(usize) -> *mut u8 = ::wasm_lite::__wl_malloc; \
@@ -178,16 +201,19 @@ fn parse_signature(item: &TokenStream) -> Option<Signature> {
     let name = name?;
     let params = parse_params(params_group?.stream())?;
 
-    // Return type: tokens after `->`, up to the body `{ ... }`.
+    // Return type: tokens after `->`, up to the body `{ ... }`. Detect the arrow
+    // as `-` then `>` so a `>` *inside* the type (e.g. `Vec<u8>`) isn't mistaken
+    // for the arrow and dropped.
     let mut ret = String::new();
     let mut after_arrow = false;
+    let mut prev_dash = false;
     for tt in iter {
         match &tt {
             TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => break,
-            TokenTree::Punct(p) if p.as_char() == '>' => after_arrow = true,
-            TokenTree::Punct(p) if p.as_char() == '-' => {}
             _ if after_arrow => ret.push_str(&tt.to_string()),
-            _ => {}
+            TokenTree::Punct(p) if p.as_char() == '-' => prev_dash = true,
+            TokenTree::Punct(p) if p.as_char() == '>' && prev_dash => after_arrow = true,
+            _ => prev_dash = false,
         }
     }
 

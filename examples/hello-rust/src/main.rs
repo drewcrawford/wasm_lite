@@ -52,6 +52,12 @@ mod strings {
         "JSON" {
             fn stringify(value: &str) -> String;  // &str in, String out
         }
+        "console" {
+            fn log_bytes(data: &[u8]) as "log";   // &[u8] in -> console.log(Uint8Array)
+        }
+        "Uint8Array" {
+            fn of3(a: i32, b: i32, c: i32) -> Vec<u8> as "of";  // JS bytes -> Vec<u8>
+        }
     }
 }
 
@@ -84,4 +90,11 @@ fn main() {
     wasm_lite::console::log(&format!("String.fromCharCode(65) = {a}"));
     let s: String = strings::stringify("hi 🌍");
     wasm_lite::console::log(&format!("JSON.stringify(\"hi 🌍\") = {s}"));
+
+    // A borrowed byte slice passed to JS (no UTF-8 — raw bytes as a Uint8Array).
+    strings::log_bytes(&[72, 73, 74]); // console.log(Uint8Array[72, 73, 74])
+
+    // An owned Vec<u8> received from JS (Uint8Array.of -> Rust takes ownership).
+    let v: Vec<u8> = strings::of3(1, 2, 3);
+    wasm_lite::console::log(&format!("Uint8Array.of(1,2,3) -> Vec<u8> = {v:?} (len {})", v.len()));
 }

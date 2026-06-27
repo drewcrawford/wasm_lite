@@ -26,3 +26,13 @@ pub fn greet(name: &str) -> String {
 pub fn shout(s: &str) -> String {
     s.to_uppercase()
 }
+
+#[export]
+pub fn sum_bytes(data: &[u8]) -> u32 {
+    data.iter().map(|&b| b as u32).sum()
+}
+
+#[export]
+pub fn make_bytes(n: i32) -> Vec<u8> {
+    (0..n).map(|i| i as u8).collect()
+}

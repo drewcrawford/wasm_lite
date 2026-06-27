@@ -20,6 +20,8 @@ pub enum ExportArg {
     Num,
     /// A `&str`: allocate in wasm memory, write, pass `(ptr, len)`, then free.
     Str,
+    /// A `&[u8]`: allocate in wasm memory, write the bytes, pass `(ptr, len)`, then free.
+    Bytes,
 }
 
 /// How an export's return value is presented to JS.
@@ -33,6 +35,8 @@ pub enum ExportRet {
     Value,
     /// A `String`: returned as a packed `(ptr, len)` to decode and free.
     Str,
+    /// A `Vec<u8>`: returned as a packed `(ptr, len)` to copy out and free.
+    Bytes,
 }
 
 /// Read exported-function descriptors from a compiled wasm module.
@@ -63,12 +67,17 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
         let args = arg_tags
             .split(',')
             .filter(|t| !t.is_empty())
-            .map(|t| if t == "str" { ExportArg::Str } else { ExportArg::Num })
+            .map(|t| match t {
+                "str" => ExportArg::Str,
+                "bytes" => ExportArg::Bytes,
+                _ => ExportArg::Num,
+            })
             .collect();
         let ret = match ret_tag {
             "" => ExportRet::Void,
             "bool" => ExportRet::Bool,
             "str" => ExportRet::Str,
+            "bytes" => ExportRet::Bytes,
             _ => ExportRet::Value,
         };
 
@@ -95,6 +104,18 @@ mod tests {
                 Export { name: "is_even".into(), args: vec![ExportArg::Num], ret: ExportRet::Bool },
                 Export { name: "greet".into(), args: vec![ExportArg::Str], ret: ExportRet::Str },
                 Export { name: "tick".into(), args: vec![], ret: ExportRet::Void },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_byte_exports() {
+        let section = b"sum_bytes|bytes|u32\nmake_bytes|i32|bytes\n";
+        assert_eq!(
+            parse(section).unwrap(),
+            vec![
+                Export { name: "sum_bytes".into(), args: vec![ExportArg::Bytes], ret: ExportRet::Value },
+                Export { name: "make_bytes".into(), args: vec![ExportArg::Num], ret: ExportRet::Bytes },
             ]
         );
     }

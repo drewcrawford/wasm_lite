@@ -28,6 +28,8 @@ pub enum Ret {
     Handle,
     /// A JS string: allocate it in wasm memory and return a packed `(ptr, len)`.
     Str,
+    /// JS bytes: copy them into wasm memory and return a packed `(ptr, len)`.
+    Bytes,
     /// A primitive returned directly (the tag is kept for documentation).
     Value(String),
 }
@@ -54,6 +56,8 @@ pub struct Descriptor {
 pub enum AbiArg {
     /// A `&str`: arrives as two wasm params `(ptr, len)`; decode from memory.
     Str,
+    /// A `&[u8]`: arrives as two wasm params `(ptr, len)`; a memory view, no decode.
+    Bytes,
     /// A `bool`: arrives as one `i32`; present to JS as a real boolean.
     Bool,
     /// A numeric type (`i32`, `u32`, `f64`, ...): one param, passed through.
@@ -66,7 +70,7 @@ impl AbiArg {
     /// Number of wasm-level parameters this argument occupies.
     pub fn param_count(self) -> usize {
         match self {
-            AbiArg::Str => 2,
+            AbiArg::Str | AbiArg::Bytes => 2,
             AbiArg::Bool | AbiArg::Num | AbiArg::Handle => 1,
         }
     }
@@ -74,6 +78,7 @@ impl AbiArg {
     fn from_tag(tag: &str) -> Self {
         match tag {
             "str" => AbiArg::Str,
+            "bytes" => AbiArg::Bytes,
             "bool" => AbiArg::Bool,
             "handle" => AbiArg::Handle,
             _ => AbiArg::Num,
@@ -123,6 +128,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
             "" => Ret::Void,
             "handle" => Ret::Handle,
             "str" => Ret::Str,
+            "bytes" => Ret::Bytes,
             other => Ret::Value(other.to_string()),
         };
 
@@ -178,6 +184,16 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn parses_byte_slices_and_vecs() {
+        let section = b"f|c|c::write|write|bytes|\nf|c|c::read|read||bytes\n";
+        let got = parse(section).unwrap();
+        assert_eq!(got[0].args, vec![AbiArg::Bytes]);
+        assert_eq!(got[0].ret, Ret::Void);
+        assert_eq!(got[1].args, vec![]);
+        assert_eq!(got[1].ret, Ret::Bytes);
     }
 
     #[test]
