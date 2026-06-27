@@ -296,3 +296,248 @@ fn fn_name(item: TokenStream) -> Option<String> {
 fn compile_error(message: &str) -> TokenStream {
     TokenStream::from_str(&format!("compile_error!({message:?});")).unwrap()
 }
+
+/// Declare a typed handle wrapper over a JS object.
+///
+/// ```ignore
+/// wasm_lite::js_class! {
+///     type JsArray;
+///     impl JsArray {
+///         fn push(&self, value: f64) -> f64;            // method
+///         fn join(&self, sep: &str) -> String;          // &str arg, String return
+///         fn concat(&self, other: &JsArray) -> JsArray; // typed arg + typed return
+///     }
+/// }
+/// ```
+///
+/// Generates a newtype `struct JsArray(JsValue)` with `from_js`/`as_js`/`into_js`
+/// conversions and one method per declared function. Each method lowers to a
+/// `receiver[jsName](args)` call: it delegates the ABI to [`import!`] (so `&str`,
+/// `&[u8]`, numbers, `bool`, and handles all marshal exactly as they do there),
+/// adding only the typed veneer — object types (`&JsArray`, `-> JsArray`) cross
+/// the boundary as value-table handles and are wrapped/unwrapped automatically.
+///
+/// Use `as "jsName"` to bind a JS name that differs from the Rust method name
+/// (e.g. `fn set_attribute(&self, ...) as "setAttribute"`).
+///
+/// [`import!`]: wasm_lite::import
+#[proc_macro]
+pub fn js_class(input: TokenStream) -> TokenStream {
+    match build_js_class(input) {
+        Ok(ts) => ts,
+        Err(msg) => compile_error(&msg),
+    }
+}
+
+/// A parsed `js_class!` method: `fn name(&self, params) -> ret as "js";`.
+struct Method {
+    name: String,
+    params: Vec<(String, String)>,
+    ret: Option<String>,
+    js: Option<String>,
+}
+
+fn build_js_class(input: TokenStream) -> Result<TokenStream, String> {
+    let mut it = input.into_iter().peekable();
+
+    // `type Class;`
+    expect_ident(&mut it, "type")?;
+    let class = next_ident(&mut it)?;
+    expect_punct(&mut it, ';')?;
+
+    // `impl Class { ... }`
+    expect_ident(&mut it, "impl")?;
+    let class2 = next_ident(&mut it)?;
+    if class2 != class {
+        return Err(format!("`impl {class2}` does not match `type {class}`"));
+    }
+    let body = match it.next() {
+        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => g,
+        _ => return Err("expected `{ ... }` after `impl`".into()),
+    };
+    let methods = parse_methods(body.stream())?;
+
+    // Generate the typed wrappers and the matching `import!` method decls.
+    let module = format!("__wl_class_{class}");
+    let mut wrappers = String::new();
+    let mut import_decls = String::new();
+    for m in &methods {
+        let mut imp_args = vec!["this: &JsValue".to_string()];
+        let mut wrap_params = Vec::new();
+        let mut call_args = vec!["self.as_js()".to_string()];
+        for (n, ty) in &m.params {
+            wrap_params.push(format!("{n}: {ty}"));
+            match arg_kind(ty) {
+                ArgKind::Passthrough => {
+                    imp_args.push(format!("{n}: {ty}"));
+                    call_args.push(n.clone());
+                }
+                ArgKind::ObjectRef => {
+                    // A typed object handle: import it as `&JsValue`, lower via as_js().
+                    imp_args.push(format!("{n}: &JsValue"));
+                    call_args.push(format!("{n}.as_js()"));
+                }
+                ArgKind::Unsupported => {
+                    return Err(format!(
+                        "js_class method `{}`: unsupported argument type `{ty}` (object args must be `&T`)",
+                        m.name
+                    ));
+                }
+            }
+        }
+
+        let call = format!("{module}::{}({})", m.name, call_args.join(", "));
+        let (wrap_ret, imp_ret, body) = match m.ret.as_deref() {
+            None => (String::new(), String::new(), format!("{call};")),
+            Some(ty) if is_builtin_ret(ty) => (format!(" -> {ty}"), format!(" -> {ty}"), call),
+            // A typed object return: the import yields a handle; wrap it.
+            Some(ty) => (format!(" -> {ty}"), " -> JsValue".to_string(), format!("{ty}::from_js({call})")),
+        };
+
+        let recv = if wrap_params.is_empty() {
+            "&self".to_string()
+        } else {
+            format!("&self, {}", wrap_params.join(", "))
+        };
+        wrappers.push_str(&format!("    pub fn {}({recv}){wrap_ret} {{ {body} }}\n", m.name));
+
+        let js = m.js.clone().unwrap_or_else(|| m.name.clone());
+        import_decls.push_str(&format!(
+            "            fn {}({}){imp_ret} as {js:?};\n",
+            m.name,
+            imp_args.join(", ")
+        ));
+    }
+
+    let generated = format!(
+        "pub struct {class}(::wasm_lite::JsValue);\n\
+         impl {class} {{\n\
+         \x20   /// Wrap a `JsValue` as this type (unchecked — no runtime type test).\n\
+         \x20   pub fn from_js(v: ::wasm_lite::JsValue) -> Self {{ {class}(v) }}\n\
+         \x20   /// Borrow the underlying handle.\n\
+         \x20   pub fn as_js(&self) -> &::wasm_lite::JsValue {{ &self.0 }}\n\
+         \x20   /// Unwrap into the underlying handle.\n\
+         \x20   pub fn into_js(self) -> ::wasm_lite::JsValue {{ self.0 }}\n\
+         {wrappers}\
+         }}\n\
+         impl ::core::convert::From<{class}> for ::wasm_lite::JsValue {{\n\
+         \x20   fn from(v: {class}) -> Self {{ v.0 }}\n\
+         }}\n\
+         mod {module} {{\n\
+         \x20   use ::wasm_lite::JsValue;\n\
+         \x20   ::wasm_lite::import! {{\n\
+         \x20       {class:?} {{\n\
+         {import_decls}\
+         \x20       }}\n\
+         \x20   }}\n\
+         }}\n"
+    );
+
+    TokenStream::from_str(&generated).map_err(|e| format!("js_class generated invalid code: {e}"))
+}
+
+fn parse_methods(stream: TokenStream) -> Result<Vec<Method>, String> {
+    let mut it = stream.into_iter().peekable();
+    let mut methods = Vec::new();
+    while it.peek().is_some() {
+        expect_ident(&mut it, "fn")?;
+        let name = next_ident(&mut it)?;
+        let params_group = match it.next() {
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis => g,
+            _ => return Err(format!("expected `(...)` after `fn {name}`")),
+        };
+        let params = parse_self_params(params_group.stream())?;
+        let (ret, js) = parse_ret_and_js(&mut it)?;
+        methods.push(Method { name, params, ret, js });
+    }
+    Ok(methods)
+}
+
+/// Parse a method's parameter list, requiring a leading `&self`.
+fn parse_self_params(stream: TokenStream) -> Result<Vec<(String, String)>, String> {
+    let toks: Vec<TokenTree> = stream.into_iter().collect();
+    let has_self = matches!(toks.first(), Some(TokenTree::Punct(p)) if p.as_char() == '&')
+        && matches!(toks.get(1), Some(TokenTree::Ident(i)) if i.to_string() == "self");
+    if !has_self {
+        return Err("js_class methods must take `&self` as the first parameter".into());
+    }
+    if toks.len() == 2 {
+        return Ok(Vec::new());
+    }
+    if !matches!(toks.get(2), Some(TokenTree::Punct(p)) if p.as_char() == ',') {
+        return Err("expected `,` after `&self`".into());
+    }
+    let rest: TokenStream = toks[3..].iter().cloned().collect();
+    parse_params(rest).ok_or_else(|| "could not parse method parameters".into())
+}
+
+/// Parse an optional `-> Ret` and optional `as "js"`, consuming the trailing `;`.
+fn parse_ret_and_js(
+    it: &mut std::iter::Peekable<impl Iterator<Item = TokenTree>>,
+) -> Result<(Option<String>, Option<String>), String> {
+    let mut ret = String::new();
+    let mut js = None;
+    let mut after_arrow = false;
+    let mut prev_dash = false;
+    while let Some(tt) = it.next() {
+        match &tt {
+            TokenTree::Punct(p) if p.as_char() == ';' => {
+                return Ok((if ret.is_empty() { None } else { Some(ret) }, js));
+            }
+            TokenTree::Ident(i) if i.to_string() == "as" => match it.next() {
+                Some(TokenTree::Literal(l)) => {
+                    js = Some(l.to_string().trim_matches('"').to_string());
+                }
+                _ => return Err("expected a string literal after `as`".into()),
+            },
+            _ if after_arrow => ret.push_str(&tt.to_string()),
+            TokenTree::Punct(p) if p.as_char() == '-' => prev_dash = true,
+            TokenTree::Punct(p) if p.as_char() == '>' && prev_dash => after_arrow = true,
+            _ => prev_dash = false,
+        }
+    }
+    Err("expected `;` to end a js_class method".into())
+}
+
+/// How a method argument crosses into the underlying `import!` call.
+enum ArgKind {
+    /// A builtin (`&str`, `&[u8]`, `&JsValue`, numeric, `bool`): passed unchanged.
+    Passthrough,
+    /// A typed object handle (`&Foo`): lowered to `&JsValue` via `as_js()`.
+    ObjectRef,
+    Unsupported,
+}
+
+fn arg_kind(ty: &str) -> ArgKind {
+    match ty {
+        "&str" | "&[u8]" | "&JsValue" | "i32" | "u32" | "f64" | "bool" => ArgKind::Passthrough,
+        _ if ty.starts_with('&') => ArgKind::ObjectRef,
+        _ => ArgKind::Unsupported,
+    }
+}
+
+/// Whether a return type is a builtin (marshalled by `import!`) vs a typed class.
+fn is_builtin_ret(ty: &str) -> bool {
+    matches!(ty, "i32" | "u32" | "f64" | "bool" | "String" | "Vec<u8>" | "JsValue")
+}
+
+fn expect_ident(it: &mut impl Iterator<Item = TokenTree>, want: &str) -> Result<(), String> {
+    match it.next() {
+        Some(TokenTree::Ident(i)) if i.to_string() == want => Ok(()),
+        other => Err(format!("expected `{want}`, found {other:?}")),
+    }
+}
+
+fn next_ident(it: &mut impl Iterator<Item = TokenTree>) -> Result<String, String> {
+    match it.next() {
+        Some(TokenTree::Ident(i)) => Ok(i.to_string()),
+        other => Err(format!("expected an identifier, found {other:?}")),
+    }
+}
+
+fn expect_punct(it: &mut impl Iterator<Item = TokenTree>, want: char) -> Result<(), String> {
+    match it.next() {
+        Some(TokenTree::Punct(p)) if p.as_char() == want => Ok(()),
+        other => Err(format!("expected `{want}`, found {other:?}")),
+    }
+}

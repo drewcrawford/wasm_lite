@@ -61,6 +61,25 @@ mod strings {
     }
 }
 
+// An import that hands us a fresh JS array to wrap.
+mod arr {
+    wasm_lite::import! {
+        "Array" { fn of3(a: f64, b: f64, c: f64) -> JsValue as "of"; }
+    }
+}
+
+// A typed handle wrapper over a JS `Array` — methods lower to `arr[name](args)`,
+// reusing the import! ABI. Object args/returns (`&JsArray`/`JsArray`) cross as
+// handles and are wrapped automatically.
+wasm_lite::js_class! {
+    type JsArray;
+    impl JsArray {
+        fn push(&self, value: f64) -> f64;
+        fn join(&self, sep: &str) -> String;
+        fn concat(&self, other: &JsArray) -> JsArray;
+    }
+}
+
 fn main() {
     wasm_lite::console::log("hello, world from rust");
     wasm_lite::console::error("this is console.error from rust");
@@ -97,4 +116,12 @@ fn main() {
     // An owned Vec<u8> received from JS (Uint8Array.of -> Rust takes ownership).
     let v: Vec<u8> = strings::of3(1, 2, 3);
     wasm_lite::console::log(&format!("Uint8Array.of(1,2,3) -> Vec<u8> = {v:?} (len {})", v.len()));
+
+    // Typed JS object via js_class!: wrap an array handle, call typed methods.
+    let a = JsArray::from_js(arr::of3(1.0, 2.0, 3.0));
+    let len = a.push(4.0); // arr.push(4) -> new length
+    wasm_lite::console::log(&format!("JsArray::push(4) -> len {len}, join = {}", a.join("-")));
+    let b = JsArray::from_js(arr::of3(5.0, 6.0, 7.0));
+    let c = a.concat(&b); // typed arg + typed return -> JsArray
+    wasm_lite::console::log(&format!("a.concat(b).join(\",\") = {}", c.join(",")));
 }

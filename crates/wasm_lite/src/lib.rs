@@ -16,7 +16,7 @@ pub mod performance;
 pub mod interop;
 
 pub use value::JsValue;
-pub use wasm_lite_macro::{export, wasm_lite_test};
+pub use wasm_lite_macro::{export, js_class, wasm_lite_test};
 
 /// Install a panic hook that reports the panic message via `console.error`.
 ///
