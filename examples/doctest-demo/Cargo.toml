@@ -1,0 +1,9 @@
+[package]
+name = "doctest-demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wasm_lite = { path = "../../crates/wasm_lite" }
+
+[workspace]

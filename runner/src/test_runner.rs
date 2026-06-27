@@ -12,15 +12,10 @@ use crate::{PROGRAM_JS, PROGRAM_WASM, Route, bind, read, serve};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-/// Should this program be run in test mode? True for a `tests!` harness wasm.
-pub fn is_test(program: &Path) -> bool {
-    program.extension().and_then(|e| e.to_str()) == Some("wasm")
-        && read(program)
-            .map(|m| !wasm_lite_codegen::test_names(&m).is_empty())
-            .unwrap_or(false)
-}
-
 /// Run a wasm program headless in a browser and return a process exit code.
+///
+/// A `tests!`-harness wasm runs each test; a plain `bin` (including a rustdoc
+/// doctest) runs `main` once (pass = ran to completion, trap = failure).
 pub fn run(program: &Path) -> i32 {
     let module = match prepare(program) {
         Ok(m) => m,

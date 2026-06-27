@@ -37,20 +37,24 @@ fn main() {
         Ok(a) => a,
         Err(msg) => {
             eprintln!("{msg}");
-            eprintln!("usage: runner [--test] <program.js|program.wasm>");
+            eprintln!("usage: runner [--serve] <program.js|program.wasm>");
             std::process::exit(2);
         }
     };
 
-    // Run headless and exit with a status code (for use as a Cargo test runner)
-    // when asked with `--test`, or automatically for a `tests!` harness wasm.
-    // Otherwise serve + open a browser.
-    if args.test || test_runner::is_test(&args.program) {
+    // Default: run headless and exit with a status code, so the runner works as
+    // a Cargo runner for `cargo test`, doctests, and `cargo run`. `--serve` opts
+    // into the interactive server + browser instead.
+    if !args.serve {
         std::process::exit(test_runner::run(&args.program));
     }
 
-    let program = args.program;
-    let routes = match build_routes(&program) {
+    serve_interactive(&args.program);
+}
+
+/// Serve the program and open a browser; runs until interrupted.
+fn serve_interactive(program: &Path) -> ! {
+    let routes = match build_routes(program) {
         Ok(routes) => routes,
         Err(err) => {
             eprintln!("error: {err}");
@@ -75,29 +79,32 @@ fn main() {
 /// Parsed command-line arguments.
 struct Args {
     program: PathBuf,
-    test: bool,
+    serve: bool,
 }
 
 /// Parse command-line arguments.
 ///
-/// The first non-flag argument is the program (`.js` or `.wasm`); `--test`
-/// selects headless test mode. Any other arguments are ignored, so the runner
-/// can be used directly as a Cargo runner
-/// (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`), where Cargo invokes it as
-/// `runner [--test] <artifact.wasm> [harness args…]`.
+/// The first non-flag argument is the program (`.js` or `.wasm`); `--serve`
+/// opts into the interactive server. Other flags (e.g. test-harness args Cargo
+/// appends) are ignored, so the runner works directly as a Cargo runner
+/// (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`), invoked as
+/// `runner <artifact.wasm> [harness args…]`.
 fn parse_args() -> Result<Args, String> {
     let mut program = None;
-    let mut test = false;
+    let mut serve = false;
     for arg in std::env::args_os().skip(1) {
-        if arg == "--test" {
-            test = true;
+        let text = arg.to_string_lossy();
+        if text == "--serve" {
+            serve = true;
+        } else if text.starts_with('-') {
+            // Ignore other flags (e.g. `--test`, or test-harness arguments).
         } else if program.is_none() {
             program = Some(PathBuf::from(arg));
         }
     }
     Ok(Args {
         program: program.ok_or_else(|| "error: missing program path".to_string())?,
-        test,
+        serve,
     })
 }
 
