@@ -194,6 +194,30 @@ macro_rules! __import_fn {
             $crate::JsValue::__wl_from_abi(unsafe { $fname($($call)*) })
         }
     };
+    // Terminal: String return. The host allocates the bytes (via __wl_malloc)
+    // and returns a packed `(ptr << 32) | len`; we take ownership.
+    (@munch ns=$ns:literal, name=$fname:ident, ret=(String),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( )) => {
+        pub fn $fname($($orig)*) -> ::std::string::String {
+            #[link(wasm_import_module = $ns)]
+            unsafe extern "C" {
+                #[link_name = concat!(module_path!(), "::", stringify!($fname))]
+                fn $fname($($flat)*) -> i64;
+            }
+            let __packed = unsafe { $fname($($call)*) } as u64;
+            let __ptr = (__packed >> 32) as usize as *mut u8;
+            let __len = (__packed & 0xffff_ffff) as usize;
+            // SAFETY: the host allocated `__len` bytes (align 1) with
+            // `__wl_malloc`, matching String's allocator, and transfers ownership.
+            unsafe { ::std::string::String::from_raw_parts(__ptr, __len, __len) }
+        }
+        // The host calls `__wl_malloc` to build the returned string; keep it exported.
+        const _: () = {
+            #[used]
+            static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = $crate::__wl_malloc;
+        };
+    };
     // Terminal: numeric return.
     (@munch ns=$ns:literal, name=$fname:ident, ret=($ret:ident),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
@@ -238,6 +262,7 @@ macro_rules! __import_descr_args {
 macro_rules! __import_descr_ret {
     () => { "" };
     ( JsValue ) => { "handle" };
+    ( String ) => { "str" };
     ( $r:ident ) => { stringify!($r) };
 }
 

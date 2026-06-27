@@ -42,6 +42,19 @@ mod jsapi {
     }
 }
 
+// Imports that *return* strings: the host allocates the JS string into wasm
+// memory and Rust receives an owned `String`.
+mod strings {
+    wasm_lite::import! {
+        "String" {
+            fn from_char_code(code: i32) -> String as "fromCharCode";
+        }
+        "JSON" {
+            fn stringify(value: &str) -> String;  // &str in, String out
+        }
+    }
+}
+
 fn main() {
     wasm_lite::console::log("hello, world from rust");
     wasm_lite::console::error("this is console.error from rust");
@@ -65,4 +78,10 @@ fn main() {
     wasm_lite::console::log(&format!("after push, array length = {new_len}"));
     jsapi::log_value(&arr); // console.log(arr) -> shows the live JS array
     // `arr` drops here, freeing its value-table slot via __wl_drop.
+
+    // Imports returning owned Strings (host allocates into wasm memory).
+    let a: String = strings::from_char_code(65);
+    wasm_lite::console::log(&format!("String.fromCharCode(65) = {a}"));
+    let s: String = strings::stringify("hi 🌍");
+    wasm_lite::console::log(&format!("JSON.stringify(\"hi 🌍\") = {s}"));
 }

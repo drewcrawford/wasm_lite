@@ -26,6 +26,8 @@ pub enum Ret {
     Void,
     /// A JS object: store it in the value table and return the handle.
     Handle,
+    /// A JS string: allocate it in wasm memory and return a packed `(ptr, len)`.
+    Str,
     /// A primitive returned directly (the tag is kept for documentation).
     Value(String),
 }
@@ -120,6 +122,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
         let ret = match ret_tag {
             "" => Ret::Void,
             "handle" => Ret::Handle,
+            "str" => Ret::Str,
             other => Ret::Value(other.to_string()),
         };
 

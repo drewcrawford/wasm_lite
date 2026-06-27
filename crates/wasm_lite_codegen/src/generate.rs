@@ -1,7 +1,7 @@
 //! Generate the JavaScript glue module from import descriptors.
 
 use crate::descriptor::{AbiArg, Descriptor, Kind, Ret};
-use crate::exports::{Export, ExportRet};
+use crate::exports::{Export, ExportArg, ExportRet};
 use std::fmt::Write;
 
 const PREAMBLE: &str = "\
@@ -13,6 +13,15 @@ let __wl_instance;
 // view is taken each call so it stays valid if the module grows its memory.
 function __wl_str(ptr, len) {
     return new TextDecoder(\"utf-8\").decode(new Uint8Array(__wl_memory.buffer, ptr, len));
+}
+
+// Copy a JS string into wasm memory for an export argument; returns [ptr, len].
+// The caller frees it with __wl_free after the call.
+function __wl_pass_str(s) {
+    const bytes = new TextEncoder().encode(s);
+    const ptr = __wl_instance.exports.__wl_malloc(bytes.length);
+    new Uint8Array(__wl_memory.buffer, ptr, bytes.length).set(bytes);
+    return [ptr, bytes.length];
 }
 
 // Value table: opaque handles to JS values. Rust holds an index; the table
@@ -74,17 +83,66 @@ pub fn generate_glue(imports: &[Descriptor], exports: &[Export]) -> String {
     js
 }
 
-/// Emit one export wrapper: a JS function forwarding to the wasm export shim.
+/// Emit one export wrapper: a JS function that marshals `&str` args into wasm
+/// memory, forwards to the export shim, frees, and unwraps the return.
 fn emit_export(js: &mut String, export: &Export) {
-    let params: Vec<String> = (0..export.arg_count).map(|i| format!("p{i}")).collect();
-    let params = params.join(", ");
-    let call = format!("__wl_instance.exports.__wl_export_{}({params})", export.name);
-    let body = match export.ret {
-        ExportRet::Void => format!("{call};"),
-        ExportRet::Bool => format!("return Boolean({call});"),
-        ExportRet::Value => format!("return {call};"),
-    };
-    let _ = writeln!(js, "\nexport function {}({params}) {{ {body} }}", export.name);
+    let params: Vec<String> = (0..export.args.len()).map(|i| format!("p{i}")).collect();
+
+    let mut lines = Vec::new();
+    let mut wasm_args = Vec::new();
+    let mut frees = Vec::new();
+    for (i, arg) in export.args.iter().enumerate() {
+        match arg {
+            ExportArg::Num => wasm_args.push(format!("p{i}")),
+            ExportArg::Str => {
+                lines.push(format!("const [__a{i}p, __a{i}l] = __wl_pass_str(p{i});"));
+                wasm_args.push(format!("__a{i}p"));
+                wasm_args.push(format!("__a{i}l"));
+                frees.push(format!("__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"));
+            }
+        }
+    }
+
+    let call = format!(
+        "__wl_instance.exports.__wl_export_{}({})",
+        export.name,
+        wasm_args.join(", ")
+    );
+
+    match export.ret {
+        ExportRet::Void => {
+            lines.push(format!("{call};"));
+            lines.extend(frees);
+        }
+        ExportRet::Value => {
+            lines.push(format!("const __ret = {call};"));
+            lines.extend(frees);
+            lines.push("return __ret;".into());
+        }
+        ExportRet::Bool => {
+            lines.push(format!("const __ret = {call};"));
+            lines.extend(frees);
+            lines.push("return Boolean(__ret);".into());
+        }
+        ExportRet::Str => {
+            lines.push(format!("const __ret = {call};"));
+            lines.extend(frees);
+            // The shim returns a packed i64 (BigInt in JS): (ptr << 32) | len.
+            lines.push("const __packed = BigInt.asUintN(64, __ret);".into());
+            lines.push("const __p = Number(__packed >> 32n), __l = Number(__packed & 0xffffffffn);".into());
+            lines.push("const __s = __wl_str(__p, __l);".into());
+            lines.push("__wl_instance.exports.__wl_free(__p, __l);".into());
+            lines.push("return __s;".into());
+        }
+    }
+
+    let _ = writeln!(
+        js,
+        "\nexport function {}({}) {{ {} }}",
+        export.name,
+        params.join(", "),
+        lines.join(" ")
+    );
 }
 
 /// Emit one import shim: a JS function that unmarshals wasm params and calls the
@@ -128,15 +186,31 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
         Kind::Method => format!("{}[{js_name}]", receiver.expect("method has a receiver")),
     };
     let call = format!("{target}({js_args})");
-    // A handle return stores the result in the value table and yields its index.
-    let body = match d.ret {
-        Ret::Handle => format!("__wl_add({call})"),
-        Ret::Void | Ret::Value(_) => call,
-    };
 
     // `imports[ns] ||= {}` then assign the shim, keyed on the wasm import name.
     let _ = writeln!(js, "    imports[{ns}] = imports[{ns}] || {{}};");
-    let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({params}) => {body};");
+    match &d.ret {
+        // A handle return stores the result in the value table and yields its index.
+        Ret::Handle => {
+            let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({params}) => __wl_add({call});");
+        }
+        // A string return is copied into wasm memory; Rust takes ownership and frees.
+        Ret::Str => {
+            let _ = writeln!(
+                js,
+                "    imports[{ns}][{import_name}] = ({params}) => {{ \
+                     const __r = {call}; \
+                     const __b = new TextEncoder().encode(__r); \
+                     const __p = __wl_instance.exports.__wl_malloc(__b.length); \
+                     new Uint8Array(__wl_memory.buffer, __p, __b.length).set(__b); \
+                     return (BigInt(__p) << 32n) | BigInt(__b.length); \
+                 }};"
+            );
+        }
+        Ret::Void | Ret::Value(_) => {
+            let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({params}) => {call};");
+        }
+    }
 }
 
 fn next_param(params: &mut Vec<String>) -> String {
@@ -240,13 +314,27 @@ mod tests {
     #[test]
     fn generates_export_wrappers() {
         let exports = vec![
-            Export { name: "add".into(), arg_count: 2, ret: ExportRet::Value },
-            Export { name: "is_even".into(), arg_count: 1, ret: ExportRet::Bool },
-            Export { name: "tick".into(), arg_count: 0, ret: ExportRet::Void },
+            Export { name: "add".into(), args: vec![ExportArg::Num, ExportArg::Num], ret: ExportRet::Value },
+            Export { name: "is_even".into(), args: vec![ExportArg::Num], ret: ExportRet::Bool },
+            Export { name: "tick".into(), args: vec![], ret: ExportRet::Void },
         ];
         let js = generate_glue(&[], &exports);
-        assert!(js.contains("export function add(p0, p1) { return __wl_instance.exports.__wl_export_add(p0, p1); }"));
-        assert!(js.contains("export function is_even(p0) { return Boolean(__wl_instance.exports.__wl_export_is_even(p0)); }"));
+        assert!(js.contains("export function add(p0, p1) { const __ret = __wl_instance.exports.__wl_export_add(p0, p1); return __ret; }"));
+        assert!(js.contains("export function is_even(p0) { const __ret = __wl_instance.exports.__wl_export_is_even(p0); return Boolean(__ret); }"));
         assert!(js.contains("export function tick() { __wl_instance.exports.__wl_export_tick(); }"));
+    }
+
+    #[test]
+    fn generates_string_export_wrapper() {
+        let exports = vec![Export {
+            name: "greet".into(),
+            args: vec![ExportArg::Str],
+            ret: ExportRet::Str,
+        }];
+        let js = generate_glue(&[], &exports);
+        assert!(js.contains("const [__a0p, __a0l] = __wl_pass_str(p0);"));
+        assert!(js.contains("__wl_instance.exports.__wl_export_greet(__a0p, __a0l)"));
+        assert!(js.contains("__wl_instance.exports.__wl_free(__a0p, __a0l);"));
+        assert!(js.contains("const __s = __wl_str(__p, __l);"));
     }
 }

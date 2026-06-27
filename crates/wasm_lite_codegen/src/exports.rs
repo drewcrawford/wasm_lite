@@ -7,10 +7,19 @@
 pub struct Export {
     /// The JS-callable name (the Rust fn name).
     pub name: String,
-    /// Number of arguments (all pass through to the `u32`/`f64`/... ABI).
-    pub arg_count: usize,
+    /// Argument types, in order.
+    pub args: Vec<ExportArg>,
     /// How the return value is presented to JS.
     pub ret: ExportRet,
+}
+
+/// How an exported function's argument crosses from JS into wasm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportArg {
+    /// A number/bool, passed through.
+    Num,
+    /// A `&str`: allocate in wasm memory, write, pass `(ptr, len)`, then free.
+    Str,
 }
 
 /// How an export's return value is presented to JS.
@@ -22,6 +31,8 @@ pub enum ExportRet {
     Bool,
     /// A number, returned directly.
     Value,
+    /// A `String`: returned as a packed `(ptr, len)` to decode and free.
+    Str,
 }
 
 /// Read exported-function descriptors from a compiled wasm module.
@@ -49,16 +60,21 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
             return Err(format!("malformed export line: {line:?}"));
         }
 
-        let arg_count = arg_tags.split(',').filter(|t| !t.is_empty()).count();
+        let args = arg_tags
+            .split(',')
+            .filter(|t| !t.is_empty())
+            .map(|t| if t == "str" { ExportArg::Str } else { ExportArg::Num })
+            .collect();
         let ret = match ret_tag {
             "" => ExportRet::Void,
             "bool" => ExportRet::Bool,
+            "str" => ExportRet::Str,
             _ => ExportRet::Value,
         };
 
         exports.push(Export {
             name: name.to_string(),
-            arg_count,
+            args,
             ret,
         });
     }
@@ -71,13 +87,14 @@ mod tests {
 
     #[test]
     fn parses_exports() {
-        let section = b"add|i32,i32|i32\nis_even|i32|bool\ntick||\n";
+        let section = b"add|i32,i32|i32\nis_even|i32|bool\ngreet|str|str\ntick||\n";
         assert_eq!(
             parse(section).unwrap(),
             vec![
-                Export { name: "add".into(), arg_count: 2, ret: ExportRet::Value },
-                Export { name: "is_even".into(), arg_count: 1, ret: ExportRet::Bool },
-                Export { name: "tick".into(), arg_count: 0, ret: ExportRet::Void },
+                Export { name: "add".into(), args: vec![ExportArg::Num, ExportArg::Num], ret: ExportRet::Value },
+                Export { name: "is_even".into(), args: vec![ExportArg::Num], ret: ExportRet::Bool },
+                Export { name: "greet".into(), args: vec![ExportArg::Str], ret: ExportRet::Str },
+                Export { name: "tick".into(), args: vec![], ret: ExportRet::Void },
             ]
         );
     }

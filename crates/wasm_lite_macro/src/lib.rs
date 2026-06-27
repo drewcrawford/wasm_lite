@@ -58,39 +58,82 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
         None => return compile_error("#[wasm_lite::export] must be on a plain function"),
     };
 
-    // Validate and build the flattened ABI + the descriptor tags.
-    let mut params = String::new(); // `a: i32, b: i32`
-    let mut call_args = String::new(); // `a, (b != 0)`
-    let mut arg_tags = String::new(); // `i32,bool`
-    for (i, (name, ty)) in sig.params.iter().enumerate() {
-        if i > 0 {
-            params.push_str(", ");
-            call_args.push_str(", ");
-            arg_tags.push(',');
+    // Build the flattened ABI params, argument reconstructions, the call, and
+    // descriptor tags.
+    let mut flat_params = Vec::new(); // shim parameter declarations
+    let mut pre = String::new(); // statements reconstructing args before the call
+    let mut call_args = Vec::new(); // arguments passed to the user function
+    let mut arg_tags = Vec::new(); // descriptor tags
+    for (name, ty) in &sig.params {
+        match ty.as_str() {
+            "&str" => {
+                flat_params.push(format!("{name}_ptr: *const u8"));
+                flat_params.push(format!("{name}_len: usize"));
+                pre.push_str(&format!(
+                    "let {name} = unsafe {{ ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts({name}_ptr, {name}_len)) }};"
+                ));
+                call_args.push(name.clone());
+                arg_tags.push("str");
+            }
+            "i32" | "u32" | "f64" => {
+                flat_params.push(format!("{name}: {ty}"));
+                call_args.push(name.clone());
+                arg_tags.push(ty);
+            }
+            "bool" => {
+                flat_params.push(format!("{name}: i32"));
+                call_args.push(format!("({name} != 0)"));
+                arg_tags.push("bool");
+            }
+            other => {
+                return compile_error(&format!("#[wasm_lite::export]: unsupported argument type `{other}`"));
+            }
         }
-        let Some(abi) = abi_ty(ty) else {
-            return compile_error(&format!("#[wasm_lite::export]: unsupported argument type `{ty}`"));
-        };
-        params.push_str(&format!("{name}: {abi}"));
-        call_args.push_str(&call_expr(name, ty));
-        arg_tags.push_str(ty);
     }
 
-    let (ret_decl, ret_tag, body) = match &sig.ret {
-        None => (String::new(), String::new(), format!("{}({call_args})", sig.name)),
-        Some(ty) => {
-            let Some(abi) = abi_ty(ty) else {
-                return compile_error(&format!("#[wasm_lite::export]: unsupported return type `{ty}`"));
-            };
-            let call = format!("{}({call_args})", sig.name);
-            (format!(" -> {abi}"), ty.clone(), ret_expr(&call, ty))
+    let call = format!("{}({})", sig.name, call_args.join(", "));
+    let (ret_decl, ret_tag, ret_expr) = match sig.ret.as_deref() {
+        None => (String::new(), "", format!("{call};")),
+        Some("i32") | Some("u32") | Some("f64") => {
+            let ty = sig.ret.as_deref().unwrap();
+            (format!(" -> {ty}"), ty, call)
+        }
+        Some("bool") => (" -> i32".to_string(), "bool", format!("(({call}) as i32)")),
+        Some("String") => (
+            " -> i64".to_string(),
+            "str",
+            // Copy into a __wl_malloc buffer JS can free, return packed (ptr, len).
+            format!(
+                "let __r: ::std::string::String = {call}; \
+                 let __len = __r.len(); \
+                 let __ptr = ::wasm_lite::__wl_malloc(__len); \
+                 unsafe {{ ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }} \
+                 (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
+            ),
+        ),
+        Some(other) => {
+            return compile_error(&format!("#[wasm_lite::export]: unsupported return type `{other}`"));
         }
     };
 
+    // String marshalling needs the allocator exported even when the shim itself
+    // doesn't call it (e.g. only `&str` args). Force-keep both.
+    let needs_alloc = sig.params.iter().any(|(_, t)| t == "&str") || ret_tag == "str";
+    let keep_alloc = if needs_alloc {
+        "const _: () = { \
+            #[used] static __WL_KEEP_MALLOC: extern \"C\" fn(usize) -> *mut u8 = ::wasm_lite::__wl_malloc; \
+            #[used] static __WL_KEEP_FREE: extern \"C\" fn(*mut u8, usize) = ::wasm_lite::__wl_free; \
+        };"
+    } else {
+        ""
+    };
+
     let name = &sig.name;
-    let descriptor = format!("{name}|{arg_tags}|{ret_tag}");
+    let descriptor = format!("{name}|{}|{ret_tag}", arg_tags.join(","));
+    let params = flat_params.join(", ");
     let generated = format!(
-        "#[unsafe(no_mangle)] pub extern \"C\" fn __wl_export_{name}({params}){ret_decl} {{ {body} }} \
+        "#[unsafe(no_mangle)] pub extern \"C\" fn __wl_export_{name}({params}){ret_decl} {{ {pre} {ret_expr} }} \
+         {keep_alloc} \
          const _: () = {{ \
              #[used] \
              #[cfg_attr(target_arch = \"wasm32\", unsafe(link_section = \"__wl_exports\"))] \
@@ -102,33 +145,6 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut out = item;
     out.extend(TokenStream::from_str(&generated).expect("wasm_lite export glue should parse"));
     out
-}
-
-/// The wasm ABI type a Rust type lowers to (`bool` -> `i32`); `None` if unsupported.
-fn abi_ty(ty: &str) -> Option<&'static str> {
-    match ty {
-        "i32" => Some("i32"),
-        "u32" => Some("u32"),
-        "f64" => Some("f64"),
-        "bool" => Some("i32"),
-        _ => None,
-    }
-}
-
-/// Convert a shim parameter back to the Rust type for the call.
-fn call_expr(name: &str, ty: &str) -> String {
-    match ty {
-        "bool" => format!("({name} != 0)"),
-        _ => name.to_string(),
-    }
-}
-
-/// Convert a Rust return value to the shim's ABI type.
-fn ret_expr(call: &str, ty: &str) -> String {
-    match ty {
-        "bool" => format!("({call}) as i32"),
-        _ => call.to_string(),
-    }
 }
 
 /// A parsed function signature: name, `(arg, type)` pairs, and return type.

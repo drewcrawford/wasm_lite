@@ -38,6 +38,32 @@ pub fn set_panic_hook() {
     }));
 }
 
+/// Allocate `len` bytes (align 1) for string/byte marshalling across the JS
+/// boundary. Exported for the generated glue; freed with [`__wl_free`].
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub extern "C" fn __wl_malloc(len: usize) -> *mut u8 {
+    if len == 0 {
+        return core::ptr::NonNull::<u8>::dangling().as_ptr();
+    }
+    match std::alloc::Layout::from_size_align(len, 1) {
+        Ok(layout) => unsafe { std::alloc::alloc(layout) },
+        Err(_) => core::ptr::null_mut(),
+    }
+}
+
+/// Free a buffer from [`__wl_malloc`] (`len` must match the allocation).
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub extern "C" fn __wl_free(ptr: *mut u8, len: usize) {
+    if len == 0 {
+        return;
+    }
+    if let Ok(layout) = std::alloc::Layout::from_size_align(len, 1) {
+        unsafe { std::alloc::dealloc(ptr, layout) }
+    }
+}
+
 /// Copy a `&str`'s bytes into a fixed-size array at compile time.
 ///
 /// Used by [`import!`] to place its descriptor text into a `#[link_section]`

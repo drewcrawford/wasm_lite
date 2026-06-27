@@ -16,3 +16,13 @@ pub fn is_even(n: i32) -> bool {
 pub fn scale(x: f64) -> f64 {
     x * 2.0
 }
+
+#[export]
+pub fn greet(name: &str) -> String {
+    format!("hello, {name}!")
+}
+
+#[export]
+pub fn shout(s: &str) -> String {
+    s.to_uppercase()
+}
