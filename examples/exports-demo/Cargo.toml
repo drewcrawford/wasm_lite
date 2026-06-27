@@ -1,0 +1,12 @@
+[package]
+name = "exports-demo"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm_lite = { path = "../../crates/wasm_lite" }
+
+[workspace]

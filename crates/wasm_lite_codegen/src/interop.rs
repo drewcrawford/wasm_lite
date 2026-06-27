@@ -21,7 +21,7 @@ pub struct InteropBundle {
     pub wb_glue_js: String,
 }
 
-const LOADER_JS: &str = r#"import { makeImports, setMemory } from "./wl_glue.js";
+const LOADER_JS: &str = r#"import { makeImports, setInstance } from "./wl_glue.js";
 import { __wbg_get_imports, __wbg_finalize_init } from "./wb_glue.js";
 
 // Neutral handoff slot for the wasm_lite <-> wasm-bindgen JsValue bridge.
@@ -37,9 +37,9 @@ globalThis.__wlbridge_take_wb = () => globalThis.__wlbridge.take();
 const imports = { ...__wbg_get_imports(), ...makeImports() };
 const { instance, module } = await WebAssembly.instantiateStreaming(fetch("./program.wasm"), imports);
 
-// Wire wasm_lite's memory BEFORE finalize: wasm-bindgen's __wbindgen_start (run
-// inside finalize) calls the bin's `main`, so our imports must be ready first.
-setMemory(instance.exports.memory);
+// Wire wasm_lite's instance BEFORE finalize: wasm-bindgen's __wbindgen_start
+// (run inside finalize) calls the bin's `main`, so our imports must be ready.
+setInstance(instance);
 __wbg_finalize_init(instance, module);
 "#;
 
@@ -76,9 +76,10 @@ pub fn build_interop(input: &Path) -> Result<InteropBundle, String> {
 
     // Our descriptors survive the CLI in the finalized module.
     let descriptors = descriptors_from_wasm(&wasm)?;
+    let exports = crate::exports_from_wasm(&wasm)?;
     Ok(InteropBundle {
         loader_js: LOADER_JS.to_string(),
-        wl_glue_js: generate_glue(&descriptors),
+        wl_glue_js: generate_glue(&descriptors, &exports),
         wb_glue_js: patch_wasm_bindgen_glue(&wb_js),
         wasm,
     })

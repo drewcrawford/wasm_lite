@@ -55,7 +55,8 @@ fn run(args: Args) -> Result<(), String> {
         .map_err(|e| format!("failed to read {}: {e}", args.input.display()))?;
 
     let descriptors = wasm_lite_codegen::descriptors_from_wasm(&wasm)?;
-    let glue = wasm_lite_codegen::generate_glue(&descriptors);
+    let exports = wasm_lite_codegen::exports_from_wasm(&wasm)?;
+    let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports);
 
     match args.output {
         Some(path) => std::fs::write(&path, glue)

@@ -193,7 +193,8 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
                 });
             } else {
                 let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
-                let glue = wasm_lite_codegen::generate_glue(&descriptors);
+                let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
+                let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports);
                 // The codegen glue exports `instantiate`; the runner appends a
                 // bootstrap that runs the module's `main`.
                 let program_js = format!(

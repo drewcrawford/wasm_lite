@@ -10,11 +10,13 @@
 //! It is dependency-free: a minimal wasm binary reader plus a small text parser.
 
 mod descriptor;
+mod exports;
 mod generate;
 mod interop;
 mod wasm;
 
 pub use descriptor::{AbiArg, Descriptor};
+pub use exports::{Export, ExportRet, exports_from_wasm};
 pub use generate::generate_glue;
 pub use interop::{InteropBundle, build_interop, patch_wasm_bindgen_glue};
 
