@@ -50,7 +50,9 @@ pub fn wasm_lite_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// the signature in the `__wl_exports` section, so the codegen emits a matching
 /// JS wrapper: `import { add } from "./glue.js"; add(2, 3) // 5`.
 ///
-/// v1 supports numeric (`i32`, `u32`, `f64`) and `bool` arguments and returns.
+/// Supported arguments: numeric (`i32`/`u32`/`f64`), `bool`, `&str`, `&[u8]`,
+/// and `JsValue` (a live JS object handle). Supported returns: those, plus
+/// `String`, `Vec<u8>`, and `JsValue`.
 #[proc_macro_attribute]
 pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let sig = match parse_signature(&item) {
@@ -83,6 +85,16 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 ));
                 call_args.push(name.clone());
                 arg_tags.push("bytes");
+            }
+            "JsValue" => {
+                // JS registers the object in the value table and passes its index;
+                // Rust takes ownership of the handle (and frees the slot on drop).
+                flat_params.push(format!("{name}: u32"));
+                pre.push_str(&format!(
+                    "let {name} = ::wasm_lite::JsValue::__wl_from_abi({name});"
+                ));
+                call_args.push(name.clone());
+                arg_tags.push("handle");
             }
             "i32" | "u32" | "f64" => {
                 flat_params.push(format!("{name}: {ty}"));
@@ -130,6 +142,18 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
                  let __ptr = ::wasm_lite::__wl_malloc(__len); \
                  unsafe {{ ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }} \
                  (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
+            ),
+        ),
+        Some("JsValue") => (
+            " -> u32".to_string(),
+            "handle",
+            // Hand the table slot to JS: take the index, then `forget` so Drop
+            // doesn't free it — ownership transfers across the boundary.
+            format!(
+                "let __r: ::wasm_lite::JsValue = {call}; \
+                 let __idx = ::wasm_lite::JsValue::__wl_abi(&__r); \
+                 ::core::mem::forget(__r); \
+                 __idx"
             ),
         ),
         Some(other) => {

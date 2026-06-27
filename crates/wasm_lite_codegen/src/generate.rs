@@ -115,6 +115,12 @@ fn emit_export(js: &mut String, export: &Export) {
                 wasm_args.push(format!("__a{i}l"));
                 frees.push(format!("__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"));
             }
+            ExportArg::Handle => {
+                // Register the object; Rust owns the handle and frees the slot
+                // itself when its JsValue drops, so JS does not free it here.
+                lines.push(format!("const __a{i}h = __wl_add(p{i});"));
+                wasm_args.push(format!("__a{i}h"));
+            }
         }
     }
 
@@ -158,6 +164,15 @@ fn emit_export(js: &mut String, export: &Export) {
             lines.push("const __b = new Uint8Array(__wl_memory.buffer, __p, __l).slice();".into());
             lines.push("__wl_instance.exports.__wl_free(__p, __l);".into());
             lines.push("return __b;".into());
+        }
+        ExportRet::Handle => {
+            lines.push(format!("const __idx = {call};"));
+            lines.extend(frees);
+            // Rust transferred ownership (it `forget`s the JsValue); read the
+            // object out, free the now-orphaned table slot, and hand it to JS.
+            lines.push("const __o = __wl_obj(__idx);".into());
+            lines.push("__wl_drop(__idx);".into());
+            lines.push("return __o;".into());
         }
     }
 

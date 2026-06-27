@@ -22,6 +22,8 @@ pub enum ExportArg {
     Str,
     /// A `&[u8]`: allocate in wasm memory, write the bytes, pass `(ptr, len)`, then free.
     Bytes,
+    /// A `JsValue`: register the object in the value table, pass its index (Rust owns it).
+    Handle,
 }
 
 /// How an export's return value is presented to JS.
@@ -37,6 +39,8 @@ pub enum ExportRet {
     Str,
     /// A `Vec<u8>`: returned as a packed `(ptr, len)` to copy out and free.
     Bytes,
+    /// A `JsValue`: returned as a value-table index to look up and free the slot.
+    Handle,
 }
 
 /// Read exported-function descriptors from a compiled wasm module.
@@ -70,6 +74,7 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
             .map(|t| match t {
                 "str" => ExportArg::Str,
                 "bytes" => ExportArg::Bytes,
+                "handle" => ExportArg::Handle,
                 _ => ExportArg::Num,
             })
             .collect();
@@ -78,6 +83,7 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
             "bool" => ExportRet::Bool,
             "str" => ExportRet::Str,
             "bytes" => ExportRet::Bytes,
+            "handle" => ExportRet::Handle,
             _ => ExportRet::Value,
         };
 
@@ -116,6 +122,18 @@ mod tests {
             vec![
                 Export { name: "sum_bytes".into(), args: vec![ExportArg::Bytes], ret: ExportRet::Value },
                 Export { name: "make_bytes".into(), args: vec![ExportArg::Num], ret: ExportRet::Bytes },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_handle_exports() {
+        let section = b"make_array|f64,f64|handle\npush_to|handle,f64|handle\n";
+        assert_eq!(
+            parse(section).unwrap(),
+            vec![
+                Export { name: "make_array".into(), args: vec![ExportArg::Num, ExportArg::Num], ret: ExportRet::Handle },
+                Export { name: "push_to".into(), args: vec![ExportArg::Handle, ExportArg::Num], ret: ExportRet::Handle },
             ]
         );
     }
