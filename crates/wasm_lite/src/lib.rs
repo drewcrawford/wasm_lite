@@ -21,10 +21,18 @@ pub use wasm_lite_macro::wasm_lite_test;
 /// Install a panic hook that reports the panic message via `console.error`.
 ///
 /// On `wasm32-unknown-unknown` a panic aborts (a trap) and the default hook has
-/// nowhere to write, so without this the runner only sees "unreachable". Called
-/// by [`tests!`] before each test.
-#[doc(hidden)]
-pub fn __set_panic_hook() {
+/// nowhere to write — so without this, a failure surfaces only as
+/// "unreachable", losing the message. [`wasm_lite_test`] installs it
+/// automatically; call it yourself at the top of a **doctest** so its failures
+/// report the panic message too:
+///
+/// ```
+/// wasm_lite::set_panic_hook();
+/// assert_eq!(2 + 2, 4);
+/// ```
+///
+/// [`wasm_lite_test`]: crate::wasm_lite_test
+pub fn set_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         crate::console::error(&format!("{info}"));
     }));

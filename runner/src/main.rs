@@ -33,6 +33,13 @@ struct Route {
 }
 
 fn main() {
+    // Stop a persistent (reused) browser started via `WASM_LITE_REUSE_BROWSER`.
+    if std::env::args().any(|a| a == "--stop-browser") {
+        webdriver::Browser::stop_persistent();
+        println!("stopped the persistent browser");
+        return;
+    }
+
     let args = match parse_args() {
         Ok(a) => a,
         Err(msg) => {
@@ -42,14 +49,39 @@ fn main() {
         }
     };
 
-    // Default: run headless and exit with a status code, so the runner works as
-    // a Cargo runner for `cargo test`, doctests, and `cargo run`. `--serve` opts
-    // into the interactive server + browser instead.
-    if !args.serve {
+    // Run headless and exit with a status code for `cargo test` and doctests;
+    // serve + open a browser for `cargo run` and direct/interactive use. The two
+    // are told apart by how Cargo invokes us (see `is_test_run`).
+    if is_test_run(&args) {
         std::process::exit(test_runner::run(&args.program));
     }
 
     serve_interactive(&args.program);
+}
+
+/// Should we run headless (and exit) rather than serve interactively?
+///
+/// Cargo gives no explicit signal, so we infer the context from the artifact:
+/// `cargo test` binaries live under `deps/`, and rustdoc doctests in a
+/// `rustdoctest…` temp dir — both want headless + exit. A `#[wasm_lite_test]`
+/// harness is conclusive. Everything else (`cargo run`, direct invocation) is
+/// treated as interactive and served.
+fn is_test_run(args: &Args) -> bool {
+    if args.serve {
+        return false;
+    }
+    if args.test {
+        return true;
+    }
+
+    let path = args.program.to_string_lossy();
+    if path.contains("/deps/") || path.contains("rustdoctest") {
+        return true;
+    }
+
+    std::fs::read(&args.program)
+        .map(|module| !wasm_lite_codegen::test_names(&module).is_empty())
+        .unwrap_or(false)
 }
 
 /// Serve the program and open a browser; runs until interrupted.
@@ -80,24 +112,28 @@ fn serve_interactive(program: &Path) -> ! {
 struct Args {
     program: PathBuf,
     serve: bool,
+    test: bool,
 }
 
 /// Parse command-line arguments.
 ///
-/// The first non-flag argument is the program (`.js` or `.wasm`); `--serve`
-/// opts into the interactive server. Other flags (e.g. test-harness args Cargo
-/// appends) are ignored, so the runner works directly as a Cargo runner
-/// (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`), invoked as
-/// `runner <artifact.wasm> [harness args…]`.
+/// The first non-flag argument is the program (`.js` or `.wasm`). `--serve`
+/// forces the interactive server; `--test` forces headless test mode. Other
+/// flags (e.g. test-harness args Cargo appends) are ignored, so the runner
+/// works directly as a Cargo runner (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`),
+/// invoked as `runner <artifact.wasm> [harness args…]`.
 fn parse_args() -> Result<Args, String> {
     let mut program = None;
     let mut serve = false;
+    let mut test = false;
     for arg in std::env::args_os().skip(1) {
         let text = arg.to_string_lossy();
         if text == "--serve" {
             serve = true;
+        } else if text == "--test" {
+            test = true;
         } else if text.starts_with('-') {
-            // Ignore other flags (e.g. `--test`, or test-harness arguments).
+            // Ignore other flags (e.g. test-harness arguments).
         } else if program.is_none() {
             program = Some(PathBuf::from(arg));
         }
@@ -105,6 +141,7 @@ fn parse_args() -> Result<Args, String> {
     Ok(Args {
         program: program.ok_or_else(|| "error: missing program path".to_string())?,
         serve,
+        test,
     })
 }
 

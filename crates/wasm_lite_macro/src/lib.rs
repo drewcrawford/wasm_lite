@@ -24,7 +24,7 @@ pub fn wasm_lite_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let len = name.len() + 1;
     let generated = format!(
         "#[unsafe(no_mangle)] pub extern \"C\" fn __wl_test_{name}() {{ \
-             ::wasm_lite::__set_panic_hook(); \
+             ::wasm_lite::set_panic_hook(); \
              {name}(); \
          }} \
          const _: () = {{ \

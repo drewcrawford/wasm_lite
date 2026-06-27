@@ -36,7 +36,7 @@ pub fn run(program: &Path) -> i32 {
     let names = module.test_names.clone();
     std::thread::spawn(move || serve(listener, &module.routes));
 
-    let browser = match Browser::launch() {
+    let browser = match Browser::open() {
         Ok(b) => b,
         Err(err) => {
             eprintln!("error: {err}");
@@ -110,21 +110,24 @@ fn run_main(browser: &Browser, port: u16) -> Result<i32, String> {
     browser.goto(&format!("http://127.0.0.1:{port}/"))?;
     wait_done(browser)?;
 
-    let output = browser.eval_string(CONSOLE_JOIN)?;
-    if !output.is_empty() {
-        println!("{output}");
-    }
     if browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
         println!("test result: ok");
-        Ok(0)
+        return Ok(0);
+    }
+
+    // On failure, prefer the captured console (the panic message, if a panic
+    // hook was installed); fall back to the raw trap for the no-hook case.
+    let console = browser.eval_string(CONSOLE_JOIN)?;
+    if !console.is_empty() {
+        println!("{console}");
     } else {
         let error = browser.eval_string("return globalThis.__wl_done.error || \"\";")?;
         if !error.is_empty() {
-            eprintln!("error: {error}");
+            eprintln!("{error}");
         }
-        println!("test result: FAILED");
-        Ok(1)
     }
+    println!("test result: FAILED");
+    Ok(1)
 }
 
 /// Run a `tests!` harness: each test in a fresh page load, libtest-style output.
