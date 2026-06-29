@@ -1,42 +1,47 @@
-//! Procedural macros for wasm_lite.
+//! Procedural macros for wasm_lite, built on `syn` + `quote`.
 //!
-//! Hand-rolled with only the built-in `proc_macro` crate — no `syn`/`quote` —
-//! to honor the project's "avoid dependencies" goal. The parsing needed is
-//! minimal: find the annotated function's name.
+//! Three macros: `#[export]` (Rust→JS exports), `#[wasm_lite_test]` (test
+//! harness entries), and `js_class!` (typed `JsValue` wrappers). Each parses the
+//! input into a typed AST and emits the matching wasm export / descriptor with
+//! `quote!`. The descriptor format (`name|argtags|rettag`) and the flattened ABI
+//! are what `wasm_lite_codegen` reads back to generate the JS glue.
 
-use proc_macro::{Delimiter, TokenStream, TokenTree};
-use std::str::FromStr;
+use proc_macro::TokenStream;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::{ToTokens, format_ident, quote};
+use syn::parse::{Parse, ParseStream};
+use syn::{
+    Error, FnArg, Ident, ItemFn, LitByteStr, LitStr, Pat, ReturnType, Token, Type, braced,
+    parenthesized, parse_macro_input,
+};
 
 /// Mark a function as a wasm_lite test (analogous to `#[test]`).
 ///
 /// Generates an exported `__wl_test_<name>` entry point (which installs the
 /// panic hook and calls the test) and records the test's name in the
-/// `__wasm_lite_tests` section so the runner discovers and drives it. Pair with
-/// a one-time [`wasm_lite::test_main!`] in a `harness = false` test target.
+/// `__wasm_lite_tests` section so the runner discovers and drives it.
 #[proc_macro_attribute]
 pub fn wasm_lite_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let name = match fn_name(item.clone()) {
-        Some(name) => name,
-        None => return compile_error("#[wasm_lite_test] must be applied to a function"),
-    };
+    let func = parse_macro_input!(item as ItemFn);
+    let name = &func.sig.ident;
+    let entry = format_ident!("__wl_test_{}", name);
+    let section = section_literal(&name.to_string());
+    let len = name.to_string().len() + 1;
 
-    // `*b"<name>\n"` is `[u8; name.len() + 1]`; concatenates into the section.
-    let len = name.len() + 1;
-    let generated = format!(
-        "#[unsafe(no_mangle)] pub extern \"C\" fn __wl_test_{name}() {{ \
-             ::wasm_lite::set_panic_hook(); \
-             {name}(); \
-         }} \
-         const _: () = {{ \
-             #[used] \
-             #[cfg_attr(target_arch = \"wasm32\", unsafe(link_section = \"__wasm_lite_tests\"))] \
-             static __WL_TEST_NAME: [u8; {len}] = *b\"{name}\\n\"; \
-         }};"
-    );
-
-    let mut out = item;
-    out.extend(TokenStream::from_str(&generated).expect("wasm_lite_test glue should parse"));
-    out
+    quote! {
+        #func
+        #[unsafe(no_mangle)]
+        pub extern "C" fn #entry() {
+            ::wasm_lite::set_panic_hook();
+            #name();
+        }
+        const _: () = {
+            #[used]
+            #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wasm_lite_tests"))]
+            static __WL_TEST_NAME: [u8; #len] = *#section;
+        };
+    }
+    .into()
 }
 
 /// Export a Rust function to JavaScript callers.
@@ -51,440 +56,323 @@ pub fn wasm_lite_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// JS wrapper: `import { add } from "./glue.js"; add(2, 3) // 5`.
 ///
 /// Supported arguments: numeric (`i32`/`u32`/`f64`), `bool`, `&str`, `&[u8]`,
-/// and `JsValue` (a live JS object handle). Supported returns: those, plus
-/// `String`, `Vec<u8>`, and `JsValue`.
+/// `JsValue`, and `Option<T>` of those. Supported returns: those, plus `String`,
+/// `Vec<u8>`, `JsValue`, and `Option<T>`/`Result<T, E>` (via a return pointer).
 #[proc_macro_attribute]
 pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let sig = match parse_signature(&item) {
-        Some(sig) => sig,
-        None => return compile_error("#[wasm_lite::export] must be on a plain function"),
-    };
+    let func = parse_macro_input!(item as ItemFn);
+    match build_export(&func) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
 
-    // Build the flattened ABI params, argument reconstructions, the call, and
-    // descriptor tags.
-    let mut flat_params = Vec::new(); // shim parameter declarations
-    let mut pre = String::new(); // statements reconstructing args before the call
-    let mut call_args = Vec::new(); // arguments passed to the user function
+fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
+    let name = &func.sig.ident;
+    let export_ident = format_ident!("__wl_export_{}", name);
+
+    let mut flat_params: Vec<TokenStream2> = Vec::new(); // shim parameter declarations
+    let mut pre: Vec<TokenStream2> = Vec::new(); // statements reconstructing args
+    let mut call_args: Vec<TokenStream2> = Vec::new(); // arguments to the user fn
     let mut arg_tags: Vec<String> = Vec::new(); // descriptor tags
-    for (name, ty) in &sig.params {
-        // `Option<T>` arg: a discriminant param plus T's normal flattening; the
-        // value is reconstructed conditionally.
-        if let Some(inner) = ty.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
-            match option_arg(name, inner.trim()) {
-                Ok((flat, recon, tag)) => {
-                    flat_params.extend(flat);
-                    pre.push_str(&recon);
-                    call_args.push(name.clone());
-                    arg_tags.push(format!("opt:{tag}"));
-                    continue;
-                }
-                Err(e) => return compile_error(&e),
-            }
+
+    for input in &func.sig.inputs {
+        let (pat, ty) = fn_arg(input)?;
+
+        // `Option<T>` arg: a discriminant param plus T's normal flattening.
+        if let Some(inner) = generic1(ty, "Option") {
+            let (flat, recon, tag) = option_arg(&pat, inner)?;
+            flat_params.extend(flat);
+            pre.push(recon);
+            call_args.push(quote! { #pat });
+            arg_tags.push(format!("opt:{tag}"));
+            continue;
         }
-        match ty.as_str() {
-            "&str" => {
-                flat_params.push(format!("{name}_ptr: *const u8"));
-                flat_params.push(format!("{name}_len: usize"));
-                pre.push_str(&format!(
-                    "let {name} = unsafe {{ ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts({name}_ptr, {name}_len)) }};"
-                ));
-                call_args.push(name.clone());
-                arg_tags.push("str".into());
-            }
-            "&[u8]" => {
-                flat_params.push(format!("{name}_ptr: *const u8"));
-                flat_params.push(format!("{name}_len: usize"));
-                pre.push_str(&format!(
-                    "let {name} = unsafe {{ ::core::slice::from_raw_parts({name}_ptr, {name}_len) }};"
-                ));
-                call_args.push(name.clone());
-                arg_tags.push("bytes".into());
-            }
-            "JsValue" => {
-                // JS registers the object in the value table and passes its index;
-                // Rust takes ownership of the handle (and frees the slot on drop).
-                flat_params.push(format!("{name}: u32"));
-                pre.push_str(&format!(
-                    "let {name} = ::wasm_lite::JsValue::__wl_from_abi({name});"
-                ));
-                call_args.push(name.clone());
-                arg_tags.push("handle".into());
-            }
-            "i32" | "u32" | "f64" => {
-                flat_params.push(format!("{name}: {ty}"));
-                call_args.push(name.clone());
-                arg_tags.push(ty.to_string());
-            }
-            "bool" => {
-                flat_params.push(format!("{name}: i32"));
-                call_args.push(format!("({name} != 0)"));
-                arg_tags.push("bool".into());
-            }
-            other => {
-                return compile_error(&format!("#[wasm_lite::export]: unsupported argument type `{other}`"));
-            }
+
+        if is_str(ty) {
+            let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
+            flat_params.push(quote! { #p: *const u8 });
+            flat_params.push(quote! { #l: usize });
+            pre.push(quote! { let #pat = unsafe { ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts(#p, #l)) }; });
+            call_args.push(quote! { #pat });
+            arg_tags.push("str".into());
+        } else if is_byte_slice(ty) {
+            let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
+            flat_params.push(quote! { #p: *const u8 });
+            flat_params.push(quote! { #l: usize });
+            pre.push(quote! { let #pat = unsafe { ::core::slice::from_raw_parts(#p, #l) }; });
+            call_args.push(quote! { #pat });
+            arg_tags.push("bytes".into());
+        } else if is_jsvalue(ty) {
+            // JS registers the object and passes its index; Rust takes ownership.
+            flat_params.push(quote! { #pat: u32 });
+            pre.push(quote! { let #pat = ::wasm_lite::JsValue::__wl_from_abi(#pat); });
+            call_args.push(quote! { #pat });
+            arg_tags.push("handle".into());
+        } else if let Some(scalar) = numeric(ty) {
+            flat_params.push(quote! { #pat: #ty });
+            call_args.push(quote! { #pat });
+            arg_tags.push(scalar);
+        } else if is_ident(ty, "bool") {
+            flat_params.push(quote! { #pat: i32 });
+            call_args.push(quote! { (#pat != 0) });
+            arg_tags.push("bool".into());
+        } else {
+            return Err(Error::new_spanned(
+                ty,
+                format!("#[wasm_lite::export]: unsupported argument type `{}`", type_string(ty)),
+            ));
         }
     }
 
-    let call = format!("{}({})", sig.name, call_args.join(", "));
-    // `Option<T>`/`Result<T,E>` returns use a return pointer (sret): the export
-    // takes a leading `__ret: *mut u8` buffer and writes a discriminant word plus
-    // the payload, since a single scalar return can't carry both (an `f64` has no
-    // spare bit). `is_sret` flags this so the buffer param is prepended below.
-    let (ret_decl, ret_tag, ret_expr, is_sret) = match sret_return(&call, sig.ret.as_deref()) {
-        Some(Ok((tag, body))) => (String::new(), tag, body, true),
-        Some(Err(msg)) => return compile_error(&msg),
-        None => {
-            let (decl, tag, expr) = match sig.ret.as_deref() {
-                None => (String::new(), String::new(), format!("{call};")),
-                Some("i32") | Some("u32") | Some("f64") => {
-                    let ty = sig.ret.as_deref().unwrap();
-                    (format!(" -> {ty}"), ty.to_string(), call)
-                }
-                Some("bool") => (" -> i32".to_string(), "bool".to_string(), format!("(({call}) as i32)")),
-                Some("String") => (
-                    " -> i64".to_string(),
-                    "str".to_string(),
-                    // Copy into a __wl_malloc buffer JS can free, return packed (ptr, len).
-                    format!(
-                        "let __r: ::std::string::String = {call}; \
-                         let __len = __r.len(); \
-                         let __ptr = ::wasm_lite::__wl_malloc(__len); \
-                         unsafe {{ ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }} \
-                         (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
-                    ),
-                ),
-                Some("Vec<u8>") => (
-                    " -> i64".to_string(),
-                    "bytes".to_string(),
-                    // Same packing as a String, but the bytes are returned verbatim.
-                    format!(
-                        "let __r: ::std::vec::Vec<u8> = {call}; \
-                         let __len = __r.len(); \
-                         let __ptr = ::wasm_lite::__wl_malloc(__len); \
-                         unsafe {{ ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }} \
-                         (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
-                    ),
-                ),
-                Some("JsValue") => (
-                    " -> u32".to_string(),
-                    "handle".to_string(),
-                    // Hand the table slot to JS: take the index, then `forget` so Drop
-                    // doesn't free it — ownership transfers across the boundary.
-                    format!(
-                        "let __r: ::wasm_lite::JsValue = {call}; \
-                         let __idx = ::wasm_lite::JsValue::__wl_abi(&__r); \
-                         ::core::mem::forget(__r); \
-                         __idx"
-                    ),
-                ),
-                Some(other) => {
-                    return compile_error(&format!("#[wasm_lite::export]: unsupported return type `{other}`"));
-                }
-            };
-            (decl, tag, expr, false)
-        }
-    };
+    let call = quote! { #name( #(#call_args),* ) };
+    let (ret_decl, ret_tag, ret_expr, is_sret) = build_return(&call, &func.sig.output)?;
 
-    // sret writes the payload into the JS-provided buffer; the export itself gains
-    // a leading `__ret` pointer.
+    // sret writes the payload into a JS-provided buffer; the export gains a
+    // leading `__ret` pointer.
     if is_sret {
-        flat_params.insert(0, "__ret: *mut u8".to_string());
+        flat_params.insert(0, quote! { __ret: *mut u8 });
     }
 
-    // String marshalling needs the allocator exported even when the shim itself
-    // doesn't call it (e.g. only `&str` args). Force-keep both. sret returns may
-    // also allocate (str/bytes payloads), and JS always allocates the buffer.
+    // String/bytes marshalling needs the allocator exported even when the shim
+    // doesn't call it directly; sret buffers are JS-allocated too. Force-keep it.
     let needs_alloc = arg_tags.iter().any(|t| t.contains("str") || t.contains("bytes"))
         || ret_tag == "str"
         || ret_tag == "bytes"
         || is_sret;
     let keep_alloc = if needs_alloc {
-        "const _: () = { \
-            #[used] static __WL_KEEP_MALLOC: extern \"C\" fn(usize) -> *mut u8 = ::wasm_lite::__wl_malloc; \
-            #[used] static __WL_KEEP_FREE: extern \"C\" fn(*mut u8, usize) = ::wasm_lite::__wl_free; \
-        };"
+        quote! {
+            const _: () = {
+                #[used] static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = ::wasm_lite::__wl_malloc;
+                #[used] static __WL_KEEP_FREE: extern "C" fn(*mut u8, usize) = ::wasm_lite::__wl_free;
+            };
+        }
     } else {
-        ""
+        quote! {}
     };
 
-    let name = &sig.name;
     let descriptor = format!("{name}|{}|{ret_tag}", arg_tags.join(","));
-    let params = flat_params.join(", ");
-    let generated = format!(
-        "#[unsafe(no_mangle)] pub extern \"C\" fn __wl_export_{name}({params}){ret_decl} {{ {pre} {ret_expr} }} \
-         {keep_alloc} \
-         const _: () = {{ \
-             #[used] \
-             #[cfg_attr(target_arch = \"wasm32\", unsafe(link_section = \"__wl_exports\"))] \
-             static __WL_EXPORT: [u8; {len}] = *b\"{descriptor}\\n\"; \
-         }};",
-        len = descriptor.len() + 1,
-    );
+    let section = section_literal(&descriptor);
+    let len = descriptor.len() + 1;
 
-    let mut out = item;
-    out.extend(TokenStream::from_str(&generated).expect("wasm_lite export glue should parse"));
-    out
+    Ok(quote! {
+        #func
+        #[unsafe(no_mangle)]
+        pub extern "C" fn #export_ident( #(#flat_params),* ) #ret_decl {
+            #(#pre)*
+            #ret_expr
+        }
+        #keep_alloc
+        const _: () = {
+            #[used]
+            #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wl_exports"))]
+            static __WL_EXPORT: [u8; #len] = *#section;
+        };
+    })
 }
 
-/// If `ret` is `Option<T>`/`Result<T,E>`, build `(descriptor_tag, body)` for an
-/// sret return — code writing a discriminant word at `__ret` and the payload at
-/// `__ret + 8`. `None` if not sret; `Some(Err)` if an inner type is unsupported.
+/// Build the return marshalling: `(signature_suffix, descriptor_tag, body_expr, is_sret)`.
 ///
-/// Discriminant: Option uses 1=Some / 0=None; Result uses 0=Ok / 1=Err.
-fn sret_return(call: &str, ret: Option<&str>) -> Option<Result<(String, String), String>> {
-    let ret = ret?;
-    if let Some(inner) = ret.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
-        let inner = inner.trim();
-        let (tag, write) = match payload(inner, "__x") {
-            Ok(p) => p,
-            Err(e) => return Some(Err(e)),
+/// `Option<T>`/`Result<T, E>` use a return pointer (sret): the export takes a
+/// leading `__ret` buffer and writes a discriminant word plus the payload, since
+/// a single scalar return can't carry both. Discriminant: Option 1=Some/0=None;
+/// Result 0=Ok/1=Err.
+fn build_return(
+    call: &TokenStream2,
+    output: &ReturnType,
+) -> syn::Result<(TokenStream2, String, TokenStream2, bool)> {
+    let ty = match output {
+        ReturnType::Default => return Ok((quote! {}, String::new(), quote! { #call; }, false)),
+        ReturnType::Type(_, ty) => ty.as_ref(),
+    };
+
+    if let Some(inner) = generic1(ty, "Option") {
+        let (tag, write) = payload(inner, &format_ident!("__x"))?;
+        let body = quote! {
+            let __v: ::core::option::Option<#inner> = #call;
+            match __v {
+                ::core::option::Option::Some(__x) => {
+                    unsafe { ::core::ptr::write_unaligned(__ret as *mut u32, 1u32); }
+                    #write
+                }
+                ::core::option::Option::None => unsafe { ::core::ptr::write_unaligned(__ret as *mut u32, 0u32); },
+            }
         };
-        let body = format!(
-            "let __v: ::core::option::Option<{inner}> = {call}; \
-             match __v {{ \
-                 ::core::option::Option::Some(__x) => {{ \
-                     unsafe {{ ::core::ptr::write_unaligned(__ret as *mut u32, 1u32); }} {write} \
-                 }} \
-                 ::core::option::Option::None => unsafe {{ ::core::ptr::write_unaligned(__ret as *mut u32, 0u32); }}, \
-             }}"
-        );
-        return Some(Ok((format!("opt:{tag}"), body)));
+        return Ok((quote! {}, format!("opt:{tag}"), body, true));
     }
-    if let Some(inner) = ret.strip_prefix("Result<").and_then(|s| s.strip_suffix('>')) {
-        let comma = match split_top_comma(inner) {
-            Some(c) => c,
-            None => return Some(Err(format!("#[wasm_lite::export]: malformed return type `{ret}`"))),
+
+    if let Some((ok_ty, err_ty)) = generic2(ty, "Result") {
+        let (ok_tag, ok_write) = payload(ok_ty, &format_ident!("__x"))?;
+        let (err_tag, err_write) = payload(err_ty, &format_ident!("__e"))?;
+        let body = quote! {
+            let __v: ::core::result::Result<#ok_ty, #err_ty> = #call;
+            match __v {
+                ::core::result::Result::Ok(__x) => {
+                    unsafe { ::core::ptr::write_unaligned(__ret as *mut u32, 0u32); }
+                    #ok_write
+                }
+                ::core::result::Result::Err(__e) => {
+                    unsafe { ::core::ptr::write_unaligned(__ret as *mut u32, 1u32); }
+                    #err_write
+                }
+            }
         };
-        let ok_ty = inner[..comma].trim();
-        let err_ty = inner[comma + 1..].trim();
-        let (ok_tag, ok_write) = match payload(ok_ty, "__x") {
-            Ok(p) => p,
-            Err(e) => return Some(Err(e)),
-        };
-        let (err_tag, err_write) = match payload(err_ty, "__e") {
-            Ok(p) => p,
-            Err(e) => return Some(Err(e)),
-        };
-        let body = format!(
-            "let __v: ::core::result::Result<{ok_ty}, {err_ty}> = {call}; \
-             match __v {{ \
-                 ::core::result::Result::Ok(__x) => {{ \
-                     unsafe {{ ::core::ptr::write_unaligned(__ret as *mut u32, 0u32); }} {ok_write} \
-                 }} \
-                 ::core::result::Result::Err(__e) => {{ \
-                     unsafe {{ ::core::ptr::write_unaligned(__ret as *mut u32, 1u32); }} {err_write} \
-                 }} \
-             }}"
-        );
-        return Some(Ok((format!("res:{ok_tag}:{err_tag}"), body)));
+        return Ok((quote! {}, format!("res:{ok_tag}:{err_tag}"), body, true));
     }
-    None
+
+    if let Some(scalar) = numeric(ty) {
+        return Ok((quote! { -> #ty }, scalar, call.clone(), false));
+    }
+    if is_ident(ty, "bool") {
+        return Ok((quote! { -> i32 }, "bool".into(), quote! { ((#call) as i32) }, false));
+    }
+    if is_ident(ty, "String") {
+        return Ok((quote! { -> i64 }, "str".into(), pack_buffer(call, quote! { ::std::string::String }), false));
+    }
+    if vec_u8(ty) {
+        return Ok((quote! { -> i64 }, "bytes".into(), pack_buffer(call, quote! { ::std::vec::Vec<u8> }), false));
+    }
+    if is_ident(ty, "JsValue") {
+        // Hand the table slot to JS: take the index, then forget so Drop doesn't
+        // free it — ownership transfers across the boundary.
+        let expr = quote! {
+            let __r: ::wasm_lite::JsValue = #call;
+            let __idx = ::wasm_lite::JsValue::__wl_abi(&__r);
+            ::core::mem::forget(__r);
+            __idx
+        };
+        return Ok((quote! { -> u32 }, "handle".into(), expr, false));
+    }
+
+    Err(Error::new_spanned(
+        ty,
+        format!("#[wasm_lite::export]: unsupported return type `{}`", type_string(ty)),
+    ))
 }
 
-/// Code to write `binding` (of type `ty`) into the sret buffer at `__ret + 8`
+/// Copy a `String`/`Vec<u8>` into a `__wl_malloc` buffer and return a packed
+/// `(ptr << 32 | len)` i64 the JS side decodes and frees.
+fn pack_buffer(call: &TokenStream2, ty: TokenStream2) -> TokenStream2 {
+    quote! {
+        let __r: #ty = #call;
+        let __len = __r.len();
+        let __ptr = ::wasm_lite::__wl_malloc(__len);
+        unsafe { ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }
+        (((__ptr as usize as u64) << 32) | (__len as u64)) as i64
+    }
+}
+
+/// Code to write `binding` (of type `ty`) into an sret buffer at `__ret + 8`
 /// (str/bytes also use `__ret + 12` for the length). Returns the descriptor tag
 /// and the code. Writes are unaligned (the buffer is align-1).
-fn payload(ty: &str, binding: &str) -> Result<(&'static str, String), String> {
-    let off8 = "(__ret as *mut u8).add(8)";
-    let off12 = "(__ret as *mut u8).add(12)";
-    Ok(match ty {
-        "i32" => ("i32", format!("unsafe {{ ::core::ptr::write_unaligned({off8} as *mut i32, {binding}); }}")),
-        "u32" => ("u32", format!("unsafe {{ ::core::ptr::write_unaligned({off8} as *mut u32, {binding}); }}")),
-        "f64" => ("f64", format!("unsafe {{ ::core::ptr::write_unaligned({off8} as *mut f64, {binding}); }}")),
-        "bool" => ("bool", format!("unsafe {{ ::core::ptr::write_unaligned({off8} as *mut i32, ({binding}) as i32); }}")),
-        "JsValue" => (
-            "handle",
-            format!(
-                "{{ let __h = ::wasm_lite::JsValue::__wl_abi(&{binding}); ::core::mem::forget({binding}); \
-                   unsafe {{ ::core::ptr::write_unaligned({off8} as *mut u32, __h); }} }}"
-            ),
-        ),
-        "String" | "Vec<u8>" => {
-            let tag = if ty == "String" { "str" } else { "bytes" };
-            (
-                tag,
-                format!(
-                    "{{ let __len = {binding}.len(); let __ptr = ::wasm_lite::__wl_malloc(__len); \
-                       unsafe {{ ::core::ptr::copy_nonoverlapping({binding}.as_ptr(), __ptr, __len); \
-                       ::core::ptr::write_unaligned({off8} as *mut u32, __ptr as usize as u32); \
-                       ::core::ptr::write_unaligned({off12} as *mut u32, __len as u32); }} }}"
-                ),
-            )
+fn payload(ty: &Type, binding: &Ident) -> syn::Result<(String, TokenStream2)> {
+    let off8 = quote! { (__ret as *mut u8).add(8) };
+    let off12 = quote! { (__ret as *mut u8).add(12) };
+
+    if let Some(scalar) = numeric(ty) {
+        let write = match scalar.as_str() {
+            "i32" => quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut i32, #binding); } },
+            "u32" => quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut u32, #binding); } },
+            _ => quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut f64, #binding); } },
+        };
+        return Ok((scalar, write));
+    }
+    if is_ident(ty, "bool") {
+        return Ok((
+            "bool".into(),
+            quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut i32, (#binding) as i32); } },
+        ));
+    }
+    if is_ident(ty, "JsValue") {
+        return Ok((
+            "handle".into(),
+            quote! {
+                {
+                    let __h = ::wasm_lite::JsValue::__wl_abi(&#binding);
+                    ::core::mem::forget(#binding);
+                    unsafe { ::core::ptr::write_unaligned(#off8 as *mut u32, __h); }
+                }
+            },
+        ));
+    }
+    let buf = quote! {
+        {
+            let __len = #binding.len();
+            let __ptr = ::wasm_lite::__wl_malloc(__len);
+            unsafe {
+                ::core::ptr::copy_nonoverlapping(#binding.as_ptr(), __ptr, __len);
+                ::core::ptr::write_unaligned(#off8 as *mut u32, __ptr as usize as u32);
+                ::core::ptr::write_unaligned(#off12 as *mut u32, __len as u32);
+            }
         }
-        other => return Err(format!("#[wasm_lite::export]: unsupported Option/Result payload type `{other}`")),
-    })
+    };
+    if is_ident(ty, "String") {
+        return Ok(("str".into(), buf));
+    }
+    if vec_u8(ty) {
+        return Ok(("bytes".into(), buf));
+    }
+    Err(Error::new_spanned(
+        ty,
+        format!("#[wasm_lite::export]: unsupported Option/Result payload type `{}`", type_string(ty)),
+    ))
 }
 
 /// Flatten an `Option<inner>` argument: a discriminant param `<name>_some: i32`
 /// plus `inner`'s normal flattening, with conditional reconstruction. Returns
 /// `(flat_params, reconstruction, inner_tag)`.
-fn option_arg(name: &str, inner: &str) -> Result<(Vec<String>, String, String), String> {
-    let some = format!("{name}_some");
-    Ok(match inner {
-        "i32" | "u32" | "f64" => (
-            vec![format!("{some}: i32"), format!("{name}_val: {inner}")],
-            format!(
-                "let {name} = if {some} != 0 {{ ::core::option::Option::Some({name}_val) }} \
-                 else {{ ::core::option::Option::None }};"
-            ),
-            inner.to_string(),
-        ),
-        "bool" => (
-            vec![format!("{some}: i32"), format!("{name}_val: i32")],
-            format!(
-                "let {name} = if {some} != 0 {{ ::core::option::Option::Some({name}_val != 0) }} \
-                 else {{ ::core::option::Option::None }};"
-            ),
-            "bool".to_string(),
-        ),
-        "&str" => (
-            vec![format!("{some}: i32"), format!("{name}_ptr: *const u8"), format!("{name}_len: usize")],
-            format!(
-                "let {name} = if {some} != 0 {{ ::core::option::Option::Some(unsafe {{ \
-                   ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts({name}_ptr, {name}_len)) }}) }} \
-                 else {{ ::core::option::Option::None }};"
-            ),
-            "str".to_string(),
-        ),
-        "&[u8]" => (
-            vec![format!("{some}: i32"), format!("{name}_ptr: *const u8"), format!("{name}_len: usize")],
-            format!(
-                "let {name} = if {some} != 0 {{ ::core::option::Option::Some(unsafe {{ \
-                   ::core::slice::from_raw_parts({name}_ptr, {name}_len) }}) }} \
-                 else {{ ::core::option::Option::None }};"
-            ),
-            "bytes".to_string(),
-        ),
-        "JsValue" => (
-            vec![format!("{some}: i32"), format!("{name}_h: u32")],
-            format!(
-                "let {name} = if {some} != 0 {{ \
-                   ::core::option::Option::Some(::wasm_lite::JsValue::__wl_from_abi({name}_h)) }} \
-                 else {{ ::core::option::Option::None }};"
-            ),
-            "handle".to_string(),
-        ),
-        other => return Err(format!("#[wasm_lite::export]: unsupported Option argument type `Option<{other}>`")),
-    })
-}
+fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, TokenStream2, String)> {
+    let some = format_ident!("{pat}_some");
 
-/// Index of the top-level `,` in a generic argument list (skips nested `<...>`).
-fn split_top_comma(s: &str) -> Option<usize> {
-    let mut depth = 0i32;
-    for (i, c) in s.char_indices() {
-        match c {
-            '<' => depth += 1,
-            '>' => depth -= 1,
-            ',' if depth == 0 => return Some(i),
-            _ => {}
-        }
+    if let Some(scalar) = numeric(inner) {
+        let val = format_ident!("{pat}_val");
+        return Ok((
+            vec![quote! { #some: i32 }, quote! { #val: #inner }],
+            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(#val) } else { ::core::option::Option::None }; },
+            scalar,
+        ));
     }
-    None
-}
-
-/// A parsed function signature: name, `(arg, type)` pairs, and return type.
-struct Signature {
-    name: String,
-    params: Vec<(String, String)>,
-    ret: Option<String>,
-}
-
-fn parse_signature(item: &TokenStream) -> Option<Signature> {
-    let mut iter = item.clone().into_iter();
-
-    // Scan to `fn <name> ( <params> )`.
-    let mut name = None;
-    let mut params_group = None;
-    while let Some(tt) = iter.next() {
-        if let TokenTree::Ident(id) = &tt {
-            if id.to_string() == "fn" {
-                name = match iter.next() {
-                    Some(TokenTree::Ident(n)) => Some(n.to_string()),
-                    _ => return None,
-                };
-                params_group = match iter.next() {
-                    Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis => Some(g),
-                    _ => return None,
-                };
-                break;
-            }
-        }
+    if is_ident(inner, "bool") {
+        let val = format_ident!("{pat}_val");
+        return Ok((
+            vec![quote! { #some: i32 }, quote! { #val: i32 }],
+            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(#val != 0) } else { ::core::option::Option::None }; },
+            "bool".into(),
+        ));
     }
-    let name = name?;
-    let params = parse_params(params_group?.stream())?;
-
-    // Return type: tokens after `->`, up to the body `{ ... }`. Detect the arrow
-    // as `-` then `>` so a `>` *inside* the type (e.g. `Vec<u8>`) isn't mistaken
-    // for the arrow and dropped.
-    let mut ret = String::new();
-    let mut after_arrow = false;
-    let mut prev_dash = false;
-    for tt in iter {
-        match &tt {
-            TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => break,
-            _ if after_arrow => ret.push_str(&tt.to_string()),
-            TokenTree::Punct(p) if p.as_char() == '-' => prev_dash = true,
-            TokenTree::Punct(p) if p.as_char() == '>' && prev_dash => after_arrow = true,
-            _ => prev_dash = false,
-        }
+    if is_jsvalue(inner) {
+        let h = format_ident!("{pat}_h");
+        return Ok((
+            vec![quote! { #some: i32 }, quote! { #h: u32 }],
+            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(::wasm_lite::JsValue::__wl_from_abi(#h)) } else { ::core::option::Option::None }; },
+            "handle".into(),
+        ));
     }
-
-    Some(Signature {
-        name,
-        params,
-        ret: if ret.is_empty() { None } else { Some(ret) },
-    })
+    if is_str(inner) {
+        let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
+        return Ok((
+            vec![quote! { #some: i32 }, quote! { #p: *const u8 }, quote! { #l: usize }],
+            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(unsafe { ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts(#p, #l)) }) } else { ::core::option::Option::None }; },
+            "str".into(),
+        ));
+    }
+    if is_byte_slice(inner) {
+        let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
+        return Ok((
+            vec![quote! { #some: i32 }, quote! { #p: *const u8 }, quote! { #l: usize }],
+            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(unsafe { ::core::slice::from_raw_parts(#p, #l) }) } else { ::core::option::Option::None }; },
+            "bytes".into(),
+        ));
+    }
+    Err(Error::new_spanned(
+        inner,
+        format!("#[wasm_lite::export]: unsupported Option argument type `Option<{}>`", type_string(inner)),
+    ))
 }
 
-/// Parse `a: i32, b: bool` into `[(a, i32), (b, bool)]`.
-fn parse_params(stream: TokenStream) -> Option<Vec<(String, String)>> {
-    let mut segments: Vec<Vec<TokenTree>> = vec![Vec::new()];
-    for tt in stream {
-        if matches!(&tt, TokenTree::Punct(p) if p.as_char() == ',') {
-            segments.push(Vec::new());
-        } else {
-            segments.last_mut().unwrap().push(tt);
-        }
-    }
-
-    let mut params = Vec::new();
-    for seg in segments {
-        if seg.is_empty() {
-            continue; // trailing comma
-        }
-        let colon = seg
-            .iter()
-            .position(|tt| matches!(tt, TokenTree::Punct(p) if p.as_char() == ':'))?;
-        let name = match &seg[0] {
-            TokenTree::Ident(i) => i.to_string(),
-            _ => return None,
-        };
-        let ty: String = seg[colon + 1..].iter().map(|tt| tt.to_string()).collect();
-        params.push((name, ty));
-    }
-    Some(params)
-}
-
-/// Find the name of the function in a token stream (the ident after `fn`).
-fn fn_name(item: TokenStream) -> Option<String> {
-    let mut iter = item.into_iter();
-    while let Some(tt) = iter.next() {
-        if let TokenTree::Ident(id) = tt {
-            if id.to_string() == "fn" {
-                return match iter.next() {
-                    Some(TokenTree::Ident(name)) => Some(name.to_string()),
-                    _ => None,
-                };
-            }
-        }
-    }
-    None
-}
-
-fn compile_error(message: &str) -> TokenStream {
-    TokenStream::from_str(&format!("compile_error!({message:?});")).unwrap()
-}
+// ---------------------------------------------------------------------------
+// js_class!
+// ---------------------------------------------------------------------------
 
 /// Declare a typed handle wrapper over a JS object.
 ///
@@ -500,195 +388,181 @@ fn compile_error(message: &str) -> TokenStream {
 /// ```
 ///
 /// Generates a newtype `struct JsArray(JsValue)` with `from_js`/`as_js`/`into_js`
-/// conversions and one method per declared function. Each method lowers to a
-/// `receiver[jsName](args)` call: it delegates the ABI to [`import!`] (so `&str`,
-/// `&[u8]`, numbers, `bool`, and handles all marshal exactly as they do there),
-/// adding only the typed veneer — object types (`&JsArray`, `-> JsArray`) cross
-/// the boundary as value-table handles and are wrapped/unwrapped automatically.
-///
-/// Use `as "jsName"` to bind a JS name that differs from the Rust method name
-/// (e.g. `fn set_attribute(&self, ...) as "setAttribute"`).
+/// and one method per declaration. Each lowers to a `receiver[jsName](args)` call
+/// by delegating the ABI to [`import!`], adding only the typed veneer — object
+/// types (`&JsArray`, `-> JsArray`) cross as value-table handles and are
+/// wrapped/unwrapped automatically. Use `as "jsName"` to bind a differing JS name.
 ///
 /// [`import!`]: wasm_lite::import
 #[proc_macro]
 pub fn js_class(input: TokenStream) -> TokenStream {
-    match build_js_class(input) {
-        Ok(ts) => ts,
-        Err(msg) => compile_error(&msg),
+    let parsed = parse_macro_input!(input as JsClass);
+    match build_js_class(&parsed) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
     }
 }
 
-/// A parsed `js_class!` method: `fn name(&self, params) -> ret as "js";`.
-struct Method {
-    name: String,
-    params: Vec<(String, String)>,
-    ret: Option<String>,
+/// A parsed `js_class!`: `type Class; impl Class { <methods> }`.
+struct JsClass {
+    class: Ident,
+    methods: Vec<JsMethod>,
+}
+
+/// A parsed method: `fn name(&self, params) -> ret as "js";`.
+struct JsMethod {
+    name: Ident,
+    params: Vec<(Ident, Type)>,
+    ret: Option<Type>,
     js: Option<String>,
 }
 
-fn build_js_class(input: TokenStream) -> Result<TokenStream, String> {
-    let mut it = input.into_iter().peekable();
+impl Parse for JsClass {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        input.parse::<Token![type]>()?;
+        let class: Ident = input.parse()?;
+        input.parse::<Token![;]>()?;
 
-    // `type Class;`
-    expect_ident(&mut it, "type")?;
-    let class = next_ident(&mut it)?;
-    expect_punct(&mut it, ';')?;
-
-    // `impl Class { ... }`
-    expect_ident(&mut it, "impl")?;
-    let class2 = next_ident(&mut it)?;
-    if class2 != class {
-        return Err(format!("`impl {class2}` does not match `type {class}`"));
+        input.parse::<Token![impl]>()?;
+        let class2: Ident = input.parse()?;
+        if class2 != class {
+            return Err(Error::new_spanned(
+                &class2,
+                format!("`impl {class2}` does not match `type {class}`"),
+            ));
+        }
+        let body;
+        braced!(body in input);
+        let mut methods = Vec::new();
+        while !body.is_empty() {
+            methods.push(body.parse()?);
+        }
+        Ok(JsClass { class, methods })
     }
-    let body = match it.next() {
-        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => g,
-        _ => return Err("expected `{ ... }` after `impl`".into()),
-    };
-    let methods = parse_methods(body.stream())?;
+}
 
-    // Generate the typed wrappers and the matching `import!` method decls.
-    let module = format!("__wl_class_{class}");
-    let mut wrappers = String::new();
-    let mut import_decls = String::new();
-    for m in &methods {
-        let mut imp_args = vec!["this: &JsValue".to_string()];
+impl Parse for JsMethod {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        input.parse::<Token![fn]>()?;
+        let name: Ident = input.parse()?;
+
+        let args;
+        parenthesized!(args in input);
+        args.parse::<Token![&]>()?;
+        args.parse::<Token![self]>()?;
+        let mut params = Vec::new();
+        while !args.is_empty() {
+            args.parse::<Token![,]>()?;
+            if args.is_empty() {
+                break; // trailing comma
+            }
+            let pname: Ident = args.parse()?;
+            args.parse::<Token![:]>()?;
+            let ty: Type = args.parse()?;
+            params.push((pname, ty));
+        }
+
+        let ret = if input.peek(Token![->]) {
+            input.parse::<Token![->]>()?;
+            Some(input.parse::<Type>()?)
+        } else {
+            None
+        };
+        let js = if input.peek(Token![as]) {
+            input.parse::<Token![as]>()?;
+            Some(input.parse::<LitStr>()?.value())
+        } else {
+            None
+        };
+        input.parse::<Token![;]>()?;
+
+        Ok(JsMethod { name, params, ret, js })
+    }
+}
+
+fn build_js_class(class_def: &JsClass) -> syn::Result<TokenStream2> {
+    let class = &class_def.class;
+    let module = format_ident!("__wl_class_{}", class);
+    let class_lit = LitStr::new(&class.to_string(), Span::call_site());
+
+    let mut wrappers: Vec<TokenStream2> = Vec::new();
+    let mut import_decls: Vec<TokenStream2> = Vec::new();
+
+    for m in &class_def.methods {
+        let mname = &m.name;
+        let mut imp_args = vec![quote! { this: &JsValue }];
         let mut wrap_params = Vec::new();
-        let mut call_args = vec!["self.as_js()".to_string()];
+        let mut call_args = vec![quote! { self.as_js() }];
+
         for (n, ty) in &m.params {
-            wrap_params.push(format!("{n}: {ty}"));
+            wrap_params.push(quote! { #n: #ty });
             match arg_kind(ty) {
                 ArgKind::Passthrough => {
-                    imp_args.push(format!("{n}: {ty}"));
-                    call_args.push(n.clone());
+                    imp_args.push(quote! { #n: #ty });
+                    call_args.push(quote! { #n });
                 }
                 ArgKind::ObjectRef => {
-                    // A typed object handle: import it as `&JsValue`, lower via as_js().
-                    imp_args.push(format!("{n}: &JsValue"));
-                    call_args.push(format!("{n}.as_js()"));
+                    imp_args.push(quote! { #n: &JsValue });
+                    call_args.push(quote! { #n.as_js() });
                 }
                 ArgKind::Unsupported => {
-                    return Err(format!(
-                        "js_class method `{}`: unsupported argument type `{ty}` (object args must be `&T`)",
-                        m.name
+                    return Err(Error::new_spanned(
+                        ty,
+                        format!(
+                            "js_class method `{mname}`: unsupported argument type `{}` (object args must be `&T`)",
+                            type_string(ty)
+                        ),
                     ));
                 }
             }
         }
 
-        let call = format!("{module}::{}({})", m.name, call_args.join(", "));
-        let (wrap_ret, imp_ret, body) = match m.ret.as_deref() {
-            None => (String::new(), String::new(), format!("{call};")),
-            Some(ty) if is_builtin_ret(ty) => (format!(" -> {ty}"), format!(" -> {ty}"), call),
+        let call = quote! { #module::#mname( #(#call_args),* ) };
+        let (wrap_ret, imp_ret, body) = match &m.ret {
+            None => (quote! {}, quote! {}, quote! { #call; }),
+            Some(ty) if is_builtin_ret(ty) => (quote! { -> #ty }, quote! { -> #ty }, quote! { #call }),
             // A typed object return: the import yields a handle; wrap it.
-            Some(ty) => (format!(" -> {ty}"), " -> JsValue".to_string(), format!("{ty}::from_js({call})")),
+            Some(ty) => (quote! { -> #ty }, quote! { -> JsValue }, quote! { #ty::from_js(#call) }),
         };
 
         let recv = if wrap_params.is_empty() {
-            "&self".to_string()
+            quote! { &self }
         } else {
-            format!("&self, {}", wrap_params.join(", "))
+            quote! { &self, #(#wrap_params),* }
         };
-        wrappers.push_str(&format!("    pub fn {}({recv}){wrap_ret} {{ {body} }}\n", m.name));
+        wrappers.push(quote! { pub fn #mname(#recv) #wrap_ret { #body } });
 
-        let js = m.js.clone().unwrap_or_else(|| m.name.clone());
-        import_decls.push_str(&format!(
-            "            fn {}({}){imp_ret} as {js:?};\n",
-            m.name,
-            imp_args.join(", ")
-        ));
+        let js = m.js.clone().unwrap_or_else(|| mname.to_string());
+        let js_lit = LitStr::new(&js, Span::call_site());
+        import_decls.push(quote! { fn #mname( #(#imp_args),* ) #imp_ret as #js_lit; });
     }
 
-    let generated = format!(
-        "pub struct {class}(::wasm_lite::JsValue);\n\
-         impl {class} {{\n\
-         \x20   /// Wrap a `JsValue` as this type (unchecked — no runtime type test).\n\
-         \x20   pub fn from_js(v: ::wasm_lite::JsValue) -> Self {{ {class}(v) }}\n\
-         \x20   /// Borrow the underlying handle.\n\
-         \x20   pub fn as_js(&self) -> &::wasm_lite::JsValue {{ &self.0 }}\n\
-         \x20   /// Unwrap into the underlying handle.\n\
-         \x20   pub fn into_js(self) -> ::wasm_lite::JsValue {{ self.0 }}\n\
-         {wrappers}\
-         }}\n\
-         impl ::core::convert::From<{class}> for ::wasm_lite::JsValue {{\n\
-         \x20   fn from(v: {class}) -> Self {{ v.0 }}\n\
-         }}\n\
-         mod {module} {{\n\
-         \x20   use ::wasm_lite::JsValue;\n\
-         \x20   ::wasm_lite::import! {{\n\
-         \x20       {class:?} {{\n\
-         {import_decls}\
-         \x20       }}\n\
-         \x20   }}\n\
-         }}\n"
-    );
-
-    TokenStream::from_str(&generated).map_err(|e| format!("js_class generated invalid code: {e}"))
-}
-
-fn parse_methods(stream: TokenStream) -> Result<Vec<Method>, String> {
-    let mut it = stream.into_iter().peekable();
-    let mut methods = Vec::new();
-    while it.peek().is_some() {
-        expect_ident(&mut it, "fn")?;
-        let name = next_ident(&mut it)?;
-        let params_group = match it.next() {
-            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis => g,
-            _ => return Err(format!("expected `(...)` after `fn {name}`")),
-        };
-        let params = parse_self_params(params_group.stream())?;
-        let (ret, js) = parse_ret_and_js(&mut it)?;
-        methods.push(Method { name, params, ret, js });
-    }
-    Ok(methods)
-}
-
-/// Parse a method's parameter list, requiring a leading `&self`.
-fn parse_self_params(stream: TokenStream) -> Result<Vec<(String, String)>, String> {
-    let toks: Vec<TokenTree> = stream.into_iter().collect();
-    let has_self = matches!(toks.first(), Some(TokenTree::Punct(p)) if p.as_char() == '&')
-        && matches!(toks.get(1), Some(TokenTree::Ident(i)) if i.to_string() == "self");
-    if !has_self {
-        return Err("js_class methods must take `&self` as the first parameter".into());
-    }
-    if toks.len() == 2 {
-        return Ok(Vec::new());
-    }
-    if !matches!(toks.get(2), Some(TokenTree::Punct(p)) if p.as_char() == ',') {
-        return Err("expected `,` after `&self`".into());
-    }
-    let rest: TokenStream = toks[3..].iter().cloned().collect();
-    parse_params(rest).ok_or_else(|| "could not parse method parameters".into())
-}
-
-/// Parse an optional `-> Ret` and optional `as "js"`, consuming the trailing `;`.
-fn parse_ret_and_js(
-    it: &mut std::iter::Peekable<impl Iterator<Item = TokenTree>>,
-) -> Result<(Option<String>, Option<String>), String> {
-    let mut ret = String::new();
-    let mut js = None;
-    let mut after_arrow = false;
-    let mut prev_dash = false;
-    while let Some(tt) = it.next() {
-        match &tt {
-            TokenTree::Punct(p) if p.as_char() == ';' => {
-                return Ok((if ret.is_empty() { None } else { Some(ret) }, js));
-            }
-            TokenTree::Ident(i) if i.to_string() == "as" => match it.next() {
-                Some(TokenTree::Literal(l)) => {
-                    js = Some(l.to_string().trim_matches('"').to_string());
-                }
-                _ => return Err("expected a string literal after `as`".into()),
-            },
-            _ if after_arrow => ret.push_str(&tt.to_string()),
-            TokenTree::Punct(p) if p.as_char() == '-' => prev_dash = true,
-            TokenTree::Punct(p) if p.as_char() == '>' && prev_dash => after_arrow = true,
-            _ => prev_dash = false,
+    Ok(quote! {
+        pub struct #class(::wasm_lite::JsValue);
+        impl #class {
+            /// Wrap a `JsValue` as this type (unchecked — no runtime type test).
+            pub fn from_js(v: ::wasm_lite::JsValue) -> Self { #class(v) }
+            /// Borrow the underlying handle.
+            pub fn as_js(&self) -> &::wasm_lite::JsValue { &self.0 }
+            /// Unwrap into the underlying handle.
+            pub fn into_js(self) -> ::wasm_lite::JsValue { self.0 }
+            #(#wrappers)*
         }
-    }
-    Err("expected `;` to end a js_class method".into())
+        impl ::core::convert::From<#class> for ::wasm_lite::JsValue {
+            fn from(v: #class) -> Self { v.0 }
+        }
+        mod #module {
+            use ::wasm_lite::JsValue;
+            ::wasm_lite::import! {
+                #class_lit {
+                    #(#import_decls)*
+                }
+            }
+        }
+    })
 }
 
-/// How a method argument crosses into the underlying `import!` call.
+/// How a `js_class!` method argument crosses into the underlying `import!` call.
 enum ArgKind {
     /// A builtin (`&str`, `&[u8]`, `&JsValue`, numeric, `bool`): passed unchanged.
     Passthrough,
@@ -697,36 +571,136 @@ enum ArgKind {
     Unsupported,
 }
 
-fn arg_kind(ty: &str) -> ArgKind {
-    match ty {
-        "&str" | "&[u8]" | "&JsValue" | "i32" | "u32" | "f64" | "bool" => ArgKind::Passthrough,
-        _ if ty.starts_with('&') => ArgKind::ObjectRef,
-        _ => ArgKind::Unsupported,
+fn arg_kind(ty: &Type) -> ArgKind {
+    if is_str(ty) || is_byte_slice(ty) || is_ref_jsvalue(ty) {
+        return ArgKind::Passthrough;
     }
+    if numeric(ty).is_some() || is_ident(ty, "bool") {
+        return ArgKind::Passthrough;
+    }
+    if matches!(ty, Type::Reference(_)) {
+        return ArgKind::ObjectRef;
+    }
+    ArgKind::Unsupported
 }
 
 /// Whether a return type is a builtin (marshalled by `import!`) vs a typed class.
-fn is_builtin_ret(ty: &str) -> bool {
-    matches!(ty, "i32" | "u32" | "f64" | "bool" | "String" | "Vec<u8>" | "JsValue")
+fn is_builtin_ret(ty: &Type) -> bool {
+    numeric(ty).is_some()
+        || is_ident(ty, "bool")
+        || is_ident(ty, "String")
+        || is_ident(ty, "JsValue")
+        || vec_u8(ty)
 }
 
-fn expect_ident(it: &mut impl Iterator<Item = TokenTree>, want: &str) -> Result<(), String> {
-    match it.next() {
-        Some(TokenTree::Ident(i)) if i.to_string() == want => Ok(()),
-        other => Err(format!("expected `{want}`, found {other:?}")),
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/// Extract `(name, type)` from a function argument (rejects `self`/patterns).
+fn fn_arg(input: &FnArg) -> syn::Result<(Ident, &Type)> {
+    match input {
+        FnArg::Typed(pt) => match &*pt.pat {
+            Pat::Ident(pi) => Ok((pi.ident.clone(), &pt.ty)),
+            other => Err(Error::new_spanned(other, "#[wasm_lite::export]: argument must be a simple name")),
+        },
+        FnArg::Receiver(r) => Err(Error::new_spanned(r, "#[wasm_lite::export] cannot be used on methods")),
     }
 }
 
-fn next_ident(it: &mut impl Iterator<Item = TokenTree>) -> Result<String, String> {
-    match it.next() {
-        Some(TokenTree::Ident(i)) => Ok(i.to_string()),
-        other => Err(format!("expected an identifier, found {other:?}")),
-    }
+/// `i32`/`u32`/`f64` → its tag; otherwise `None`.
+fn numeric(ty: &Type) -> Option<String> {
+    let id = simple_ident(ty)?.to_string();
+    matches!(id.as_str(), "i32" | "u32" | "f64").then_some(id)
 }
 
-fn expect_punct(it: &mut impl Iterator<Item = TokenTree>, want: char) -> Result<(), String> {
-    match it.next() {
-        Some(TokenTree::Punct(p)) if p.as_char() == want => Ok(()),
-        other => Err(format!("expected `{want}`, found {other:?}")),
+/// The ident of a bare path type with no generics (e.g. `JsValue`, `bool`).
+fn simple_ident(ty: &Type) -> Option<&Ident> {
+    if let Type::Path(tp) = ty {
+        if tp.qself.is_none() && tp.path.segments.len() == 1 {
+            let seg = &tp.path.segments[0];
+            if seg.arguments.is_empty() {
+                return Some(&seg.ident);
+            }
+        }
     }
+    None
+}
+
+/// Whether `ty` is the bare path `name`.
+fn is_ident(ty: &Type, name: &str) -> bool {
+    simple_ident(ty).is_some_and(|id| id == name)
+}
+
+fn is_jsvalue(ty: &Type) -> bool {
+    is_ident(ty, "JsValue")
+}
+
+fn is_ref_jsvalue(ty: &Type) -> bool {
+    matches!(ty, Type::Reference(r) if is_jsvalue(&r.elem))
+}
+
+fn is_str(ty: &Type) -> bool {
+    matches!(ty, Type::Reference(r) if is_ident(&r.elem, "str"))
+}
+
+fn is_byte_slice(ty: &Type) -> bool {
+    if let Type::Reference(r) = ty {
+        if let Type::Slice(s) = &*r.elem {
+            return is_ident(&s.elem, "u8");
+        }
+    }
+    false
+}
+
+fn vec_u8(ty: &Type) -> bool {
+    generic1(ty, "Vec").is_some_and(|inner| is_ident(inner, "u8"))
+}
+
+/// If `ty` is `Name<Inner>` with exactly one type argument, return `Inner`.
+fn generic1<'a>(ty: &'a Type, name: &str) -> Option<&'a Type> {
+    let seg = last_segment(ty, name)?;
+    if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
+        if ab.args.len() == 1 {
+            if let syn::GenericArgument::Type(t) = &ab.args[0] {
+                return Some(t);
+            }
+        }
+    }
+    None
+}
+
+/// If `ty` is `Name<A, B>`, return `(A, B)`.
+fn generic2<'a>(ty: &'a Type, name: &str) -> Option<(&'a Type, &'a Type)> {
+    let seg = last_segment(ty, name)?;
+    if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
+        let types: Vec<&Type> = ab
+            .args
+            .iter()
+            .filter_map(|a| if let syn::GenericArgument::Type(t) = a { Some(t) } else { None })
+            .collect();
+        if types.len() == 2 {
+            return Some((types[0], types[1]));
+        }
+    }
+    None
+}
+
+fn last_segment<'a>(ty: &'a Type, name: &str) -> Option<&'a syn::PathSegment> {
+    if let Type::Path(tp) = ty {
+        let seg = tp.path.segments.last()?;
+        if seg.ident == name {
+            return Some(seg);
+        }
+    }
+    None
+}
+
+fn type_string(ty: &Type) -> String {
+    ty.to_token_stream().to_string()
+}
+
+/// A `*b"<text>\n"` byte-string literal for a descriptor/section entry.
+fn section_literal(text: &str) -> LitByteStr {
+    LitByteStr::new(format!("{text}\n").as_bytes(), Span::call_site())
 }

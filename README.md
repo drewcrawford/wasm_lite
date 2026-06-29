@@ -1,9 +1,10 @@
 # wasm_lite
 
 A "smol"-style rewrite of wasm-bindgen: bind JavaScript and Rust to each other
-on `wasm32-unknown-unknown`, with no proc-macro dependencies (no `syn`/`quote`)
-and no runtime crates — just hand-rolled `macro_rules!`/`proc_macro` and a small
-host-side codegen tool.
+on `wasm32-unknown-unknown`, with no *runtime* dependencies and a small
+host-side codegen tool. The core (`import!`, `JsValue`, runtime) and the codegen
+are dependency-free; the proc-macros (`wasm_lite_macro`) use `syn`/`quote`, which
+are build-time-only (zero bytes in the `.wasm`).
 
 A checkout of wasm-bindgen is available in the `wasm-bindgen/` folder for reference.
 
@@ -17,7 +18,10 @@ A checkout of wasm-bindgen is available in the `wasm-bindgen/` folder for refere
 * Bind JS APIs to Rust and vice versa — **done** (`import!` / `#[export]`).
 * Doctest support — **done** (runs rustdoc doctests in a browser).
 * Simple, clean architecture — ongoing.
-* Avoid dependencies — **held** (zero third-party deps in the core path).
+* Avoid dependencies — **mostly held**: zero *runtime* deps; the core crate and
+  codegen pull nothing. The proc-macro crate uses `syn`/`quote` (build-time only)
+  — a deliberate trade for typed parsing + hygienic codegen over hand-rolled
+  token wrangling.
 
 Nice to have:
 * Interop with wasm-bindgen crates — **done** behind the `wasm-bindgen` feature.
@@ -47,7 +51,7 @@ wasm-lite app.wasm -o glue.js                     # generates the JS glue
 | crate | role |
 |---|---|
 | `crates/wasm_lite` | core: `import!`, `#[export]`, `js_class!`, `JsValue`, runtime (`__wl_malloc`/`__wl_free`, panic hook), `thread::spawn`, `console`/`performance` bindings |
-| `crates/wasm_lite_macro` | zero-dep proc-macros: `#[export]`, `#[wasm_lite_test]`, `js_class!` |
+| `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): `#[export]`, `#[wasm_lite_test]`, `js_class!` |
 | `crates/wasm_lite_codegen` | host-side: read descriptor sections, generate JS glue |
 | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |
 | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`); ported from `wasm_safe_thread`, sync path retargeted onto `wasm_lite` |
