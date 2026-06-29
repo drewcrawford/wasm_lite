@@ -405,10 +405,27 @@ pub fn yield_now() {
 
 /// Yields to the event loop, allowing pending tasks (like worker startup) to run.
 ///
-/// TODO: a real microtask/Promise yield needs a wasm_lite async bridge; for now
-/// this is a no-op. Workers still start when the spawning thread returns control
-/// to the event loop (e.g. the main thread returns from `main`).
-pub async fn yield_to_event_loop_async() {}
+/// Returns `Pending` exactly once, so the [`spawn_local`](super::spawn_local)
+/// executor reschedules the caller after a turn of the event loop.
+pub async fn yield_to_event_loop_async() {
+    struct YieldOnce(bool);
+    impl std::future::Future for YieldOnce {
+        type Output = ();
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            if self.0 {
+                std::task::Poll::Ready(())
+            } else {
+                self.0 = true;
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+        }
+    }
+    YieldOnce(false).await
+}
 
 /// Blocks unless or until the current thread's token is made available.
 pub fn park() {

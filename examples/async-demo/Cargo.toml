@@ -1,0 +1,13 @@
+[package]
+name = "async-demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wasm_lite = { path = "../../crates/wasm_lite" }
+wasm_lite_std = { path = "../../crates/wasm_lite_std" }
+
+[profile.dev]
+panic = "abort"
+[profile.release]
+panic = "abort"

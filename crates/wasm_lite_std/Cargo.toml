@@ -13,7 +13,9 @@ description = "std::thread + std::sync veneer over wasm_lite (ported from wasm_s
 
 [dependencies]
 # Async-path continuation primitive (used by the async lock/condvar APIs).
-continue = "0.1.2"
+# Local checkout with the vestigial wasm-bindgen dep removed (runtime tree is
+# now just atomic-waker + thiserror).
+continue = { path = "../../../continue" }
 
 [target.'cfg(target_arch="wasm32")'.dependencies]
 wasm_lite = { path = "../wasm_lite" }

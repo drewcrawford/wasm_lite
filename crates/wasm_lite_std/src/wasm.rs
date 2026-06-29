@@ -6,8 +6,11 @@
 //! blocking use the wasm `atomic.wait`/`atomic.notify` instructions directly
 //! (see [`wasm_utils`]). No wasm-bindgen, js-sys, or web-sys.
 
+mod executor;
 mod thread_api;
 mod wasm_utils;
+
+pub use executor::spawn_local;
 
 use std::fmt;
 use std::io;

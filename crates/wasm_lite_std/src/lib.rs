@@ -368,6 +368,9 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 pub use backend::yield_to_event_loop_async;
+/// Run a future to completion on the current thread's event loop (wasm only).
+#[cfg(target_arch = "wasm32")]
+pub use backend::spawn_local;
 pub use backend::{AccessError, Builder, JoinHandle, LocalKey, Thread, ThreadId};
 pub use backend::{task_begin, task_finished};
 pub use guard::Guard;

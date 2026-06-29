@@ -57,6 +57,12 @@ function __wl_drop(idx) {
     __wl_free.push(idx);
 }
 
+// Async executor support: schedule one event-loop turn that polls pending
+// futures. Only called when the module uses `spawn_local`.
+function __wl_schedule() {
+    setTimeout(() => __wl_instance.exports.__wl_async_tick(), 0);
+}
+
 ";
 
 /// The `instantiate`/`setInstance` exports for a module with its own (exported)
@@ -191,12 +197,14 @@ pub fn generate_glue(
 ) -> String {
     let mut js = String::from(PREAMBLE);
     js.push_str("export function makeImports() {\n    const imports = {};\n");
-    // Runtime support: Rust calls __wl_drop when a JsValue drops; shared-memory
-    // builds also get __wl_spawn for thread spawning.
+    // Runtime support: Rust calls __wl_drop when a JsValue drops, __wl_schedule
+    // to drive the async executor; shared-memory builds also get __wl_spawn for
+    // thread spawning. (Unused entries are harmless — the wasm only imports what
+    // it references.)
     if memory.is_some() {
-        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_spawn: __wl_spawn };\n");
+        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_spawn: __wl_spawn, __wl_schedule: __wl_schedule };\n");
     } else {
-        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop };\n");
+        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule };\n");
     }
 
     for d in imports {
@@ -636,7 +644,7 @@ mod tests {
         assert!(js.contains("imports[\"performance\"][\"now\"] = () => globalThis[\"performance\"][\"now\"]();"));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
-        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop };"));
+        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule };"));
     }
 
     #[test]

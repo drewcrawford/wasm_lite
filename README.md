@@ -63,7 +63,8 @@ Examples (each standalone, builds to `wasm32-unknown-unknown`):
 `doctest-demo` (doctests), `interop` (wasm-bindgen bridge),
 `atomics-demo` (shared memory + atomics; nightly),
 `threads-demo` (`thread::spawn` over Web Workers; nightly),
-`std-threads-demo` (`wasm_lite_std::spawn`, the std-like API; nightly).
+`std-threads-demo` (`wasm_lite_std::spawn`, the std-like API; nightly),
+`async-demo` (non-blocking `join_async` on the main thread; nightly).
 
 ## Binding model
 
@@ -218,8 +219,16 @@ bootstrap module. A threaded build must export the linker's thread symbols;
 
 The core `spawn` is **detached** (no `JoinHandle`). The std-like layer with
 `spawn -> JoinHandle`, `park`/`unpark`, `Mutex`/`Condvar`/`RwLock`/`mpsc` lives in
-`wasm_lite_std` (a port of `wasm_safe_thread`); its synchronous path is working,
-the async path is deferred.
+`wasm_lite_std` (a port of `wasm_safe_thread`, retargeted off wasm-bindgen onto
+this primitive + `core::arch::wasm32` atomics).
+
+Both the **sync** and **async** paths work. Since the main thread can't block,
+`wasm_lite_std` ships a small event-loop executor: `spawn_local(future)` drives a
+task by re-polling on `setTimeout(0)` (the `__wl_schedule` runtime import) until
+ready, so `JoinHandle::join_async().await`, `Mutex::lock_async`, etc. run
+non-blocking on the main thread. (It's level-triggered polling: a future woken
+from another worker is picked up on the next tick, since a worker can't enqueue a
+microtask on the main realm's event loop.)
 
 ## wasm-bindgen interop
 
@@ -238,10 +247,12 @@ Following the wasm-bindgen ecosystem split (language vs browser):
 * `wasm_lite_web` *(future)* — Web/host APIs (DOM, `fetch`, …). *Like `web-sys`.*
 * `wasm_lite_std` *(in progress)* — std-like veneer: a `std::thread` + `std::sync`
   port of [`wasm_safe_thread`](https://crates.io/crates/wasm_safe_thread) with its
-  wasm backend retargeted off wasm-bindgen onto `wasm_lite::thread::spawn`. The
-  **sync** path works (`spawn`/`JoinHandle`, `park`/`unpark`, `Mutex`,
-  `Condvar`, `RwLock`, `mpsc`); the async path is deferred (needs a
-  wasm-bindgen-free continuation + Promise bridge).
+  wasm backend retargeted off wasm-bindgen onto `wasm_lite::thread::spawn` +
+  `core::arch::wasm32` atomics. Both **sync** and **async** paths work:
+  `spawn`/`JoinHandle` (`join`/`join_async`), `park`/`unpark`, `Mutex`/`Condvar`/
+  `RwLock`/`mpsc` (sync + async), and a `spawn_local` event-loop executor for
+  non-blocking async on the main thread. Its only runtime dep is `continue`
+  (a wasm-bindgen-free continuation primitive).
 
 Bindings stay out of core so it remains small; `js_class!` is the primitive all
 upper layers build on.
