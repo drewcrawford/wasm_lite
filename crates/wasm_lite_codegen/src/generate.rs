@@ -57,10 +57,23 @@ function __wl_drop(idx) {
     __wl_free.push(idx);
 }
 
-// Async executor support: schedule one event-loop turn that polls pending
-// futures. Only called when the module uses `spawn_local`.
+// Async executor support. __wl_schedule kicks one event-loop turn; only called
+// when the module uses `spawn_local`.
 function __wl_schedule() {
     setTimeout(() => __wl_instance.exports.__wl_async_tick(), 0);
+}
+
+// Sleep the executor until a Waker bumps the wake atom. `Atomics.waitAsync`
+// resolves on a `memory.atomic.notify` to `ptr` — including one from another
+// worker — so cross-thread wakes reach the main thread without busy-polling.
+function __wl_wait_async(ptr, expected) {
+    const tick = () => __wl_instance.exports.__wl_async_tick();
+    if (typeof Atomics.waitAsync === \"function\") {
+        const r = Atomics.waitAsync(new Int32Array(__wl_memory.buffer), ptr >>> 2, expected);
+        if (r.async) { r.value.then(tick); return; }
+    }
+    // No waitAsync, or the value already changed (\"not-equal\"): re-poll soon.
+    setTimeout(tick, 0);
 }
 
 ";
@@ -202,9 +215,9 @@ pub fn generate_glue(
     // thread spawning. (Unused entries are harmless — the wasm only imports what
     // it references.)
     if memory.is_some() {
-        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_spawn: __wl_spawn, __wl_schedule: __wl_schedule };\n");
+        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_spawn: __wl_spawn, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async };\n");
     } else {
-        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule };\n");
+        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async };\n");
     }
 
     for d in imports {
@@ -644,7 +657,7 @@ mod tests {
         assert!(js.contains("imports[\"performance\"][\"now\"] = () => globalThis[\"performance\"][\"now\"]();"));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
-        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule };"));
+        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async };"));
     }
 
     #[test]

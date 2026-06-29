@@ -64,7 +64,8 @@ Examples (each standalone, builds to `wasm32-unknown-unknown`):
 `atomics-demo` (shared memory + atomics; nightly),
 `threads-demo` (`thread::spawn` over Web Workers; nightly),
 `std-threads-demo` (`wasm_lite_std::spawn`, the std-like API; nightly),
-`async-demo` (non-blocking `join_async` on the main thread; nightly).
+`async-demo` (non-blocking `join_async` on the main thread; nightly),
+`async-mutex-demo` (main `lock_async` woken cross-thread by a worker; nightly).
 
 ## Binding model
 
@@ -223,12 +224,14 @@ The core `spawn` is **detached** (no `JoinHandle`). The std-like layer with
 this primitive + `core::arch::wasm32` atomics).
 
 Both the **sync** and **async** paths work. Since the main thread can't block,
-`wasm_lite_std` ships a small event-loop executor: `spawn_local(future)` drives a
-task by re-polling on `setTimeout(0)` (the `__wl_schedule` runtime import) until
-ready, so `JoinHandle::join_async().await`, `Mutex::lock_async`, etc. run
-non-blocking on the main thread. (It's level-triggered polling: a future woken
-from another worker is picked up on the next tick, since a worker can't enqueue a
-microtask on the main realm's event loop.)
+`wasm_lite_std` ships a small event-loop executor: `spawn_local(future)` runs a
+task on the event loop, and while it's pending the executor *sleeps* on
+`Atomics.waitAsync` (the `__wl_wait_async` runtime import) rather than busy-polling.
+Wakes are edge-triggered and cross-thread: each executor owns a wake atom, and a
+task's `Waker` bumps it and issues `memory.atomic.notify` — which resolves the
+owning realm's `waitAsync` Promise even when the notify comes from another worker.
+So `JoinHandle::join_async().await`, `Mutex::lock_async().await`, etc. run
+non-blocking on the main thread and are woken the instant a worker releases.
 
 ## wasm-bindgen interop
 
