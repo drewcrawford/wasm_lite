@@ -1,7 +1,7 @@
 //! Generate the JavaScript glue module from import descriptors.
 
 use crate::descriptor::{AbiArg, Descriptor, Kind, Ret};
-use crate::exports::{Export, ExportArg, ExportRet};
+use crate::exports::{Export, ExportArg, ExportRet, Payload};
 use std::fmt::Write;
 
 const PREAMBLE: &str = "\
@@ -174,6 +174,50 @@ fn emit_export(js: &mut String, export: &Export) {
             lines.push("__wl_drop(__idx);".into());
             lines.push("return __o;".into());
         }
+        // sret returns: Rust wrote a discriminant at __ret and a payload at
+        // __ret+8. The buffer is the export's leading argument.
+        ExportRet::Opt(p) => {
+            let sret_call = sret_call(&export.name, &wasm_args);
+            lines.push("const __ret = __wl_instance.exports.__wl_malloc(16);".into());
+            lines.push(format!("{sret_call};"));
+            lines.extend(frees);
+            lines.push("const __dv = new DataView(__wl_memory.buffer);".into());
+            lines.push("let __result;".into());
+            lines.push("if (__dv.getUint32(__ret, true) === 1) {".into());
+            let (stmts, expr) = read_payload(p, "__ret + 8", "v");
+            for s in stmts {
+                lines.push(format!("    {s}"));
+            }
+            lines.push(format!("    __result = {expr};"));
+            lines.push("} else { __result = null; }".into());
+            lines.push("__wl_instance.exports.__wl_free(__ret, 16);".into());
+            lines.push("return __result;".into());
+        }
+        ExportRet::Res(ok, err) => {
+            let sret_call = sret_call(&export.name, &wasm_args);
+            lines.push("const __ret = __wl_instance.exports.__wl_malloc(16);".into());
+            lines.push(format!("{sret_call};"));
+            lines.extend(frees);
+            lines.push("const __dv = new DataView(__wl_memory.buffer);".into());
+            lines.push("const __tag = __dv.getUint32(__ret, true);".into());
+            lines.push("if (__tag === 0) {".into());
+            let (ok_stmts, ok_expr) = read_payload(ok, "__ret + 8", "ok");
+            for s in ok_stmts {
+                lines.push(format!("    {s}"));
+            }
+            lines.push(format!("    const __okv = {ok_expr};"));
+            lines.push("    __wl_instance.exports.__wl_free(__ret, 16);".into());
+            lines.push("    return __okv;".into());
+            lines.push("} else {".into());
+            let (err_stmts, err_expr) = read_payload(err, "__ret + 8", "err");
+            for s in err_stmts {
+                lines.push(format!("    {s}"));
+            }
+            lines.push(format!("    const __errv = {err_expr};"));
+            lines.push("    __wl_instance.exports.__wl_free(__ret, 16);".into());
+            lines.push("    throw __errv;".into());
+            lines.push("}".into());
+        }
     }
 
     let _ = writeln!(
@@ -183,6 +227,78 @@ fn emit_export(js: &mut String, export: &Export) {
         params.join(", "),
         lines.join(" ")
     );
+}
+
+/// The export call for an sret return: the buffer `__ret` is the leading argument.
+fn sret_call(name: &str, wasm_args: &[String]) -> String {
+    let mut args = vec!["__ret".to_string()];
+    args.extend(wasm_args.iter().cloned());
+    format!("__wl_instance.exports.__wl_export_{name}({})", args.join(", "))
+}
+
+/// Read one sret payload from the buffer at JS offset `off`. Returns the
+/// statements to run (using a `__dv` DataView already in scope) and the final
+/// value expression. `sfx` disambiguates locals between Ok/Err payloads.
+fn read_payload(p: Payload, off: &str, sfx: &str) -> (Vec<String>, String) {
+    match p {
+        Payload::I32 => (vec![], format!("__dv.getInt32({off}, true)")),
+        Payload::U32 => (vec![], format!("__dv.getUint32({off}, true)")),
+        Payload::F64 => (vec![], format!("__dv.getFloat64({off}, true)")),
+        Payload::Bool => (vec![], format!("Boolean(__dv.getInt32({off}, true))")),
+        Payload::Handle => (
+            vec![format!(
+                "const __h_{sfx} = __dv.getUint32({off}, true); const __o_{sfx} = __wl_obj(__h_{sfx}); __wl_drop(__h_{sfx});"
+            )],
+            format!("__o_{sfx}"),
+        ),
+        Payload::Str => (
+            vec![format!(
+                "const __p_{sfx} = __dv.getUint32({off}, true), __l_{sfx} = __dv.getUint32(({off}) + 4, true); \
+                 const __s_{sfx} = __wl_str(__p_{sfx}, __l_{sfx}); __wl_instance.exports.__wl_free(__p_{sfx}, __l_{sfx});"
+            )],
+            format!("__s_{sfx}"),
+        ),
+        Payload::Bytes => (
+            vec![format!(
+                "const __p_{sfx} = __dv.getUint32({off}, true), __l_{sfx} = __dv.getUint32(({off}) + 4, true); \
+                 const __b_{sfx} = new Uint8Array(__wl_memory.buffer, __p_{sfx}, __l_{sfx}).slice(); \
+                 __wl_instance.exports.__wl_free(__p_{sfx}, __l_{sfx});"
+            )],
+            format!("__b_{sfx}"),
+        ),
+    }
+}
+
+/// Write `val` (of payload type `p`) into the sret buffer at JS offset `off`.
+/// Returns `(prep, set)`: `prep` runs first (may `malloc`, which can grow memory
+/// and detach views); `set` runs after a fresh `__dv` DataView is created.
+fn write_payload(p: Payload, off: &str, val: &str) -> (Vec<String>, Vec<String>) {
+    match p {
+        Payload::I32 => (vec![], vec![format!("__dv.setInt32({off}, {val}, true);")]),
+        Payload::U32 => (vec![], vec![format!("__dv.setUint32({off}, {val}, true);")]),
+        Payload::F64 => (vec![], vec![format!("__dv.setFloat64({off}, {val}, true);")]),
+        Payload::Bool => (vec![], vec![format!("__dv.setInt32({off}, ({val}) ? 1 : 0, true);")]),
+        Payload::Handle => (
+            vec![format!("const __wh = __wl_add({val});")],
+            vec![format!("__dv.setUint32({off}, __wh, true);")],
+        ),
+        Payload::Str => (
+            vec![format!(
+                "const __wb = new TextEncoder().encode({val}); \
+                 const __wp = __wl_instance.exports.__wl_malloc(__wb.length); \
+                 new Uint8Array(__wl_memory.buffer, __wp, __wb.length).set(__wb);"
+            )],
+            vec![format!("__dv.setUint32({off}, __wp, true); __dv.setUint32(({off}) + 4, __wb.length, true);")],
+        ),
+        Payload::Bytes => (
+            vec![format!(
+                "const __wb = ({val} instanceof Uint8Array ? {val} : new Uint8Array({val})); \
+                 const __wp = __wl_instance.exports.__wl_malloc(__wb.length); \
+                 new Uint8Array(__wl_memory.buffer, __wp, __wb.length).set(__wb);"
+            )],
+            vec![format!("__dv.setUint32({off}, __wp, true); __dv.setUint32(({off}) + 4, __wb.length, true);")],
+        ),
+    }
 }
 
 /// Emit one import shim: a JS function that unmarshals wasm params and calls the
@@ -265,6 +381,36 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                      return (BigInt(__p) << 32n) | BigInt(__b.length); \
                  }};"
             );
+        }
+        // sret returns: the shim writes a discriminant + payload into a leading
+        // retptr buffer rather than returning a value.
+        Ret::Opt(p) => {
+            let shim_params = if params.is_empty() { "__retp".to_string() } else { format!("__retp, {params}") };
+            let (prep, set) = write_payload(*p, "__retp + 8", "__r");
+            let body = format!(
+                "const __r = {call}; \
+                 if (__r === null || __r === undefined) {{ new DataView(__wl_memory.buffer).setUint32(__retp, 0, true); }} \
+                 else {{ {prep} const __dv = new DataView(__wl_memory.buffer); __dv.setUint32(__retp, 1, true); {set} }}",
+                prep = prep.join(" "),
+                set = set.join(" "),
+            );
+            let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({shim_params}) => {{ {body} }};");
+        }
+        Ret::Res(ok, err) => {
+            let shim_params = if params.is_empty() { "__retp".to_string() } else { format!("__retp, {params}") };
+            let (ok_prep, ok_set) = write_payload(*ok, "__retp + 8", "__r");
+            let (err_prep, err_set) = write_payload(*err, "__retp + 8", "__e");
+            let body = format!(
+                "try {{ const __r = {call}; {ok_prep} const __dv = new DataView(__wl_memory.buffer); \
+                 __dv.setUint32(__retp, 0, true); {ok_set} }} \
+                 catch (__e) {{ {err_prep} const __dv = new DataView(__wl_memory.buffer); \
+                 __dv.setUint32(__retp, 1, true); {err_set} }}",
+                ok_prep = ok_prep.join(" "),
+                ok_set = ok_set.join(" "),
+                err_prep = err_prep.join(" "),
+                err_set = err_set.join(" "),
+            );
+            let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({shim_params}) => {{ {body} }};");
         }
         Ret::Void | Ret::Value(_) => {
             let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({params}) => {call};");

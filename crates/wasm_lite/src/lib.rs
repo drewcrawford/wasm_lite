@@ -64,6 +64,65 @@ pub extern "C" fn __wl_free(ptr: *mut u8, len: usize) {
     }
 }
 
+/// Read one value out of an `Option`/`Result` sret buffer.
+///
+/// The host writes a discriminant at `base` and a payload at `base + 8`; this
+/// reads that payload back into Rust. Implemented for every type usable as an
+/// `Option`/`Result` inner type, so [`import!`](crate::import) needs only one
+/// terminal rule per `Option`/`Result` (the per-type read dispatches here, in
+/// Rust, instead of in the macro).
+#[doc(hidden)]
+pub trait FromSretPayload {
+    /// # Safety
+    /// The host must have written a payload of exactly this type at `base + 8`
+    /// (and transferred ownership, for `String`/`Vec<u8>`/`JsValue`).
+    unsafe fn __wl_read(base: *const u8) -> Self;
+}
+
+macro_rules! __impl_sret_scalar {
+    ($($t:ty),*) => { $(
+        impl FromSretPayload for $t {
+            unsafe fn __wl_read(base: *const u8) -> Self {
+                unsafe { core::ptr::read_unaligned(base.add(8) as *const $t) }
+            }
+        }
+    )* };
+}
+__impl_sret_scalar!(i32, u32, f64);
+
+impl FromSretPayload for bool {
+    unsafe fn __wl_read(base: *const u8) -> Self {
+        unsafe { core::ptr::read_unaligned(base.add(8) as *const i32) != 0 }
+    }
+}
+
+impl FromSretPayload for JsValue {
+    unsafe fn __wl_read(base: *const u8) -> Self {
+        let idx = unsafe { core::ptr::read_unaligned(base.add(8) as *const u32) };
+        JsValue::__wl_from_abi(idx)
+    }
+}
+
+impl FromSretPayload for String {
+    unsafe fn __wl_read(base: *const u8) -> Self {
+        unsafe {
+            let ptr = core::ptr::read_unaligned(base.add(8) as *const u32) as usize as *mut u8;
+            let len = core::ptr::read_unaligned(base.add(12) as *const u32) as usize;
+            String::from_raw_parts(ptr, len, len)
+        }
+    }
+}
+
+impl FromSretPayload for Vec<u8> {
+    unsafe fn __wl_read(base: *const u8) -> Self {
+        unsafe {
+            let ptr = core::ptr::read_unaligned(base.add(8) as *const u32) as usize as *mut u8;
+            let len = core::ptr::read_unaligned(base.add(12) as *const u32) as usize;
+            Vec::from_raw_parts(ptr, len, len)
+        }
+    }
+}
+
 /// Copy a `&str`'s bytes into a fixed-size array at compile time.
 ///
 /// Used by [`import!`] to place its descriptor text into a `#[link_section]`

@@ -33,7 +33,7 @@ macro_rules! import {
         $(
             $ns:literal {
                 $(
-                    fn $fname:ident ( $($args:tt)* ) $( -> $ret:ident $( < $relem:ident > )? )? $( as $jsname:literal )? ;
+                    fn $fname:ident ( $($args:tt)* ) $( -> $ret:ident $( < $g1:ident $( , $g2:ident )? > )? )? $( as $jsname:literal )? ;
                 )*
             }
         )*
@@ -42,7 +42,7 @@ macro_rules! import {
         // its wasm import are keyed on the Rust fn name; the JS call target
         // (which may differ, to allow overloads) is recorded in the descriptor.
         $( $(
-            $crate::__import_fn!($ns, $fname, ( $($args)* ) $( -> $ret $( < $relem > )? )? );
+            $crate::__import_fn!($ns, $fname, ( $($args)* ) $( -> $ret $( < $g1 $( , $g2 )? > )? )? );
         )* )*
 
         // Descriptors for this invocation: `ns|name|argtags|rettag\n` per fn.
@@ -63,7 +63,7 @@ macro_rules! import {
                 $ns, "|", concat!(module_path!(), "::", stringify!($fname)), "|",
                 $crate::__js_name!($fname $(, $jsname)?), "|",
                 $crate::__import_descr_args!($($args)*), "|",
-                $crate::__import_descr_ret!($( $ret $( < $relem > )? )?), "\n",
+                $crate::__import_descr_ret!($( $ret $( < $g1 $( , $g2 )? > )? )?), "\n",
             )* )* );
 
             // The descriptor section only matters for the wasm build; on other
@@ -258,6 +258,60 @@ macro_rules! __import_fn {
             static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = $crate::__wl_malloc;
         };
     };
+    // Terminal: Option<T> return (sret). The host writes a discriminant at the
+    // buffer and the payload at +8; we pass a stack buffer's pointer in.
+    (@munch ns=$ns:literal, name=$fname:ident, ret=(Option<$t:ident>),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( )) => {
+        pub fn $fname($($orig)*) -> ::core::option::Option<$t> {
+            #[link(wasm_import_module = $ns)]
+            unsafe extern "C" {
+                #[link_name = concat!(module_path!(), "::", stringify!($fname))]
+                fn $fname(__ret: *mut u8, $($flat)*);
+            }
+            let mut __buf = [0u8; 16];
+            unsafe { $fname(__buf.as_mut_ptr(), $($call)*) };
+            if u32::from_le_bytes([__buf[0], __buf[1], __buf[2], __buf[3]]) == 1 {
+                ::core::option::Option::Some(unsafe {
+                    <$t as $crate::FromSretPayload>::__wl_read(__buf.as_ptr())
+                })
+            } else {
+                ::core::option::Option::None
+            }
+        }
+        // The host may allocate a str/bytes payload via __wl_malloc; keep it exported.
+        const _: () = {
+            #[used]
+            static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = $crate::__wl_malloc;
+        };
+    };
+    // Terminal: Result<T, E> return (sret). discriminant 0 = Ok, 1 = Err.
+    (@munch ns=$ns:literal, name=$fname:ident, ret=(Result<$ok:ident, $err:ident>),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( )) => {
+        pub fn $fname($($orig)*) -> ::core::result::Result<$ok, $err> {
+            #[link(wasm_import_module = $ns)]
+            unsafe extern "C" {
+                #[link_name = concat!(module_path!(), "::", stringify!($fname))]
+                fn $fname(__ret: *mut u8, $($flat)*);
+            }
+            let mut __buf = [0u8; 16];
+            unsafe { $fname(__buf.as_mut_ptr(), $($call)*) };
+            if u32::from_le_bytes([__buf[0], __buf[1], __buf[2], __buf[3]]) == 0 {
+                ::core::result::Result::Ok(unsafe {
+                    <$ok as $crate::FromSretPayload>::__wl_read(__buf.as_ptr())
+                })
+            } else {
+                ::core::result::Result::Err(unsafe {
+                    <$err as $crate::FromSretPayload>::__wl_read(__buf.as_ptr())
+                })
+            }
+        }
+        const _: () = {
+            #[used]
+            static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = $crate::__wl_malloc;
+        };
+    };
     // Terminal: numeric return.
     (@munch ns=$ns:literal, name=$fname:ident, ret=($ret:ident),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
@@ -308,6 +362,10 @@ macro_rules! __import_descr_ret {
     ( JsValue ) => { "handle" };
     ( String ) => { "str" };
     ( Vec<u8> ) => { "bytes" };
+    ( Option < $t:ident > ) => { concat!("opt:", $crate::__import_descr_ret!($t)) };
+    ( Result < $ok:ident , $err:ident > ) => {
+        concat!("res:", $crate::__import_descr_ret!($ok), ":", $crate::__import_descr_ret!($err))
+    };
     ( $r:ident ) => { stringify!($r) };
 }
 

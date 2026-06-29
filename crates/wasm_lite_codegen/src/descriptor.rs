@@ -10,6 +10,8 @@
 //! calls. They differ for overloads, where several Rust functions bind the same
 //! JS function.
 
+use crate::exports::Payload;
+
 /// Whether an import is a namespaced free function or a method on a receiver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -30,6 +32,10 @@ pub enum Ret {
     Str,
     /// JS bytes: copy them into wasm memory and return a packed `(ptr, len)`.
     Bytes,
+    /// `Option<T>` via sret: the shim writes a discriminant + payload to a buffer.
+    Opt(Payload),
+    /// `Result<T, E>` via sret: success vs. a caught JS exception.
+    Res(Payload, Payload),
     /// A primitive returned directly (the tag is kept for documentation).
     Value(String),
 }
@@ -124,13 +130,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
             return Err(format!("method {import_name:?} needs a handle receiver"));
         }
 
-        let ret = match ret_tag {
-            "" => Ret::Void,
-            "handle" => Ret::Handle,
-            "str" => Ret::Str,
-            "bytes" => Ret::Bytes,
-            other => Ret::Value(other.to_string()),
-        };
+        let ret = parse_ret(ret_tag)?;
 
         descriptors.push(Descriptor {
             kind,
@@ -143,6 +143,27 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
     }
 
     Ok(descriptors)
+}
+
+/// Parse a return tag: `opt:<P>` / `res:<P>:<P>` (sret) or a plain scalar tag.
+fn parse_ret(tag: &str) -> Result<Ret, String> {
+    if let Some(inner) = tag.strip_prefix("opt:") {
+        let p = Payload::from_tag(inner).ok_or_else(|| format!("bad Option payload tag {tag:?}"))?;
+        return Ok(Ret::Opt(p));
+    }
+    if let Some(rest) = tag.strip_prefix("res:") {
+        let (ok, err) = rest.split_once(':').ok_or_else(|| format!("bad Result tag {tag:?}"))?;
+        let ok = Payload::from_tag(ok).ok_or_else(|| format!("bad Result Ok tag {tag:?}"))?;
+        let err = Payload::from_tag(err).ok_or_else(|| format!("bad Result Err tag {tag:?}"))?;
+        return Ok(Ret::Res(ok, err));
+    }
+    Ok(match tag {
+        "" => Ret::Void,
+        "handle" => Ret::Handle,
+        "str" => Ret::Str,
+        "bytes" => Ret::Bytes,
+        other => Ret::Value(other.to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -194,6 +215,15 @@ mod tests {
         assert_eq!(got[0].ret, Ret::Void);
         assert_eq!(got[1].args, vec![]);
         assert_eq!(got[1].ret, Ret::Bytes);
+    }
+
+    #[test]
+    fn parses_option_and_result_returns() {
+        let section = b"f|JSON|c::parse_num|parse|str|opt:f64\n\
+                        f|JSON|c::try_parse|parse|str|res:f64:handle\n";
+        let got = parse(section).unwrap();
+        assert_eq!(got[0].ret, Ret::Opt(Payload::F64));
+        assert_eq!(got[1].ret, Ret::Res(Payload::F64, Payload::Handle));
     }
 
     #[test]

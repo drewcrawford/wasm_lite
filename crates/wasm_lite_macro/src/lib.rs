@@ -113,59 +113,78 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let call = format!("{}({})", sig.name, call_args.join(", "));
-    let (ret_decl, ret_tag, ret_expr) = match sig.ret.as_deref() {
-        None => (String::new(), "", format!("{call};")),
-        Some("i32") | Some("u32") | Some("f64") => {
-            let ty = sig.ret.as_deref().unwrap();
-            (format!(" -> {ty}"), ty, call)
-        }
-        Some("bool") => (" -> i32".to_string(), "bool", format!("(({call}) as i32)")),
-        Some("String") => (
-            " -> i64".to_string(),
-            "str",
-            // Copy into a __wl_malloc buffer JS can free, return packed (ptr, len).
-            format!(
-                "let __r: ::std::string::String = {call}; \
-                 let __len = __r.len(); \
-                 let __ptr = ::wasm_lite::__wl_malloc(__len); \
-                 unsafe {{ ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }} \
-                 (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
-            ),
-        ),
-        Some("Vec<u8>") => (
-            " -> i64".to_string(),
-            "bytes",
-            // Same packing as a String, but the bytes are returned verbatim.
-            format!(
-                "let __r: ::std::vec::Vec<u8> = {call}; \
-                 let __len = __r.len(); \
-                 let __ptr = ::wasm_lite::__wl_malloc(__len); \
-                 unsafe {{ ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }} \
-                 (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
-            ),
-        ),
-        Some("JsValue") => (
-            " -> u32".to_string(),
-            "handle",
-            // Hand the table slot to JS: take the index, then `forget` so Drop
-            // doesn't free it — ownership transfers across the boundary.
-            format!(
-                "let __r: ::wasm_lite::JsValue = {call}; \
-                 let __idx = ::wasm_lite::JsValue::__wl_abi(&__r); \
-                 ::core::mem::forget(__r); \
-                 __idx"
-            ),
-        ),
-        Some(other) => {
-            return compile_error(&format!("#[wasm_lite::export]: unsupported return type `{other}`"));
+    // `Option<T>`/`Result<T,E>` returns use a return pointer (sret): the export
+    // takes a leading `__ret: *mut u8` buffer and writes a discriminant word plus
+    // the payload, since a single scalar return can't carry both (an `f64` has no
+    // spare bit). `is_sret` flags this so the buffer param is prepended below.
+    let (ret_decl, ret_tag, ret_expr, is_sret) = match sret_return(&call, sig.ret.as_deref()) {
+        Some(Ok((tag, body))) => (String::new(), tag, body, true),
+        Some(Err(msg)) => return compile_error(&msg),
+        None => {
+            let (decl, tag, expr) = match sig.ret.as_deref() {
+                None => (String::new(), String::new(), format!("{call};")),
+                Some("i32") | Some("u32") | Some("f64") => {
+                    let ty = sig.ret.as_deref().unwrap();
+                    (format!(" -> {ty}"), ty.to_string(), call)
+                }
+                Some("bool") => (" -> i32".to_string(), "bool".to_string(), format!("(({call}) as i32)")),
+                Some("String") => (
+                    " -> i64".to_string(),
+                    "str".to_string(),
+                    // Copy into a __wl_malloc buffer JS can free, return packed (ptr, len).
+                    format!(
+                        "let __r: ::std::string::String = {call}; \
+                         let __len = __r.len(); \
+                         let __ptr = ::wasm_lite::__wl_malloc(__len); \
+                         unsafe {{ ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }} \
+                         (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
+                    ),
+                ),
+                Some("Vec<u8>") => (
+                    " -> i64".to_string(),
+                    "bytes".to_string(),
+                    // Same packing as a String, but the bytes are returned verbatim.
+                    format!(
+                        "let __r: ::std::vec::Vec<u8> = {call}; \
+                         let __len = __r.len(); \
+                         let __ptr = ::wasm_lite::__wl_malloc(__len); \
+                         unsafe {{ ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }} \
+                         (((__ptr as usize as u64) << 32) | (__len as u64)) as i64"
+                    ),
+                ),
+                Some("JsValue") => (
+                    " -> u32".to_string(),
+                    "handle".to_string(),
+                    // Hand the table slot to JS: take the index, then `forget` so Drop
+                    // doesn't free it — ownership transfers across the boundary.
+                    format!(
+                        "let __r: ::wasm_lite::JsValue = {call}; \
+                         let __idx = ::wasm_lite::JsValue::__wl_abi(&__r); \
+                         ::core::mem::forget(__r); \
+                         __idx"
+                    ),
+                ),
+                Some(other) => {
+                    return compile_error(&format!("#[wasm_lite::export]: unsupported return type `{other}`"));
+                }
+            };
+            (decl, tag, expr, false)
         }
     };
 
+    // sret writes the payload into the JS-provided buffer; the export itself gains
+    // a leading `__ret` pointer.
+    if is_sret {
+        flat_params.insert(0, "__ret: *mut u8".to_string());
+    }
+
     // String marshalling needs the allocator exported even when the shim itself
-    // doesn't call it (e.g. only `&str` args). Force-keep both.
+    // doesn't call it (e.g. only `&str` args). Force-keep both. sret returns may
+    // also allocate (str/bytes payloads), and JS always allocates the buffer.
     let needs_alloc = sig.params.iter().any(|(_, t)| t == "&str" || t == "&[u8]")
         || ret_tag == "str"
-        || ret_tag == "bytes";
+        || ret_tag == "bytes"
+        || is_sret;
     let keep_alloc = if needs_alloc {
         "const _: () = { \
             #[used] static __WL_KEEP_MALLOC: extern \"C\" fn(usize) -> *mut u8 = ::wasm_lite::__wl_malloc; \
@@ -192,6 +211,109 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut out = item;
     out.extend(TokenStream::from_str(&generated).expect("wasm_lite export glue should parse"));
     out
+}
+
+/// If `ret` is `Option<T>`/`Result<T,E>`, build `(descriptor_tag, body)` for an
+/// sret return — code writing a discriminant word at `__ret` and the payload at
+/// `__ret + 8`. `None` if not sret; `Some(Err)` if an inner type is unsupported.
+///
+/// Discriminant: Option uses 1=Some / 0=None; Result uses 0=Ok / 1=Err.
+fn sret_return(call: &str, ret: Option<&str>) -> Option<Result<(String, String), String>> {
+    let ret = ret?;
+    if let Some(inner) = ret.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
+        let inner = inner.trim();
+        let (tag, write) = match payload(inner, "__x") {
+            Ok(p) => p,
+            Err(e) => return Some(Err(e)),
+        };
+        let body = format!(
+            "let __v: ::core::option::Option<{inner}> = {call}; \
+             match __v {{ \
+                 ::core::option::Option::Some(__x) => {{ \
+                     unsafe {{ ::core::ptr::write_unaligned(__ret as *mut u32, 1u32); }} {write} \
+                 }} \
+                 ::core::option::Option::None => unsafe {{ ::core::ptr::write_unaligned(__ret as *mut u32, 0u32); }}, \
+             }}"
+        );
+        return Some(Ok((format!("opt:{tag}"), body)));
+    }
+    if let Some(inner) = ret.strip_prefix("Result<").and_then(|s| s.strip_suffix('>')) {
+        let comma = match split_top_comma(inner) {
+            Some(c) => c,
+            None => return Some(Err(format!("#[wasm_lite::export]: malformed return type `{ret}`"))),
+        };
+        let ok_ty = inner[..comma].trim();
+        let err_ty = inner[comma + 1..].trim();
+        let (ok_tag, ok_write) = match payload(ok_ty, "__x") {
+            Ok(p) => p,
+            Err(e) => return Some(Err(e)),
+        };
+        let (err_tag, err_write) = match payload(err_ty, "__e") {
+            Ok(p) => p,
+            Err(e) => return Some(Err(e)),
+        };
+        let body = format!(
+            "let __v: ::core::result::Result<{ok_ty}, {err_ty}> = {call}; \
+             match __v {{ \
+                 ::core::result::Result::Ok(__x) => {{ \
+                     unsafe {{ ::core::ptr::write_unaligned(__ret as *mut u32, 0u32); }} {ok_write} \
+                 }} \
+                 ::core::result::Result::Err(__e) => {{ \
+                     unsafe {{ ::core::ptr::write_unaligned(__ret as *mut u32, 1u32); }} {err_write} \
+                 }} \
+             }}"
+        );
+        return Some(Ok((format!("res:{ok_tag}:{err_tag}"), body)));
+    }
+    None
+}
+
+/// Code to write `binding` (of type `ty`) into the sret buffer at `__ret + 8`
+/// (str/bytes also use `__ret + 12` for the length). Returns the descriptor tag
+/// and the code. Writes are unaligned (the buffer is align-1).
+fn payload(ty: &str, binding: &str) -> Result<(&'static str, String), String> {
+    let off8 = "(__ret as *mut u8).add(8)";
+    let off12 = "(__ret as *mut u8).add(12)";
+    Ok(match ty {
+        "i32" => ("i32", format!("unsafe {{ ::core::ptr::write_unaligned({off8} as *mut i32, {binding}); }}")),
+        "u32" => ("u32", format!("unsafe {{ ::core::ptr::write_unaligned({off8} as *mut u32, {binding}); }}")),
+        "f64" => ("f64", format!("unsafe {{ ::core::ptr::write_unaligned({off8} as *mut f64, {binding}); }}")),
+        "bool" => ("bool", format!("unsafe {{ ::core::ptr::write_unaligned({off8} as *mut i32, ({binding}) as i32); }}")),
+        "JsValue" => (
+            "handle",
+            format!(
+                "{{ let __h = ::wasm_lite::JsValue::__wl_abi(&{binding}); ::core::mem::forget({binding}); \
+                   unsafe {{ ::core::ptr::write_unaligned({off8} as *mut u32, __h); }} }}"
+            ),
+        ),
+        "String" | "Vec<u8>" => {
+            let tag = if ty == "String" { "str" } else { "bytes" };
+            (
+                tag,
+                format!(
+                    "{{ let __len = {binding}.len(); let __ptr = ::wasm_lite::__wl_malloc(__len); \
+                       unsafe {{ ::core::ptr::copy_nonoverlapping({binding}.as_ptr(), __ptr, __len); \
+                       ::core::ptr::write_unaligned({off8} as *mut u32, __ptr as usize as u32); \
+                       ::core::ptr::write_unaligned({off12} as *mut u32, __len as u32); }} }}"
+                ),
+            )
+        }
+        other => return Err(format!("#[wasm_lite::export]: unsupported Option/Result payload type `{other}`")),
+    })
+}
+
+/// Index of the top-level `,` in a generic argument list (skips nested `<...>`).
+fn split_top_comma(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            ',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// A parsed function signature: name, `(arg, type)` pairs, and return type.

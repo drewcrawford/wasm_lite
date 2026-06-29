@@ -62,3 +62,20 @@ pub fn push_to(arr: JsValue, value: f64) -> JsValue {
     js::push(&arr, value);
     arr
 }
+
+// `Option<T>` returns: `None` surfaces as JS `null`, `Some(x)` as the value.
+#[export]
+pub fn checked_sqrt(x: f64) -> Option<f64> {
+    if x >= 0.0 { Some(x.sqrt()) } else { None }
+}
+
+#[export]
+pub fn first_word(s: &str) -> Option<String> {
+    s.split_whitespace().next().map(|w| w.to_string())
+}
+
+// `Result<T, E>` returns: `Ok(x)` is the value, `Err(e)` is thrown in JS.
+#[export]
+pub fn divide(a: f64, b: f64) -> Result<f64, String> {
+    if b == 0.0 { Err("division by zero".to_string()) } else { Ok(a / b) }
+}

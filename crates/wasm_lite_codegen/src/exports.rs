@@ -26,6 +26,33 @@ pub enum ExportArg {
     Handle,
 }
 
+/// A scalar payload inside an `Option`/`Result` sret return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Payload {
+    I32,
+    U32,
+    F64,
+    Bool,
+    Str,
+    Bytes,
+    Handle,
+}
+
+impl Payload {
+    pub(crate) fn from_tag(tag: &str) -> Option<Self> {
+        Some(match tag {
+            "i32" => Payload::I32,
+            "u32" => Payload::U32,
+            "f64" => Payload::F64,
+            "bool" => Payload::Bool,
+            "str" => Payload::Str,
+            "bytes" => Payload::Bytes,
+            "handle" => Payload::Handle,
+            _ => return None,
+        })
+    }
+}
+
 /// How an export's return value is presented to JS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportRet {
@@ -41,6 +68,10 @@ pub enum ExportRet {
     Bytes,
     /// A `JsValue`: returned as a value-table index to look up and free the slot.
     Handle,
+    /// `Option<T>` via sret: discriminant + payload buffer; `None` → JS `null`.
+    Opt(Payload),
+    /// `Result<T, E>` via sret: `Ok` → value, `Err` → thrown JS exception.
+    Res(Payload, Payload),
 }
 
 /// Read exported-function descriptors from a compiled wasm module.
@@ -78,14 +109,7 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
                 _ => ExportArg::Num,
             })
             .collect();
-        let ret = match ret_tag {
-            "" => ExportRet::Void,
-            "bool" => ExportRet::Bool,
-            "str" => ExportRet::Str,
-            "bytes" => ExportRet::Bytes,
-            "handle" => ExportRet::Handle,
-            _ => ExportRet::Value,
-        };
+        let ret = parse_ret(ret_tag)?;
 
         exports.push(Export {
             name: name.to_string(),
@@ -94,6 +118,28 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
         });
     }
     Ok(exports)
+}
+
+/// Parse a return tag: `opt:<P>` / `res:<P>:<P>` (sret) or a plain scalar tag.
+fn parse_ret(tag: &str) -> Result<ExportRet, String> {
+    if let Some(inner) = tag.strip_prefix("opt:") {
+        let p = Payload::from_tag(inner).ok_or_else(|| format!("bad Option payload tag {tag:?}"))?;
+        return Ok(ExportRet::Opt(p));
+    }
+    if let Some(rest) = tag.strip_prefix("res:") {
+        let (ok, err) = rest.split_once(':').ok_or_else(|| format!("bad Result tag {tag:?}"))?;
+        let ok = Payload::from_tag(ok).ok_or_else(|| format!("bad Result Ok tag {tag:?}"))?;
+        let err = Payload::from_tag(err).ok_or_else(|| format!("bad Result Err tag {tag:?}"))?;
+        return Ok(ExportRet::Res(ok, err));
+    }
+    Ok(match tag {
+        "" => ExportRet::Void,
+        "bool" => ExportRet::Bool,
+        "str" => ExportRet::Str,
+        "bytes" => ExportRet::Bytes,
+        "handle" => ExportRet::Handle,
+        _ => ExportRet::Value,
+    })
 }
 
 #[cfg(test)]
@@ -122,6 +168,23 @@ mod tests {
             vec![
                 Export { name: "sum_bytes".into(), args: vec![ExportArg::Bytes], ret: ExportRet::Value },
                 Export { name: "make_bytes".into(), args: vec![ExportArg::Num], ret: ExportRet::Bytes },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_option_and_result_exports() {
+        let section = b"checked_sqrt|f64|opt:f64\nfirst_word|str|opt:str\ndivide|f64,f64|res:f64:str\n";
+        assert_eq!(
+            parse(section).unwrap(),
+            vec![
+                Export { name: "checked_sqrt".into(), args: vec![ExportArg::Num], ret: ExportRet::Opt(Payload::F64) },
+                Export { name: "first_word".into(), args: vec![ExportArg::Str], ret: ExportRet::Opt(Payload::Str) },
+                Export {
+                    name: "divide".into(),
+                    args: vec![ExportArg::Num, ExportArg::Num],
+                    ret: ExportRet::Res(Payload::F64, Payload::Str),
+                },
             ]
         );
     }

@@ -68,6 +68,18 @@ mod arr {
     }
 }
 
+// Fallible imports: JSON.parse yields `null` for "null" and *throws* on bad
+// input, so the same JS function models both `Option` and `Result` returns.
+mod fallible {
+    use wasm_lite::JsValue;
+    wasm_lite::import! {
+        "JSON" {
+            fn parse_num(text: &str) -> Option<f64> as "parse";          // null -> None
+            fn try_parse(text: &str) -> Result<f64, JsValue> as "parse"; // throw -> Err
+        }
+    }
+}
+
 // A typed handle wrapper over a JS `Array` — methods lower to `arr[name](args)`,
 // reusing the import! ABI. Object args/returns (`&JsArray`/`JsArray`) cross as
 // handles and are wrapped automatically.
@@ -124,4 +136,19 @@ fn main() {
     let b = JsArray::from_js(arr::of3(5.0, 6.0, 7.0));
     let c = a.concat(&b); // typed arg + typed return -> JsArray
     wasm_lite::console::log(&format!("a.concat(b).join(\",\") = {}", c.join(",")));
+
+    // Option/Result imports (JS null -> None; JS throw -> Err).
+    wasm_lite::console::log(&format!("parse_num(\"3.14\") = {:?}", fallible::parse_num("3.14")));
+    wasm_lite::console::log(&format!("parse_num(\"null\") = {:?}", fallible::parse_num("null")));
+    match fallible::try_parse("42") {
+        Ok(n) => wasm_lite::console::log(&format!("try_parse(\"42\") = Ok({n})")),
+        Err(_) => wasm_lite::console::log("try_parse(\"42\") = Err"),
+    }
+    match fallible::try_parse("{bad json") {
+        Ok(n) => wasm_lite::console::log(&format!("try_parse = Ok({n})")),
+        Err(e) => {
+            wasm_lite::console::log("try_parse(\"{bad json\") = Err, error object:");
+            jsapi::log_value(&e); // log the caught JS exception
+        }
+    }
 }
