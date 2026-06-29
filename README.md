@@ -233,6 +233,76 @@ owning realm's `waitAsync` Promise even when the notify comes from another worke
 So `JoinHandle::join_async().await`, `Mutex::lock_async().await`, etc. run
 non-blocking on the main thread and are woken the instant a worker releases.
 
+### Async lifecycle & failures — two fixes for wasm-bindgen footguns
+
+`spawn_local` is meant to be the **uniform** primitive: the same
+`spawn_local(a); spawn_local(b); …` works on any thread, and "wait for my tasks"
+is implicit — the event loop on the main thread, a drain refcount on a worker.
+`block_on` is the niche tool (a worker that truly needs a *synchronous* result);
+it is the one that must know it isn't the main thread, and deadlocks if it's
+wrong. For that uniformity to hold, two things have to be true:
+
+* **Threads drain their async tasks before teardown** *(planned)*. A wasm-bindgen
+  worker `close()`s when its entry returns, so a `spawn_local`'d task is silently
+  abandoned — "the thread shut down and my futures mysteriously stopped." Here the
+  worker bootstrap will instead poll an exported `__wl_executor_idle()` and only
+  free its TLS/stack + `close()` once the executor has drained (it must not free
+  the TLS its task queue lives in). Explicit termination stays rare; the right
+  tool for it is *cooperative cancellation* (a token the tasks check), not a hard
+  `terminate()` that strands held locks.
+
+* **Async tests are fail-closed** *(planned)*. `#[wasm_lite_async_test]` /
+  `async_doctest!` never pass by default — unlike `rustdoc`/`libtest`, where
+  `main` returning *is* the verdict (so a deferred async failure can't be seen).
+  The only thing that records success is the async body reaching its end; a panic,
+  dropped task, or deadlock therefore cannot masquerade as a pass. Panics report
+  *fast and attributed* (the panic hook writes the verdict + message before the
+  `abort` trap, with a `try/catch` around the executor tick as a backstop); a true
+  deadlock degrades to a diagnostic timeout. (The verdict is rendered by the
+  runner polling a still-live browser page, not by `main` returning — which is
+  what makes deferring it past `main` possible.)
+
+On panics: `panic = "abort"` is the supported model. On wasm a panic is an
+`unreachable` **trap local to one instance** — verified: a panicking worker traps
+only itself; the main thread and other workers keep running and shared memory
+persists (unlike native, where `abort()` kills the whole process). So in a
+multithreaded executor a panic takes down only *that* worker (its futures die with
+it); siblings are unaffected. The one residual surprise is a lock the dead thread
+held — with no unwind there's no `Drop` and no poison, so it stays locked — which
+is why the `*_timeout` lock APIs exist: a dead holder surfaces as a timeout, not a
+hang. (Our own runtime holds no cross-thread lock across a poll — the executor's
+queue is thread-local and its wake is a lock-free atom — and the shared allocator
+survives a panic, so a no-user-lock hang is not something we introduce. A future
+`panic = "unwind"` mode could `catch_unwind` per poll, drop just the failed task,
+and poison its locks.)
+
+### How a panic surfaces (browser vs CLI)
+
+The default `wasm32` panic prints nothing, so `wasm_lite_std`'s worker hook
+**always** logs the panic to the console with thread attribution
+(`[wasm_lite_std ThreadId(N)] panicked at …`) — never silent — *in addition to*
+routing it to the join channel. That covers the interactive/browser case fully.
+
+The CLI (`cargo test` / doctests via the runner) is only partly there today:
+
+| Panic site | Browser console | CLI (terminal) |
+|---|---|---|
+| main thread, hook installed | ✓ message | ✓ message + `FAILED` (runner prints the captured console on failure) |
+| main thread, no hook | trap only | trap only — install `set_panic_hook()` |
+| **joined** worker | ✓ message | ✓ via the channel → the joiner re-panics on main → captured |
+| **detached** worker | ✓ message | ✗ **not surfaced** — the worker is a separate JS realm, and the runner only captures the *main* realm's console |
+
+So a detached worker panic is visible in the browser but **invisible on the CLI**
+(the test can even read as `ok`). Closing that needs a worker→main diagnostics
+bridge (forward worker console/panic to the main realm — over `postMessage` up the
+spawn chain, or a shared-memory log buffer the runner drains) plus printing panic
+lines on success too (matching `std`, which prints detached-thread panics without
+failing the test). *Planned.* Doctests go through the same `run_main` path, so they
+inherit all of the above — plus, with Rust 2024 *merged* doctests, the first
+`panic = "abort"` aborts the whole bundle, so later doctests in the crate don't
+run; until the bridge lands, prefer `set_panic_hook()` + keeping worker work
+*joined* in doctests you want diagnosable on the CLI.
+
 ## wasm-bindgen interop
 
 Enable the `wasm-bindgen` feature to link a crate that itself uses wasm-bindgen.

@@ -298,9 +298,27 @@ impl Builder {
             let prev_hook = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |info| {
                 let msg = info.to_string();
+                // Floor: ALWAYS surface the panic on the console with thread
+                // attribution. A panic only traps its own worker (others keep
+                // running), so without this a panic on a detached / never-joined
+                // worker is invisible — the default wasm32 panic prints nothing,
+                // and routing solely through the join channel loses it if no one
+                // joins. The `[wasm_lite_std …]` prefix + thread id make it
+                // greppable in the shared (interleaved) browser console.
+                let who = CURRENT_THREAD
+                    .with(|c| {
+                        c.borrow().as_ref().map(|t| match t.name() {
+                            Some(name) => name.to_string(),
+                            None => t.id().to_string(),
+                        })
+                    })
+                    .unwrap_or_else(|| "unknown thread".to_string());
+                wasm_lite::console::error(&format!("[wasm_lite_std {who}] {msg}"));
+
                 let sent = PANIC_SENDER.with(|cell| {
                     if let Some(sender) = cell.borrow_mut().take() {
                         flush_captured_prints_to_console_current_thread_impl();
+                        // The channel carries the message to a `join`er, if any.
                         sender(msg);
                         true
                     } else {
