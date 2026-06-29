@@ -68,6 +68,16 @@ mod arr {
     }
 }
 
+// Imports with optional (`Option`) arguments — None is passed to JS as
+// `undefined`, so the JS default applies (radix 10; default "," separator).
+mod opt_in {
+    use wasm_lite::JsValue;
+    wasm_lite::import! {
+        "Number" { fn parse_int(s: &str, radix: Option<f64>) -> f64 as "parseInt"; }
+        "Array" { fn join_opt(this: &JsValue, sep: Option<&str>) -> String as "join"; }
+    }
+}
+
 // Fallible imports: JSON.parse yields `null` for "null" and *throws* on bad
 // input, so the same JS function models both `Option` and `Result` returns.
 mod fallible {
@@ -136,6 +146,12 @@ fn main() {
     let b = JsArray::from_js(arr::of3(5.0, 6.0, 7.0));
     let c = a.concat(&b); // typed arg + typed return -> JsArray
     wasm_lite::console::log(&format!("a.concat(b).join(\",\") = {}", c.join(",")));
+
+    // Option *arguments* on imports (None -> JS undefined -> JS default applies).
+    wasm_lite::console::log(&format!("parse_int(\"ff\", Some(16)) = {}", opt_in::parse_int("ff", Some(16.0))));
+    wasm_lite::console::log(&format!("parse_int(\"10\", None) = {}", opt_in::parse_int("10", None)));
+    wasm_lite::console::log(&format!("join_opt(Some(\"-\")) = {}", opt_in::join_opt(c.as_js(), Some("-"))));
+    wasm_lite::console::log(&format!("join_opt(None) = {}", opt_in::join_opt(c.as_js(), None)));
 
     // Option/Result imports (JS null -> None; JS throw -> Err).
     wasm_lite::console::log(&format!("parse_num(\"3.14\") = {:?}", fallible::parse_num("3.14")));

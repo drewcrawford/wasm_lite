@@ -116,11 +116,17 @@ whichever side allocated last. Objects cross as `u32` value-table indices.
 The import/export asymmetry for objects is deliberate: an import *lends* Rust's
 handle (`&JsValue`), an export *takes* ownership from JS (`JsValue` by value).
 
-`Option<T>` and `Result<T, E>` are also supported as **return** types (imports
-and exports), where the scalar return ABI can't carry a discriminant. They use a
+`Option<T>` and `Result<T, E>` are supported as **return** types (imports and
+exports), where the scalar return ABI can't carry a discriminant. They use a
 return pointer (sret): a 16-byte buffer holds a discriminant word plus the
 payload at offset 8. `None` ↔ JS `null`; `Err(e)` ↔ a **thrown** JS exception
 (`Ok`/`Some` carry the value). Inner types may be any scalar/string/bytes/handle.
+
+`Option<T>` is also supported as an **argument** (a nullable parameter): it
+flattens to a discriminant `i32` plus T's normal parameters. On exports JS
+`null`/`undefined` → `None`; on imports `None` → JS `undefined` (so a JS default
+parameter applies). `Result` arguments are *not* supported — JS has no `Result`
+type, so there is no natural value to pass (this matches wasm-bindgen).
 
 ```rust
 #[wasm_lite::export]
@@ -176,8 +182,10 @@ upper layers build on.
   codegen shim kind. Constructors + properties are the prerequisite for starting
   `wasm_lite_js` / `wasm_lite_web`.
 * `+atomics` / threads (and the `wasm_lite_std` layer over Workers).
-* `Option`/`Result` *arguments* (returns are done), and nested generics like
-  `Option<Vec<u8>>` on the import side (the macro grammar takes single-ident
-  inner types today; the proc-macro export side already allows nesting).
+* Nested generics like `Option<Vec<u8>>` on the import side (the macro grammar
+  takes single-ident inner types today; the proc-macro export side already
+  allows nesting). `Option<&[u8]>` arguments on the import side.
+* `js_class!` constructors (`new Foo()`) + property get/set — the prerequisite
+  for standing up `wasm_lite_js` / `wasm_lite_web`.
 * Deployment niceties: a `wasm-lite bundle` command, session pooling/idle reaper
   for the persistent browser, test filtering (`cargo test NAME`).

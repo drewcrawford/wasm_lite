@@ -65,8 +65,22 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut flat_params = Vec::new(); // shim parameter declarations
     let mut pre = String::new(); // statements reconstructing args before the call
     let mut call_args = Vec::new(); // arguments passed to the user function
-    let mut arg_tags = Vec::new(); // descriptor tags
+    let mut arg_tags: Vec<String> = Vec::new(); // descriptor tags
     for (name, ty) in &sig.params {
+        // `Option<T>` arg: a discriminant param plus T's normal flattening; the
+        // value is reconstructed conditionally.
+        if let Some(inner) = ty.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
+            match option_arg(name, inner.trim()) {
+                Ok((flat, recon, tag)) => {
+                    flat_params.extend(flat);
+                    pre.push_str(&recon);
+                    call_args.push(name.clone());
+                    arg_tags.push(format!("opt:{tag}"));
+                    continue;
+                }
+                Err(e) => return compile_error(&e),
+            }
+        }
         match ty.as_str() {
             "&str" => {
                 flat_params.push(format!("{name}_ptr: *const u8"));
@@ -75,7 +89,7 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     "let {name} = unsafe {{ ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts({name}_ptr, {name}_len)) }};"
                 ));
                 call_args.push(name.clone());
-                arg_tags.push("str");
+                arg_tags.push("str".into());
             }
             "&[u8]" => {
                 flat_params.push(format!("{name}_ptr: *const u8"));
@@ -84,7 +98,7 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     "let {name} = unsafe {{ ::core::slice::from_raw_parts({name}_ptr, {name}_len) }};"
                 ));
                 call_args.push(name.clone());
-                arg_tags.push("bytes");
+                arg_tags.push("bytes".into());
             }
             "JsValue" => {
                 // JS registers the object in the value table and passes its index;
@@ -94,17 +108,17 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     "let {name} = ::wasm_lite::JsValue::__wl_from_abi({name});"
                 ));
                 call_args.push(name.clone());
-                arg_tags.push("handle");
+                arg_tags.push("handle".into());
             }
             "i32" | "u32" | "f64" => {
                 flat_params.push(format!("{name}: {ty}"));
                 call_args.push(name.clone());
-                arg_tags.push(ty);
+                arg_tags.push(ty.to_string());
             }
             "bool" => {
                 flat_params.push(format!("{name}: i32"));
                 call_args.push(format!("({name} != 0)"));
-                arg_tags.push("bool");
+                arg_tags.push("bool".into());
             }
             other => {
                 return compile_error(&format!("#[wasm_lite::export]: unsupported argument type `{other}`"));
@@ -181,7 +195,7 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // String marshalling needs the allocator exported even when the shim itself
     // doesn't call it (e.g. only `&str` args). Force-keep both. sret returns may
     // also allocate (str/bytes payloads), and JS always allocates the buffer.
-    let needs_alloc = sig.params.iter().any(|(_, t)| t == "&str" || t == "&[u8]")
+    let needs_alloc = arg_tags.iter().any(|t| t.contains("str") || t.contains("bytes"))
         || ret_tag == "str"
         || ret_tag == "bytes"
         || is_sret;
@@ -299,6 +313,59 @@ fn payload(ty: &str, binding: &str) -> Result<(&'static str, String), String> {
             )
         }
         other => return Err(format!("#[wasm_lite::export]: unsupported Option/Result payload type `{other}`")),
+    })
+}
+
+/// Flatten an `Option<inner>` argument: a discriminant param `<name>_some: i32`
+/// plus `inner`'s normal flattening, with conditional reconstruction. Returns
+/// `(flat_params, reconstruction, inner_tag)`.
+fn option_arg(name: &str, inner: &str) -> Result<(Vec<String>, String, String), String> {
+    let some = format!("{name}_some");
+    Ok(match inner {
+        "i32" | "u32" | "f64" => (
+            vec![format!("{some}: i32"), format!("{name}_val: {inner}")],
+            format!(
+                "let {name} = if {some} != 0 {{ ::core::option::Option::Some({name}_val) }} \
+                 else {{ ::core::option::Option::None }};"
+            ),
+            inner.to_string(),
+        ),
+        "bool" => (
+            vec![format!("{some}: i32"), format!("{name}_val: i32")],
+            format!(
+                "let {name} = if {some} != 0 {{ ::core::option::Option::Some({name}_val != 0) }} \
+                 else {{ ::core::option::Option::None }};"
+            ),
+            "bool".to_string(),
+        ),
+        "&str" => (
+            vec![format!("{some}: i32"), format!("{name}_ptr: *const u8"), format!("{name}_len: usize")],
+            format!(
+                "let {name} = if {some} != 0 {{ ::core::option::Option::Some(unsafe {{ \
+                   ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts({name}_ptr, {name}_len)) }}) }} \
+                 else {{ ::core::option::Option::None }};"
+            ),
+            "str".to_string(),
+        ),
+        "&[u8]" => (
+            vec![format!("{some}: i32"), format!("{name}_ptr: *const u8"), format!("{name}_len: usize")],
+            format!(
+                "let {name} = if {some} != 0 {{ ::core::option::Option::Some(unsafe {{ \
+                   ::core::slice::from_raw_parts({name}_ptr, {name}_len) }}) }} \
+                 else {{ ::core::option::Option::None }};"
+            ),
+            "bytes".to_string(),
+        ),
+        "JsValue" => (
+            vec![format!("{some}: i32"), format!("{name}_h: u32")],
+            format!(
+                "let {name} = if {some} != 0 {{ \
+                   ::core::option::Option::Some(::wasm_lite::JsValue::__wl_from_abi({name}_h)) }} \
+                 else {{ ::core::option::Option::None }};"
+            ),
+            "handle".to_string(),
+        ),
+        other => return Err(format!("#[wasm_lite::export]: unsupported Option argument type `Option<{other}>`")),
     })
 }
 

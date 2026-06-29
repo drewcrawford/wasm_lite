@@ -79,3 +79,17 @@ pub fn first_word(s: &str) -> Option<String> {
 pub fn divide(a: f64, b: f64) -> Result<f64, String> {
     if b == 0.0 { Err("division by zero".to_string()) } else { Ok(a / b) }
 }
+
+// `Option<T>` arguments: JS `null`/`undefined` arrives as `None`.
+#[export]
+pub fn greet_opt(name: Option<&str>) -> String {
+    match name {
+        Some(n) => format!("hi, {n}!"),
+        None => "hi, anonymous!".to_string(),
+    }
+}
+
+#[export]
+pub fn bump(x: Option<f64>) -> f64 {
+    x.unwrap_or(0.0) + 1.0
+}

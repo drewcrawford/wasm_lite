@@ -140,6 +140,75 @@ macro_rules! __import_fn {
             call=($($call)* $a.__wl_abi(),), rest=( ));
     };
 
+    // Option<T> -> (i32 discriminant, <T flattened>). The discriminant is
+    // `is_some()`; the payload is the inner value or a harmless default (ignored
+    // by JS when the discriminant is 0). `Option<Copy>` is itself `Copy`, so the
+    // accessors below can each read `$a`.
+    // Option<&str>
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : Option < & str > , $($rest:tt)* )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: i32, _: *const u8, _: usize,),
+            call=($($call)* $a.is_some() as i32, $a.map_or(::core::ptr::null(), |__s| __s.as_ptr()), $a.map_or(0, |__s| __s.len()),),
+            rest=( $($rest)* ));
+    };
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : Option < & str > )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: i32, _: *const u8, _: usize,),
+            call=($($call)* $a.is_some() as i32, $a.map_or(::core::ptr::null(), |__s| __s.as_ptr()), $a.map_or(0, |__s| __s.len()),),
+            rest=( ));
+    };
+    // Option<&JsValue>
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : Option < & JsValue > , $($rest:tt)* )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: i32, _: u32,),
+            call=($($call)* $a.is_some() as i32, $a.map_or(0u32, |__v| __v.__wl_abi()),),
+            rest=( $($rest)* ));
+    };
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : Option < & JsValue > )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: i32, _: u32,),
+            call=($($call)* $a.is_some() as i32, $a.map_or(0u32, |__v| __v.__wl_abi()),),
+            rest=( ));
+    };
+    // Option<bool>
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : Option < bool > , $($rest:tt)* )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: i32, _: i32,),
+            call=($($call)* $a.is_some() as i32, $a.unwrap_or_default() as i32,), rest=( $($rest)* ));
+    };
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : Option < bool > )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: i32, _: i32,),
+            call=($($call)* $a.is_some() as i32, $a.unwrap_or_default() as i32,), rest=( ));
+    };
+    // Option<numeric> (i32, u32, f64, ...)
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : Option < $t:ident > , $($rest:tt)* )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: i32, _: $t,),
+            call=($($call)* $a.is_some() as i32, $a.unwrap_or_default(),), rest=( $($rest)* ));
+    };
+    (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
+            orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
+            rest=( $a:ident : Option < $t:ident > )) => {
+        $crate::__import_fn!(@munch ns=$ns, name=$fname, ret=($($ret)*),
+            orig=($($orig)*), flat=($($flat)* _: i32, _: $t,),
+            call=($($call)* $a.is_some() as i32, $a.unwrap_or_default(),), rest=( ));
+    };
+
     // bool -> i32
     (@munch ns=$ns:literal, name=$fname:ident, ret=($($ret:tt)*),
             orig=($($orig:tt)*), flat=($($flat:tt)*), call=($($call:tt)*),
@@ -339,6 +408,22 @@ macro_rules! __import_descr_args {
     ( $a:ident : & [u8] ) => { "bytes" };
     ( $a:ident : & [u8] , $($rest:tt)* ) => {
         concat!("bytes,", $crate::__import_descr_args!($($rest)*))
+    };
+    ( $a:ident : Option < & str > ) => { "opt:str" };
+    ( $a:ident : Option < & str > , $($rest:tt)* ) => {
+        concat!("opt:str,", $crate::__import_descr_args!($($rest)*))
+    };
+    ( $a:ident : Option < & JsValue > ) => { "opt:handle" };
+    ( $a:ident : Option < & JsValue > , $($rest:tt)* ) => {
+        concat!("opt:handle,", $crate::__import_descr_args!($($rest)*))
+    };
+    ( $a:ident : Option < bool > ) => { "opt:bool" };
+    ( $a:ident : Option < bool > , $($rest:tt)* ) => {
+        concat!("opt:bool,", $crate::__import_descr_args!($($rest)*))
+    };
+    ( $a:ident : Option < $t:ident > ) => { concat!("opt:", stringify!($t)) };
+    ( $a:ident : Option < $t:ident > , $($rest:tt)* ) => {
+        concat!("opt:", stringify!($t), ",", $crate::__import_descr_args!($($rest)*))
     };
     ( $a:ident : & JsValue ) => { "handle" };
     ( $a:ident : & JsValue , $($rest:tt)* ) => {

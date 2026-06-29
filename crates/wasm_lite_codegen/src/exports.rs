@@ -24,6 +24,8 @@ pub enum ExportArg {
     Bytes,
     /// A `JsValue`: register the object in the value table, pass its index (Rust owns it).
     Handle,
+    /// `Option<T>`: a discriminant param (`null`/`undefined` → 0) plus T's flattening.
+    Opt(Payload),
 }
 
 /// A scalar payload inside an `Option`/`Result` sret return.
@@ -39,6 +41,14 @@ pub enum Payload {
 }
 
 impl Payload {
+    /// Number of wasm params this payload occupies (str/bytes are `(ptr, len)`).
+    pub(crate) fn param_count(self) -> usize {
+        match self {
+            Payload::Str | Payload::Bytes => 2,
+            _ => 1,
+        }
+    }
+
     pub(crate) fn from_tag(tag: &str) -> Option<Self> {
         Some(match tag {
             "i32" => Payload::I32,
@@ -106,7 +116,10 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
                 "str" => ExportArg::Str,
                 "bytes" => ExportArg::Bytes,
                 "handle" => ExportArg::Handle,
-                _ => ExportArg::Num,
+                _ => match t.strip_prefix("opt:").and_then(Payload::from_tag) {
+                    Some(p) => ExportArg::Opt(p),
+                    None => ExportArg::Num,
+                },
             })
             .collect();
         let ret = parse_ret(ret_tag)?;
@@ -185,6 +198,18 @@ mod tests {
                     args: vec![ExportArg::Num, ExportArg::Num],
                     ret: ExportRet::Res(Payload::F64, Payload::Str),
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_option_args() {
+        let section = b"greet_opt|opt:str|str\nbump|opt:f64|f64\n";
+        assert_eq!(
+            parse(section).unwrap(),
+            vec![
+                Export { name: "greet_opt".into(), args: vec![ExportArg::Opt(Payload::Str)], ret: ExportRet::Str },
+                Export { name: "bump".into(), args: vec![ExportArg::Opt(Payload::F64)], ret: ExportRet::Value },
             ]
         );
     }

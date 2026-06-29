@@ -70,6 +70,8 @@ pub enum AbiArg {
     Num,
     /// A `&JsValue`: arrives as one `u32` index; look up in the value table.
     Handle,
+    /// `Option<T>`: a discriminant `i32` (0 = `None`) plus T's params.
+    Opt(Payload),
 }
 
 impl AbiArg {
@@ -78,6 +80,7 @@ impl AbiArg {
         match self {
             AbiArg::Str | AbiArg::Bytes => 2,
             AbiArg::Bool | AbiArg::Num | AbiArg::Handle => 1,
+            AbiArg::Opt(p) => 1 + p.param_count(),
         }
     }
 
@@ -87,7 +90,10 @@ impl AbiArg {
             "bytes" => AbiArg::Bytes,
             "bool" => AbiArg::Bool,
             "handle" => AbiArg::Handle,
-            _ => AbiArg::Num,
+            _ => match tag.strip_prefix("opt:").and_then(Payload::from_tag) {
+                Some(p) => AbiArg::Opt(p),
+                None => AbiArg::Num,
+            },
         }
     }
 }
@@ -224,6 +230,15 @@ mod tests {
         let got = parse(section).unwrap();
         assert_eq!(got[0].ret, Ret::Opt(Payload::F64));
         assert_eq!(got[1].ret, Ret::Res(Payload::F64, Payload::Handle));
+    }
+
+    #[test]
+    fn parses_option_args() {
+        let section = b"f|Number|c::parse_int|parseInt|str,opt:f64|f64\n\
+                        m|Array|c::join_opt|join|handle,opt:str|str\n";
+        let got = parse(section).unwrap();
+        assert_eq!(got[0].args, vec![AbiArg::Str, AbiArg::Opt(Payload::F64)]);
+        assert_eq!(got[1].args, vec![AbiArg::Handle, AbiArg::Opt(Payload::Str)]);
     }
 
     #[test]

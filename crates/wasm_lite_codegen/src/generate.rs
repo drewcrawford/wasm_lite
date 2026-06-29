@@ -121,6 +121,30 @@ fn emit_export(js: &mut String, export: &Export) {
                 lines.push(format!("const __a{i}h = __wl_add(p{i});"));
                 wasm_args.push(format!("__a{i}h"));
             }
+            ExportArg::Opt(p) => {
+                // A nullable arg: discriminant (null/undefined → 0) + payload.
+                lines.push(format!("const __s{i} = (p{i} === null || p{i} === undefined) ? 0 : 1;"));
+                wasm_args.push(format!("__s{i}"));
+                match p {
+                    Payload::I32 | Payload::U32 | Payload::F64 => {
+                        wasm_args.push(format!("(__s{i} ? p{i} : 0)"));
+                    }
+                    Payload::Bool => wasm_args.push(format!("(__s{i} ? (p{i} ? 1 : 0) : 0)")),
+                    Payload::Handle => {
+                        lines.push(format!("const __a{i}h = __s{i} ? __wl_add(p{i}) : 0;"));
+                        wasm_args.push(format!("__a{i}h"));
+                    }
+                    Payload::Str | Payload::Bytes => {
+                        let pass = if matches!(p, Payload::Str) { "__wl_pass_str" } else { "__wl_pass_bytes" };
+                        // ptr/len default to 0 (a null pointer + zero length → None
+                        // on the Rust side); __wl_free(0, 0) is a no-op.
+                        lines.push(format!("let __a{i}p = 0, __a{i}l = 0; if (__s{i}) {{ [__a{i}p, __a{i}l] = {pass}(p{i}); }}"));
+                        wasm_args.push(format!("__a{i}p"));
+                        wasm_args.push(format!("__a{i}l"));
+                        frees.push(format!("__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"));
+                    }
+                }
+            }
         }
     }
 
@@ -332,6 +356,28 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
             AbiArg::Bool => format!("Boolean({})", next_param(&mut params)),
             AbiArg::Num => next_param(&mut params),
             AbiArg::Handle => format!("__wl_obj({})", next_param(&mut params)),
+            AbiArg::Opt(p) => {
+                // Leading discriminant param, then the inner payload's params.
+                let pres = next_param(&mut params);
+                let payload = match p {
+                    Payload::I32 | Payload::U32 | Payload::F64 => next_param(&mut params),
+                    Payload::Bool => format!("Boolean({})", next_param(&mut params)),
+                    Payload::Handle => format!("__wl_obj({})", next_param(&mut params)),
+                    Payload::Str => {
+                        let ptr = next_param(&mut params);
+                        let len = next_param(&mut params);
+                        format!("__wl_str({ptr}, {len})")
+                    }
+                    Payload::Bytes => {
+                        let ptr = next_param(&mut params);
+                        let len = next_param(&mut params);
+                        format!("new Uint8Array(__wl_memory.buffer, {ptr}, {len})")
+                    }
+                };
+                // `undefined` (not null) for None, so JS default-parameter
+                // handling treats the argument as absent.
+                format!("({pres} ? {payload} : undefined)")
+            }
         };
         if is_receiver {
             receiver = Some(marshalled);
