@@ -12,8 +12,8 @@ A checkout of wasm-bindgen is available in the `wasm-bindgen/` folder for refere
 
 * Runner for major web browsers — **done** (WebDriver: Firefox/Chrome/Safari).
 * Support with and without +atomics — **done**: shared-memory `+atomics` builds
-  run, and threads spawn onto Web Workers (`wasm_lite::thread::spawn`). A
-  `std::thread`-like layer (`wasm_lite_std`) is the next step.
+  run, threads spawn onto Web Workers (`wasm_lite::thread::spawn`), and the
+  `std::thread`-like layer `wasm_lite_std` (sync **and** async) sits on top.
 * Unit test support — **done** (`#[wasm_lite_test]`, `cargo test` via a custom runner).
 * Bind JS APIs to Rust and vice versa — **done** (`import!` / `#[export]`).
 * Doctest support — **done** (runs rustdoc doctests in a browser).
@@ -54,7 +54,7 @@ wasm-lite app.wasm -o glue.js                     # generates the JS glue
 | `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): `import!`, `#[export]`, `#[wasm_lite_test]`, `js_class!` (shared type→ABI dispatch in `ty`) |
 | `crates/wasm_lite_codegen` | host-side: read descriptor sections, generate JS glue |
 | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |
-| `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`); ported from `wasm_safe_thread`, sync path retargeted onto `wasm_lite` |
+| `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`, sync + async); ported from `wasm_safe_thread`, retargeted off wasm-bindgen onto `wasm_lite` + a `spawn_local` event-loop executor |
 | `runner` | WebDriver runner; serves a bin interactively, or drives tests/doctests headless and exits |
 
 Examples (each standalone, builds to `wasm32-unknown-unknown`):
@@ -68,7 +68,8 @@ Examples (each standalone, builds to `wasm32-unknown-unknown`):
 `async-mutex-demo` (main `lock_async` woken cross-thread by a worker; nightly),
 `async-doctest-demo` (a fail-closed async **doctest**; nightly),
 `async-fail-demo` / `async-pass-demo` (fail-closed async-test verdict; nightly),
-`panic-demo` (worker panic surfaced on the CLI; nightly).
+`panic-demo` (worker panic surfaced on the CLI; nightly),
+`worker-spawn-local-demo` (a worker that itself spawn_locals async work; nightly).
 
 ## Binding model
 
@@ -245,14 +246,16 @@ is implicit — the event loop on the main thread, a drain refcount on a worker.
 it is the one that must know it isn't the main thread, and deadlocks if it's
 wrong. For that uniformity to hold, two things have to be true:
 
-* **Threads drain their async tasks before teardown** *(planned)*. A wasm-bindgen
-  worker `close()`s when its entry returns, so a `spawn_local`'d task is silently
-  abandoned — "the thread shut down and my futures mysteriously stopped." Here the
-  worker bootstrap will instead poll an exported `__wl_executor_idle()` and only
-  free its TLS/stack + `close()` once the executor has drained (it must not free
-  the TLS its task queue lives in). Explicit termination stays rare; the right
-  tool for it is *cooperative cancellation* (a token the tasks check), not a hard
-  `terminate()` that strands held locks.
+* **Threads drain their async tasks before teardown.** A wasm-bindgen worker
+  `close()`s when its entry returns, so a `spawn_local`'d task is silently
+  abandoned — "the thread shut down and my futures mysteriously stopped" — and its
+  TLS (where the task queue lives) is freed underneath it. Instead the worker
+  bootstrap polls the exported `__wl_executor_idle()` and only frees its TLS/stack
+  + `close()`s once the executor has drained, so `spawn_local` is correct on *any*
+  thread, not just main (proven in `examples/worker-spawn-local-demo`). Residual
+  hazard: a worker task that never completes keeps the worker alive — explicit
+  termination is rare, and the right tool for it is *cooperative cancellation* (a
+  token the tasks check), not a hard `terminate()` that strands held locks.
 
 * **Async tests are fail-closed** — `wasm_lite_std::async_doctest!(async { … })`
   (usable in doctests, `#[wasm_lite_test]` bodies, and `main`). Unlike

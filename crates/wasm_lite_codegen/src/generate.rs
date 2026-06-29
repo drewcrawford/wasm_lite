@@ -228,13 +228,32 @@ self.onmessage = async (e) => {{
     // Give this thread its own stack and TLS, then run the closure.
     instance.exports.__stack_pointer.value = stackTop;
     if (tlsSize) instance.exports.__wasm_init_tls(tlsPtr);
-    try {{
-        instance.exports.__wl_thread_entry(work);
-    }} finally {{
+
+    const finish = () => {{
         instance.exports.__wl_thread_free(stackPtr, stackSize);
         if (tlsSize) instance.exports.__wl_thread_free(tlsPtr, tlsSize);
         self.postMessage(\"done\");
         self.close();
+    }};
+
+    // A panic traps the instance; its state is suspect, so tear down at once
+    // (the panic was already logged + routed to any joiner).
+    let panicked = false;
+    try {{
+        instance.exports.__wl_thread_entry(work);
+    }} catch (_e) {{
+        panicked = true;
+    }}
+
+    // Drain the event-loop executor before teardown: if the closure called
+    // `spawn_local`, its tasks live in this thread's TLS and are still pending —
+    // freeing now would drop them and free the TLS underneath them. Wait until
+    // the executor is idle (it self-drives via the scheduler), then tear down.
+    const idle = instance.exports.__wl_executor_idle;
+    if (panicked || !idle || idle()) {{
+        finish();
+    }} else {{
+        (function drain() {{ idle() ? finish() : setTimeout(drain, 0); }})();
     }}
 }};
 "

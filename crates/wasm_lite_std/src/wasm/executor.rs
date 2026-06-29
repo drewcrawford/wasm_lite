@@ -126,8 +126,22 @@ fn make_waker(atom: *const AtomicI32) -> Waker {
     unsafe { Waker::from_raw(RawWaker::new(atom as *const (), &VTABLE)) }
 }
 
-/// Force the linker to keep `__wl_async_tick` (only ever called from JS).
+/// Whether this thread's executor has drained (no pending tasks).
+///
+/// Called by the worker bootstrap to decide when it may free this thread's
+/// stack/TLS and `close()` — it must not tear down while `spawn_local` tasks are
+/// still pending (their queue lives in this thread's TLS). `RUNNING` stays true
+/// from the first `spawn_local` until the last task completes.
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub extern "C" fn __wl_executor_idle() -> i32 {
+    if RUNNING.with(|r| r.get()) { 0 } else { 1 }
+}
+
+/// Force the linker to keep the JS-called executor exports.
 fn keep_tick_export() {
     #[used]
-    static KEEP: extern "C" fn() = __wl_async_tick;
+    static KEEP_TICK: extern "C" fn() = __wl_async_tick;
+    #[used]
+    static KEEP_IDLE: extern "C" fn() -> i32 = __wl_executor_idle;
 }
