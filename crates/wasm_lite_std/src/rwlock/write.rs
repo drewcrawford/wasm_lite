@@ -184,7 +184,7 @@ impl<T> RwLock<T> {
                     Ok(guard) => Ok(guard),
                     Err(NotAvailable) => {
                         // Create a new channel to signal when the lock is available
-                        let (sender, receiver) = r#continue::continuation();
+                        let (sender, receiver) = crate::async_wait::waiter();
                         senders.push(sender);
                         Err(receiver)
                     }

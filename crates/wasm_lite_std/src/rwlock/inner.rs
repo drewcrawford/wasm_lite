@@ -108,8 +108,8 @@ pub struct RwLock<T> {
     pub(crate) data_lock: AtomicU8,
     pub(crate) waiting_sync_read_threads: Spinlock<Vec<thread::Thread>>,
     pub(crate) waiting_sync_write_threads: Spinlock<Vec<thread::Thread>>,
-    pub(crate) waiting_async_read_threads: Spinlock<Vec<r#continue::Sender<()>>>,
-    pub(crate) waiting_async_write_threads: Spinlock<Vec<r#continue::Sender<()>>>,
+    pub(crate) waiting_async_read_threads: Spinlock<Vec<crate::async_wait::AsyncWake>>,
+    pub(crate) waiting_async_write_threads: Spinlock<Vec<crate::async_wait::AsyncWake>>,
 }
 
 impl<T: Display> Display for RwLock<T> {
@@ -161,7 +161,7 @@ impl<T> RwLock<T> {
         }
         let threads = self.waiting_async_read_threads.with_mut(std::mem::take);
         for thread in threads {
-            thread.send(())
+            thread.wake();
         }
 
         //AND the write threads
@@ -171,7 +171,7 @@ impl<T> RwLock<T> {
         }
         let threads = self.waiting_async_write_threads.with_mut(std::mem::take);
         for thread in threads {
-            thread.send(())
+            thread.wake();
         }
     }
 
@@ -183,7 +183,7 @@ impl<T> RwLock<T> {
         }
         let threads = self.waiting_async_write_threads.with_mut(std::mem::take);
         for thread in threads {
-            thread.send(())
+            thread.wake();
         }
     }
 }

@@ -105,7 +105,7 @@ pub struct Mutex<T> {
     pub(crate) inner: UnsafeCell<T>,
     pub(crate) data_lock: AtomicBool,
     pub(crate) waiting_sync_threads: Spinlock<Vec<thread::Thread>>,
-    pub(crate) waiting_async_threads: Spinlock<Vec<r#continue::Sender<()>>>,
+    pub(crate) waiting_async_threads: Spinlock<Vec<crate::async_wait::AsyncWake>>,
 }
 impl<T> Mutex<T> {
     /// Creates a new mutex with the given initial value.
@@ -433,7 +433,7 @@ impl<T> Mutex<T> {
         let senders = self.waiting_async_threads.with_mut(std::mem::take);
         for sender in senders {
             // Send a signal to wake up the async task
-            sender.send(());
+            sender.wake();
         }
     }
 

@@ -89,8 +89,7 @@ mod suite {
     // `recv_block`, blocking `into_iter`, deadlines elapsing while another
     // thread holds the lock) use `#[wasm_lite_test(worker)]` so `Atomics.wait`
     // is available; non-blocking / async / uncontended ones run on the main
-    // thread. Cross-thread coordination uses `join()` / `mpsc` instead of the
-    // native suite's `r#continue` (not a dependency of this test target).
+    // thread. Cross-thread coordination uses `join()` / `mpsc`.
     // =====================================================================
 
     // ---- Spinlock ----

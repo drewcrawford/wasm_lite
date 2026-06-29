@@ -3,6 +3,7 @@ use super::Instant;
 use super::thread;
 use super::{ASYNC_WAITER_ID_COUNTER, AsyncWaiter, Condvar, WaitTimeoutResult};
 use crate::Guard;
+use crate::async_wait::waiter;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
@@ -56,7 +57,7 @@ impl Condvar {
 
         // Create a channel to receive the notification
         let receiver = self.waiting_async_threads.with_mut(|waiters| {
-            let (sender, receiver) = r#continue::continuation();
+            let (sender, receiver) = waiter();
             let id = ASYNC_WAITER_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
             waiters.push(AsyncWaiter { id, sender });
             receiver
@@ -202,8 +203,8 @@ impl Condvar {
         let waiter_id = ASYNC_WAITER_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
         // Create two channels - one for normal notification, one for timeout
-        let (notify_sender, notify_receiver) = r#continue::continuation();
-        let (timeout_sender, timeout_receiver) = r#continue::continuation();
+        let (notify_sender, notify_receiver) = waiter();
+        let (timeout_sender, timeout_receiver) = waiter();
 
         // Add to waiting list
         self.waiting_async_threads.with_mut(|waiters| {
@@ -221,7 +222,7 @@ impl Condvar {
                 thread::sleep(duration);
             }
             // Send timeout signal
-            timeout_sender.send(());
+            timeout_sender.wake();
         });
 
         // Release the mutex
@@ -281,9 +282,7 @@ impl Condvar {
         if timed_out {
             self.waiting_async_threads.with_mut(|waiters| {
                 if let Some(pos) = waiters.iter().position(|w| w.id == waiter_id) {
-                    let waiter = waiters.remove(pos);
-                    // Send the notification to complete the receiver
-                    waiter.sender.send(());
+                    drop(waiters.remove(pos));
                 }
             });
         }

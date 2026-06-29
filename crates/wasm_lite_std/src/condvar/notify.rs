@@ -51,9 +51,10 @@ impl Condvar {
         }
 
         // If no sync threads, wake one async task
-        let waiter = self.waiting_async_threads.with_mut(|waiters| waiters.pop());
-        if let Some(waiter) = waiter {
-            waiter.sender.send(());
+        while let Some(waiter) = self.waiting_async_threads.with_mut(|waiters| waiters.pop()) {
+            if waiter.sender.wake() {
+                break;
+            }
         }
     }
 
@@ -110,7 +111,7 @@ impl Condvar {
         // Wake all async tasks
         let waiters = self.waiting_async_threads.with_mut(std::mem::take);
         for waiter in waiters {
-            waiter.sender.send(());
+            waiter.sender.wake();
         }
     }
 }

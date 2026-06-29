@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::{Mutex, NotAvailable};
+use crate::async_wait::waiter;
 use crate::guard::Guard;
 use std::future::Future;
 use std::pin::Pin;
@@ -19,7 +20,7 @@ pub(crate) async fn lock_async<T>(mutex: &Mutex<T>) -> Guard<'_, T> {
                 Ok(guard) => Ok(guard),
                 Err(NotAvailable) => {
                     // Create a new channel to signal when the lock is available
-                    let (sender, receiver) = r#continue::continuation();
+                    let (sender, receiver) = waiter();
                     senders.push(sender);
                     Err(receiver)
                 }
@@ -54,7 +55,7 @@ pub(crate) async fn lock_async_timeout<T>(
                 Ok(guard) => Ok(guard),
                 Err(NotAvailable) => {
                     // Create a new channel to signal when the lock is available
-                    let (sender, receiver) = r#continue::continuation();
+                    let (sender, receiver) = waiter();
                     senders.push(sender);
                     Err(receiver)
                 }
@@ -65,7 +66,7 @@ pub(crate) async fn lock_async_timeout<T>(
             Ok(guard) => return Some(guard),
             Err(receiver) => {
                 // Create a channel for timeout
-                let (timeout_sender, timeout_receiver) = r#continue::continuation();
+                let (timeout_sender, timeout_receiver) = waiter();
 
                 // Spawn a thread to handle the timeout
                 thread::Builder::new()
@@ -77,7 +78,7 @@ pub(crate) async fn lock_async_timeout<T>(
                             thread::sleep(duration);
                         }
                         // Send timeout signal
-                        timeout_sender.send(());
+                        timeout_sender.wake();
                     })
                     .expect("Failed to spawn timeout thread");
 

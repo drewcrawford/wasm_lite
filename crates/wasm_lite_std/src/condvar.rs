@@ -22,7 +22,7 @@ pub(crate) use crate::wasm_support::atomics_wait_supported;
 #[derive(Debug)]
 struct AsyncWaiter {
     id: u64,
-    sender: r#continue::Sender<()>,
+    sender: crate::async_wait::AsyncWake,
 }
 
 static ASYNC_WAITER_ID_COUNTER: AtomicU64 = AtomicU64::new(0);

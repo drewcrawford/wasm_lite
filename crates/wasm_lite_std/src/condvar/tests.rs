@@ -11,10 +11,9 @@ use crate::time::Duration;
 
 #[cfg(target_arch = "wasm32")]
 use crate as thread;
-use r#continue::continuation;
+use std::sync::mpsc::channel as continuation;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
-
 
 #[test_executors::async_test]
 //#[cfg(not(target_arch = "wasm32"))] // HANGS on WASM
@@ -33,7 +32,7 @@ async fn test_condvar_basic_spin() {
             *ready = true;
             drop(ready);
             condvar.notify_one();
-            c.send(());
+            c.send(()).unwrap();
         })
         .unwrap();
     let (c, r2) = continuation();
@@ -46,11 +45,11 @@ async fn test_condvar_basic_spin() {
                 ready = condvar.wait_spin(ready);
             }
             assert!(*ready);
-            c.send(());
+            c.send(()).unwrap();
         })
         .unwrap();
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -68,7 +67,7 @@ async fn test_condvar_wait_block() {
         *ready = true;
         drop(ready);
         condvar.notify_one();
-        c.send(());
+        c.send(()).unwrap();
     });
 
     // Move the waiting into a worker thread
@@ -80,11 +79,11 @@ async fn test_condvar_wait_block() {
             ready = condvar.wait_block(ready);
         }
         assert!(*ready);
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -102,7 +101,7 @@ async fn test_condvar_wait_sync() {
         *ready = true;
         drop(ready);
         condvar.notify_one();
-        c.send(());
+        c.send(()).unwrap();
     });
 
     // Move the waiting into a worker thread
@@ -114,11 +113,11 @@ async fn test_condvar_wait_sync() {
             ready = condvar.wait_sync(ready);
         }
         assert!(*ready);
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -138,7 +137,7 @@ async fn test_condvar_wait_async() {
             drop(ready);
             condvar.notify_one();
         });
-        c.send(());
+        c.send(()).unwrap();
     });
 
     // Move the async waiting into a worker thread
@@ -152,11 +151,11 @@ async fn test_condvar_wait_async() {
             }
             assert!(*ready);
         });
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -174,7 +173,7 @@ async fn test_condvar_notify_all() {
             while *count < 10 {
                 count = condvar.wait_sync(count);
             }
-            c.send(*count);
+            c.send(*count).unwrap();
         });
         receivers.push(r);
     }
@@ -192,7 +191,7 @@ async fn test_condvar_notify_all() {
 
     // All threads should wake up and see count = 10
     for receiver in receivers {
-        let result = receiver.await;
+        let result = receiver.recv().unwrap();
         assert_eq!(result, 10);
     }
 }
@@ -216,7 +215,7 @@ async fn test_condvar_producer_consumer() {
             drop(queue);
             condvar.notify_one();
         }
-        c.send(());
+        c.send(()).unwrap();
     });
 
     // Move the consumer (waiting) into a worker thread
@@ -235,11 +234,11 @@ async fn test_condvar_producer_consumer() {
             }
         }
         assert_eq!(collected, vec![0, 1, 2, 3, 4]);
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -267,7 +266,7 @@ async fn test_condvar_wait_spin_timeout_notified() {
         *ready = true;
         drop(ready);
         condvar.notify_one();
-        c.send(());
+        c.send(()).unwrap();
     }); // removed unwrap because thread::spawn returns JoinHandle, not Result in standard lib, but wasm_thread might be different?
     // checking wasm_thread docs or source would be good, but standard thread::spawn returns JoinHandle.
     // Wait, standard thread::spawn panics if it fails to spawn (in some impls) or returns JoinHandle.
@@ -290,11 +289,11 @@ async fn test_condvar_wait_spin_timeout_notified() {
             }
         }
         assert!(*ready);
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -312,7 +311,7 @@ async fn test_condvar_wait_sync_while() {
         *ready = true;
         drop(ready);
         condvar.notify_one();
-        c.send(());
+        c.send(()).unwrap();
     });
 
     let pair_waiter = Arc::clone(&pair);
@@ -323,11 +322,11 @@ async fn test_condvar_wait_sync_while() {
         let guard = condvar.wait_sync_while(guard, |ready| !*ready);
         assert!(*guard);
         drop(guard);
-        cw.send(());
+        cw.send(()).unwrap();
     });
 
-    r.await;
-    rw.await;
+    r.recv().unwrap();
+    rw.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -346,7 +345,7 @@ async fn test_condvar_wait_async_while() {
             *value = 1;
             drop(value);
             condvar.notify_one();
-            c.send(());
+            c.send(()).unwrap();
         });
     });
 
@@ -356,7 +355,7 @@ async fn test_condvar_wait_async_while() {
     assert_eq!(*guard, 1);
     drop(guard);
 
-    r.await;
+    r.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -375,7 +374,7 @@ async fn test_condvar_notify_one_only_wakes_one() {
                 wake = condvar.wait_spin(wake);
             }
             eprintln!("Finished all wait_spins");
-            c.send(());
+            c.send(()).unwrap();
         });
         receivers.push(r);
     }
@@ -398,7 +397,7 @@ async fn test_condvar_notify_one_only_wakes_one() {
 
     // All threads should eventually complete
     for receiver in receivers {
-        receiver.await;
+        receiver.recv().unwrap();
     }
 
     let (mutex, _) = &*pair;
@@ -419,10 +418,10 @@ async fn test_condvar_wait_block_timeout() {
         (ready, result) = condvar.wait_block_timeout(ready, deadline);
         assert!(result.timed_out());
         assert!(!*ready);
-        c.send(());
+        c.send(()).unwrap();
     });
 
-    r.await;
+    r.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -440,7 +439,7 @@ async fn test_condvar_wait_block_timeout_notified() {
         *ready = true;
         drop(ready);
         condvar.notify_one();
-        c.send(());
+        c.send(()).unwrap();
     });
 
     let pair_clone2 = Arc::clone(&pair);
@@ -457,11 +456,11 @@ async fn test_condvar_wait_block_timeout_notified() {
             }
         }
         assert!(*ready);
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -479,7 +478,7 @@ async fn test_condvar_wait_timeout_dispatch() {
         *ready = true;
         drop(ready);
         condvar.notify_one();
-        c.send(());
+        c.send(()).unwrap();
     });
 
     let pair_clone2 = Arc::clone(&pair);
@@ -496,11 +495,11 @@ async fn test_condvar_wait_timeout_dispatch() {
             }
         }
         assert!(*ready);
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -533,7 +532,7 @@ async fn test_condvar_wait_async_timeout_notified() {
             drop(ready);
             condvar.notify_one();
         });
-        c.send(());
+        c.send(()).unwrap();
     });
 
     let pair_clone2 = Arc::clone(&pair);
@@ -552,11 +551,11 @@ async fn test_condvar_wait_async_timeout_notified() {
             }
             assert!(*ready);
         });
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -576,7 +575,7 @@ async fn test_condvar_wait_async_timeout_while() {
             drop(value);
             condvar.notify_one();
         });
-        c.send(());
+        c.send(()).unwrap();
     });
 
     let pair_clone2 = Arc::clone(&pair);
@@ -592,11 +591,11 @@ async fn test_condvar_wait_async_timeout_while() {
             assert!(!result.timed_out());
             assert_eq!(*guard, 10);
         });
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -612,7 +611,7 @@ async fn test_condvar_wait_spin_timeout_while() {
         *value = 10;
         drop(value);
         condvar.notify_one();
-        c.send(());
+        c.send(()).unwrap();
     });
 
     let pair_clone2 = Arc::clone(&pair);
@@ -624,11 +623,11 @@ async fn test_condvar_wait_spin_timeout_while() {
         let (guard, result) = condvar.wait_spin_timeout_while(guard, deadline, |v| *v < 10);
         assert!(!result.timed_out());
         assert_eq!(*guard, 10);
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -646,7 +645,7 @@ async fn test_condvar_wait_block_timeout_while() {
         *value = 10;
         drop(value);
         condvar.notify_one();
-        c.send(());
+        c.send(()).unwrap();
     });
 
     let pair_clone2 = Arc::clone(&pair);
@@ -658,11 +657,11 @@ async fn test_condvar_wait_block_timeout_while() {
         let (guard, result) = condvar.wait_block_timeout_while(guard, deadline, |v| *v < 10);
         assert!(!result.timed_out());
         assert_eq!(*guard, 10);
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }
 
 #[test_executors::async_test]
@@ -680,7 +679,7 @@ async fn test_condvar_wait_sync_timeout_while() {
         *value = 10;
         drop(value);
         condvar.notify_one();
-        c.send(());
+        c.send(()).unwrap();
     });
 
     let pair_clone2 = Arc::clone(&pair);
@@ -692,9 +691,9 @@ async fn test_condvar_wait_sync_timeout_while() {
         let (guard, result) = condvar.wait_sync_timeout_while(guard, deadline, |v| *v < 10);
         assert!(!result.timed_out());
         assert_eq!(*guard, 10);
-        c2.send(());
+        c2.send(()).unwrap();
     });
 
-    r.await;
-    r2.await;
+    r.recv().unwrap();
+    r2.recv().unwrap();
 }

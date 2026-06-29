@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Tests for the wasm_lite_std crate.
 
+#[cfg(target_arch = "wasm32")]
+use crate::time::{Duration, Instant};
 use crate::{Mutex, spinlock::Spinlock};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
-#[cfg(target_arch = "wasm32")]
-use crate::time::{Duration, Instant};
 
 #[cfg(target_arch = "wasm32")]
 use crate as thread;
-use r#continue::continuation;
+use std::sync::mpsc::channel as continuation;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
@@ -35,14 +35,14 @@ async fn test_spinlock_concurrent_access() {
                 for _ in 0..100 {
                     spinlock.with_mut(|data| *data += 1);
                 }
-                c.send(());
+                c.send(()).unwrap();
             });
             r
         })
         .collect();
 
     for h in handles {
-        h.await;
+        h.recv().unwrap();
     }
     assert_eq!(spinlock.with_mut(|data| *data), 1000);
 }
@@ -66,10 +66,10 @@ async fn test_mutex_try_lock_contention() {
     let (c, r) = continuation();
     thread::spawn(move || {
         let failed = mutex_clone.try_lock().is_err();
-        c.send(failed);
+        c.send(failed).unwrap();
     });
 
-    let failed = r.await;
+    let failed = r.recv().unwrap();
     assert!(failed);
     drop(guard);
 }
@@ -100,11 +100,11 @@ async fn test_mutex_lock_block() {
         // Don't use thread::sleep in WASM as it calls Atomics.wait
         #[cfg(not(target_arch = "wasm32"))]
         thread::sleep(Duration::from_millis(10));
-        c.send(());
+        c.send(()).unwrap();
     });
 
     // Wait for the spawned thread to complete first
-    r.await;
+    r.recv().unwrap();
 
     // Don't use thread::sleep in WASM as it calls Atomics.wait
     #[cfg(not(target_arch = "wasm32"))]
@@ -130,14 +130,14 @@ async fn test_mutex_concurrent_increment() {
                     let mut guard = mutex.lock_spin();
                     *guard += 1;
                 }
-                c.send(());
+                c.send(()).unwrap();
             });
             r
         })
         .collect();
 
     for handle in handles {
-        handle.await;
+        handle.recv().unwrap();
     }
 
     let guard = mutex.lock_spin();
@@ -207,7 +207,6 @@ fn test_mutex_lock_spin_timeout() {
 
 #[test_executors::async_test]
 async fn test_mutex_lock_spin_timeout_fails() {
-
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
 
@@ -215,7 +214,7 @@ async fn test_mutex_lock_spin_timeout_fails() {
     let (c, r) = continuation();
     thread::spawn(move || {
         let _guard = mutex_clone.lock_spin();
-        c.send(());
+        c.send(()).unwrap();
         // Hold it for a bit
         #[cfg(not(target_arch = "wasm32"))]
         thread::sleep(Duration::from_secs(1));
@@ -228,7 +227,7 @@ async fn test_mutex_lock_spin_timeout_fails() {
         }
     });
 
-    r.await; // Wait for thread to acquire lock
+    r.recv().unwrap(); // Wait for thread to acquire lock
 
     // Try to acquire with short timeout
     let deadline = Instant::now() + Duration::from_millis(10);
@@ -238,7 +237,6 @@ async fn test_mutex_lock_spin_timeout_fails() {
 
 #[test_executors::async_test]
 async fn test_mutex_lock_block_timeout() {
-
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
 
@@ -246,7 +244,7 @@ async fn test_mutex_lock_block_timeout() {
     let (c, r) = continuation();
     thread::spawn(move || {
         let _guard = mutex_clone.lock_block();
-        c.send(());
+        c.send(()).unwrap();
         #[cfg(not(target_arch = "wasm32"))]
         thread::sleep(Duration::from_secs(1));
         #[cfg(target_arch = "wasm32")]
@@ -258,7 +256,7 @@ async fn test_mutex_lock_block_timeout() {
         }
     });
 
-    r.await;
+    r.recv().unwrap();
 
     // Try to acquire with short timeout - must run in worker thread on WASM
     // because lock_block_timeout uses Atomics.wait which is forbidden on main thread
@@ -268,9 +266,9 @@ async fn test_mutex_lock_block_timeout() {
         let deadline = Instant::now() + Duration::from_millis(10);
         let result = mutex_clone2.lock_block_timeout(deadline);
         assert!(result.is_none());
-        c2.send(());
+        c2.send(()).unwrap();
     });
-    r2.await;
+    r2.recv().unwrap();
 
     // Wait for thread to release (approx)
     #[cfg(not(target_arch = "wasm32"))]
@@ -295,14 +293,13 @@ async fn test_mutex_lock_block_timeout() {
         } else {
             panic!("Failed to acquire lock after release");
         }
-        c3.send(());
+        c3.send(()).unwrap();
     });
-    r3.await;
+    r3.recv().unwrap();
 }
 
 #[test_executors::async_test]
 async fn test_mutex_lock_sync_timeout() {
-
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
 
@@ -310,7 +307,7 @@ async fn test_mutex_lock_sync_timeout() {
     let (c, r) = continuation();
     thread::spawn(move || {
         let _guard = mutex_clone.lock_sync();
-        c.send(());
+        c.send(()).unwrap();
         #[cfg(not(target_arch = "wasm32"))]
         thread::sleep(Duration::from_millis(500));
         #[cfg(target_arch = "wasm32")]
@@ -322,7 +319,7 @@ async fn test_mutex_lock_sync_timeout() {
         }
     });
 
-    r.await;
+    r.recv().unwrap();
 
     // Try to acquire with short timeout
     let deadline = Instant::now() + Duration::from_millis(10);
@@ -332,7 +329,6 @@ async fn test_mutex_lock_sync_timeout() {
 
 #[test_executors::async_test]
 async fn test_mutex_lock_async_timeout() {
-
     let mutex = Arc::new(Mutex::new(0));
 
     // Test success
@@ -351,21 +347,16 @@ async fn test_mutex_lock_async_timeout() {
     thread::spawn(move || {
         test_executors::spin_on(async {
             let _guard = mutex_clone.lock_async().await;
-            c.send(());
+            c.send(()).unwrap();
             // Hold it
             let start = Instant::now();
             while start.elapsed() < Duration::from_millis(500) {
-                // yield?
-                r#continue::continuation::<()>().1.await; // never resolves, but yields? no, it blocks if we await it?
-                // we just want to delay.
-                // but we are in async.
-                // spin loop is fine for test
                 std::hint::spin_loop();
             }
         });
     });
 
-    r.await;
+    r.recv().unwrap();
 
     // Try to acquire with short timeout
     let deadline = Instant::now() + Duration::from_millis(10);

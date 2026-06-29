@@ -94,7 +94,7 @@
 //! | **std compatibility** | Custom [`Thread`]/[`ThreadId`] (similar API) | Re-exports `std::thread::{Thread, ThreadId}` |
 //! | **Worker scripts** | Inline JS via `wasm_bindgen(inline_js)` | External JS files; `es_modules` feature for module workers |
 //! | **wasm-pack targets** | ES modules (`web`) only | `web` and `no-modules` via feature flag |
-//! | **Dependencies** | wasm-bindgen, js-sys, continue | web-sys (many features), futures crate |
+//! | **Dependencies** | wasm_lite, atomic-waker | web-sys (many features), futures crate |
 //! | **Thread handle** | [`JoinHandle::thread()`] returns `&Thread` | `thread()` is unimplemented (panics) |
 //!
 //! ## Shared capabilities
@@ -353,6 +353,7 @@
 
 extern crate alloc;
 
+mod async_wait;
 pub mod condvar;
 pub mod guard;
 mod hooks;
@@ -360,13 +361,13 @@ pub mod mpsc;
 pub mod mutex;
 pub mod rwlock;
 pub mod spinlock;
-pub mod time;
 #[cfg(not(target_arch = "wasm32"))]
 mod stdlib;
 #[cfg(test)]
 mod sync_tests;
 #[doc(hidden)]
 pub mod test_executor;
+pub mod time;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 mod wasm_support;
@@ -380,10 +381,10 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-pub use backend::yield_to_event_loop_async;
 /// Run a future to completion on the current thread's event loop (wasm only).
 #[cfg(target_arch = "wasm32")]
 pub use backend::spawn_local;
+pub use backend::yield_to_event_loop_async;
 pub use backend::{AccessError, Builder, JoinHandle, LocalKey, Thread, ThreadId};
 pub use backend::{task_begin, task_finished};
 pub use guard::Guard;
@@ -591,8 +592,12 @@ pub mod __rt {
     pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
         use std::pin::pin;
         use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-        static VT: RawWakerVTable =
-            RawWakerVTable::new(|_| RawWaker::new(std::ptr::null(), &VT), |_| {}, |_| {}, |_| {});
+        static VT: RawWakerVTable = RawWakerVTable::new(
+            |_| RawWaker::new(std::ptr::null(), &VT),
+            |_| {},
+            |_| {},
+            |_| {},
+        );
         let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) };
         let mut cx = Context::from_waker(&waker);
         let mut f = pin!(future);

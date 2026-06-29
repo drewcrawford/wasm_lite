@@ -15,8 +15,8 @@ Following the wasm-bindgen ecosystem split (language vs browser):
   `core::arch::wasm32` atomics. Both **sync** and **async** paths work:
   `spawn`/`JoinHandle` (`join`/`join_async`), `park`/`unpark`, `Mutex`/`Condvar`/
   `RwLock`/`mpsc` (sync + async), and a `spawn_local` event-loop executor for
-  non-blocking async on the main thread. Only runtime dep: `continue` (a
-  wasm-bindgen-free continuation primitive). Browser-validated (see
+  non-blocking async on the main thread. Runtime deps are `wasm_lite` and a
+  small internal `atomic-waker`-backed async wait primitive. Browser-validated (see
   [testing](./testing.md)). *Like `std` (the `std::thread`/`std::sync` slice).*
 * `wasm_lite_js` *(future)* — ECMAScript built-ins (`Object`, `Array`, `Map`,
   `JSON`, `Date`, …) bound with `js_class!`. *Like `js-sys`.*
