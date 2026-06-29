@@ -1,0 +1,22 @@
+# wasm_lite_std — a std::thread + std::sync veneer for wasm_lite.
+#
+# Ported from drewcrawford's `wasm_safe_thread` (MIT OR Apache-2.0). The native
+# backend (std::thread) is used verbatim; the wasm32 backend is being retargeted
+# off wasm-bindgen onto wasm_lite's `thread::spawn` primitive + core atomics.
+[package]
+name = "wasm_lite_std"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Drew Crawford <drew@sealedabstract.com>"]
+description = "std::thread + std::sync veneer over wasm_lite (ported from wasm_safe_thread)."
+
+[dependencies]
+# Async-path continuation primitive (used by the async lock/condvar APIs).
+continue = "0.1.2"
+
+[target.'cfg(target_arch="wasm32")'.dependencies]
+wasm_lite = { path = "../wasm_lite" }
+
+[dev-dependencies]
+test_executors = "0.4.1"

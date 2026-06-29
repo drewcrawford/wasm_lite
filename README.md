@@ -50,6 +50,7 @@ wasm-lite app.wasm -o glue.js                     # generates the JS glue
 | `crates/wasm_lite_macro` | zero-dep proc-macros: `#[export]`, `#[wasm_lite_test]`, `js_class!` |
 | `crates/wasm_lite_codegen` | host-side: read descriptor sections, generate JS glue |
 | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |
+| `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`); ported from `wasm_safe_thread`, sync path retargeted onto `wasm_lite` |
 | `runner` | WebDriver runner; serves a bin interactively, or drives tests/doctests headless and exits |
 
 Examples (each standalone, builds to `wasm32-unknown-unknown`):
@@ -57,7 +58,8 @@ Examples (each standalone, builds to `wasm32-unknown-unknown`):
 `exports-demo` (Rust→JS exports), `tests-demo` (`#[wasm_lite_test]`),
 `doctest-demo` (doctests), `interop` (wasm-bindgen bridge),
 `atomics-demo` (shared memory + atomics; nightly),
-`threads-demo` (`thread::spawn` over Web Workers; nightly).
+`threads-demo` (`thread::spawn` over Web Workers; nightly),
+`std-threads-demo` (`wasm_lite_std::spawn`, the std-like API; nightly).
 
 ## Binding model
 
@@ -210,9 +212,10 @@ bootstrap module. A threaded build must export the linker's thread symbols;
 `examples/threads-demo/.cargo/config.toml` shows the flags
 (`--export=__stack_pointer`, `__tls_size`, `__wasm_init_tls`, …).
 
-Spawning is **detached** today (no `JoinHandle`); a `std::thread`-like layer with
-`JoinHandle`/`park`/`Mutex`/`Condvar`/`mpsc` is planned as `wasm_lite_std`
-(modelled on `wasm_safe_thread`).
+The core `spawn` is **detached** (no `JoinHandle`). The std-like layer with
+`spawn -> JoinHandle`, `park`/`unpark`, `Mutex`/`Condvar`/`RwLock`/`mpsc` lives in
+`wasm_lite_std` (a port of `wasm_safe_thread`); its synchronous path is working,
+the async path is deferred.
 
 ## wasm-bindgen interop
 
@@ -229,7 +232,12 @@ Following the wasm-bindgen ecosystem split (language vs browser):
 * `wasm_lite_js` *(future)* — ECMAScript built-ins (`Object`, `Array`, `Map`,
   `JSON`, `Date`, …) bound with `js_class!`. *Like `js-sys`.*
 * `wasm_lite_web` *(future)* — Web/host APIs (DOM, `fetch`, …). *Like `web-sys`.*
-* `wasm_lite_std` *(future)* — std-like veneer (e.g. `std::thread` on Workers).
+* `wasm_lite_std` *(in progress)* — std-like veneer: a `std::thread` + `std::sync`
+  port of [`wasm_safe_thread`](https://crates.io/crates/wasm_safe_thread) with its
+  wasm backend retargeted off wasm-bindgen onto `wasm_lite::thread::spawn`. The
+  **sync** path works (`spawn`/`JoinHandle`, `park`/`unpark`, `Mutex`,
+  `Condvar`, `RwLock`, `mpsc`); the async path is deferred (needs a
+  wasm-bindgen-free continuation + Promise bridge).
 
 Bindings stay out of core so it remains small; `js_class!` is the primitive all
 upper layers build on.
