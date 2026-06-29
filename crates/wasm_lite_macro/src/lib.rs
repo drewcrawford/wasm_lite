@@ -8,12 +8,16 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{ToTokens, format_ident, quote};
+use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Error, FnArg, Ident, ItemFn, LitByteStr, LitStr, Pat, ReturnType, Token, Type, braced,
-    parenthesized, parse_macro_input,
+    Error, FnArg, Ident, ItemFn, LitStr, Pat, ReturnType, Token, Type, braced, parenthesized,
+    parse_macro_input,
 };
+
+mod import;
+mod ty;
+use crate::ty::*;
 
 /// Mark a function as a wasm_lite test (analogous to `#[test]`).
 ///
@@ -62,6 +66,28 @@ pub fn wasm_lite_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
     match build_export(&func) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Declare imported JavaScript functions grouped by JS namespace.
+///
+/// ```ignore
+/// wasm_lite::import! {
+///     "console" { fn log(msg: &str); }
+///     "Math" { fn max2(a: f64, b: f64) -> f64 as "max"; }   // `as` for overloads
+///     "Array" { fn push(this: &JsValue, value: f64) -> f64; } // method on a handle
+/// }
+/// ```
+///
+/// For each function, emits a safe Rust wrapper, a function-local wasm import
+/// with a flattened ABI, and a line in the `__wasm_lite_imports` section. Each
+/// import symbol is `module_path!()`-qualified, so the same JS function can be
+/// bound from many crates/modules without link conflicts.
+#[proc_macro]
+pub fn import(input: TokenStream) -> TokenStream {
+    match import::build(input.into()) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }
@@ -594,7 +620,7 @@ fn is_builtin_ret(ty: &Type) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Shared helpers
+// Export/js_class helpers (type classification is shared via `crate::ty`)
 // ---------------------------------------------------------------------------
 
 /// Extract `(name, type)` from a function argument (rejects `self`/patterns).
@@ -606,101 +632,4 @@ fn fn_arg(input: &FnArg) -> syn::Result<(Ident, &Type)> {
         },
         FnArg::Receiver(r) => Err(Error::new_spanned(r, "#[wasm_lite::export] cannot be used on methods")),
     }
-}
-
-/// `i32`/`u32`/`f64` → its tag; otherwise `None`.
-fn numeric(ty: &Type) -> Option<String> {
-    let id = simple_ident(ty)?.to_string();
-    matches!(id.as_str(), "i32" | "u32" | "f64").then_some(id)
-}
-
-/// The ident of a bare path type with no generics (e.g. `JsValue`, `bool`).
-fn simple_ident(ty: &Type) -> Option<&Ident> {
-    if let Type::Path(tp) = ty {
-        if tp.qself.is_none() && tp.path.segments.len() == 1 {
-            let seg = &tp.path.segments[0];
-            if seg.arguments.is_empty() {
-                return Some(&seg.ident);
-            }
-        }
-    }
-    None
-}
-
-/// Whether `ty` is the bare path `name`.
-fn is_ident(ty: &Type, name: &str) -> bool {
-    simple_ident(ty).is_some_and(|id| id == name)
-}
-
-fn is_jsvalue(ty: &Type) -> bool {
-    is_ident(ty, "JsValue")
-}
-
-fn is_ref_jsvalue(ty: &Type) -> bool {
-    matches!(ty, Type::Reference(r) if is_jsvalue(&r.elem))
-}
-
-fn is_str(ty: &Type) -> bool {
-    matches!(ty, Type::Reference(r) if is_ident(&r.elem, "str"))
-}
-
-fn is_byte_slice(ty: &Type) -> bool {
-    if let Type::Reference(r) = ty {
-        if let Type::Slice(s) = &*r.elem {
-            return is_ident(&s.elem, "u8");
-        }
-    }
-    false
-}
-
-fn vec_u8(ty: &Type) -> bool {
-    generic1(ty, "Vec").is_some_and(|inner| is_ident(inner, "u8"))
-}
-
-/// If `ty` is `Name<Inner>` with exactly one type argument, return `Inner`.
-fn generic1<'a>(ty: &'a Type, name: &str) -> Option<&'a Type> {
-    let seg = last_segment(ty, name)?;
-    if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
-        if ab.args.len() == 1 {
-            if let syn::GenericArgument::Type(t) = &ab.args[0] {
-                return Some(t);
-            }
-        }
-    }
-    None
-}
-
-/// If `ty` is `Name<A, B>`, return `(A, B)`.
-fn generic2<'a>(ty: &'a Type, name: &str) -> Option<(&'a Type, &'a Type)> {
-    let seg = last_segment(ty, name)?;
-    if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
-        let types: Vec<&Type> = ab
-            .args
-            .iter()
-            .filter_map(|a| if let syn::GenericArgument::Type(t) = a { Some(t) } else { None })
-            .collect();
-        if types.len() == 2 {
-            return Some((types[0], types[1]));
-        }
-    }
-    None
-}
-
-fn last_segment<'a>(ty: &'a Type, name: &str) -> Option<&'a syn::PathSegment> {
-    if let Type::Path(tp) = ty {
-        let seg = tp.path.segments.last()?;
-        if seg.ident == name {
-            return Some(seg);
-        }
-    }
-    None
-}
-
-fn type_string(ty: &Type) -> String {
-    ty.to_token_stream().to_string()
-}
-
-/// A `*b"<text>\n"` byte-string literal for a descriptor/section entry.
-fn section_literal(text: &str) -> LitByteStr {
-    LitByteStr::new(format!("{text}\n").as_bytes(), Span::call_site())
 }

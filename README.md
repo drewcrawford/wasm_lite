@@ -51,7 +51,7 @@ wasm-lite app.wasm -o glue.js                     # generates the JS glue
 | crate | role |
 |---|---|
 | `crates/wasm_lite` | core: `import!`, `#[export]`, `js_class!`, `JsValue`, runtime (`__wl_malloc`/`__wl_free`, panic hook), `thread::spawn`, `console`/`performance` bindings |
-| `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): `#[export]`, `#[wasm_lite_test]`, `js_class!` |
+| `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): `import!`, `#[export]`, `#[wasm_lite_test]`, `js_class!` (shared type→ABI dispatch in `ty`) |
 | `crates/wasm_lite_codegen` | host-side: read descriptor sections, generate JS glue |
 | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |
 | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`); ported from `wasm_safe_thread`, sync path retargeted onto `wasm_lite` |

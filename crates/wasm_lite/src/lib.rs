@@ -5,6 +5,11 @@
 //! host-side `wasm_lite_codegen` crate reads that section and generates the
 //! matching JavaScript shims, so no JS is hand-written per import.
 
+// The proc-macros (`import!`, `#[export]`, `js_class!`) emit absolute
+// `::wasm_lite::…` paths (a proc-macro can't use `$crate`). This self-alias lets
+// those paths resolve when the macros are used *inside* this crate too.
+extern crate self as wasm_lite;
+
 mod macros;
 mod value;
 
@@ -17,7 +22,7 @@ pub mod thread;
 pub mod interop;
 
 pub use value::JsValue;
-pub use wasm_lite_macro::{export, js_class, wasm_lite_test};
+pub use wasm_lite_macro::{export, import, js_class, wasm_lite_test};
 
 /// Install a panic hook that reports the panic message via `console.error`.
 ///
