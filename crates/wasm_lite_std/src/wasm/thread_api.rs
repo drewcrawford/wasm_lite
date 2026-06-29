@@ -292,47 +292,9 @@ impl Builder {
                 }));
             });
 
-            // Set a panic hook that sends the error through PANIC_SENDER
-            // We chain with the previous hook so that panics on other threads
-            // (like the main thread) still work correctly
-            let prev_hook = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |info| {
-                let msg = info.to_string();
-                // Floor: ALWAYS surface the panic on the console with thread
-                // attribution. A panic only traps its own worker (others keep
-                // running), so without this a panic on a detached / never-joined
-                // worker is invisible — the default wasm32 panic prints nothing,
-                // and routing solely through the join channel loses it if no one
-                // joins. The `[wasm_lite_std …]` prefix + thread id make it
-                // greppable in the shared (interleaved) browser console.
-                let who = CURRENT_THREAD
-                    .with(|c| {
-                        c.borrow().as_ref().map(|t| match t.name() {
-                            Some(name) => name.to_string(),
-                            None => t.id().to_string(),
-                        })
-                    })
-                    .unwrap_or_else(|| {
-                        if is_main_thread() { "main".to_string() } else { "unknown thread".to_string() }
-                    });
-                wasm_lite::console::error(&format!("[wasm_lite_std {who}] {msg}"));
-
-                let sent = PANIC_SENDER.with(|cell| {
-                    if let Some(sender) = cell.borrow_mut().take() {
-                        flush_captured_prints_to_console_current_thread_impl();
-                        // The channel carries the message to a `join`er, if any.
-                        sender(msg);
-                        true
-                    } else {
-                        false
-                    }
-                });
-                // If we didn't have a PANIC_SENDER (e.g., panic on main thread),
-                // call the previous hook
-                if !sent {
-                    prev_hook(info);
-                }
-            }));
+            // Install our panic hook (once, globally — it reads thread-locals,
+            // so a single hook serves every thread).
+            install_panic_hook();
 
             crate::hooks::run_spawn_hooks();
 
@@ -363,6 +325,46 @@ impl Builder {
             finished,
         })
     }
+}
+
+/// Install the wasm_lite_std panic hook — **once**, globally.
+///
+/// The hook reads thread-locals ([`CURRENT_THREAD`], [`PANIC_SENDER`]), so one
+/// hook serves every thread; installing it per-spawn would nest hooks and
+/// multiply the output. It is the single canonical logger and deliberately does
+/// **not** chain to a prior hook: the default wasm32 panic prints nothing, so we
+/// always log the panic to the console with thread attribution (a panic only
+/// traps its own worker, so a detached worker's panic would otherwise be silent),
+/// and route it to the join channel when this thread has a sender. Consequence:
+/// once you spawn a thread, wasm_lite_std owns the panic hook — install any
+/// custom hook (`set_panic_hook`, etc.) before the first spawn.
+fn install_panic_hook() {
+    use std::sync::Once;
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            let msg = info.to_string();
+            let who = CURRENT_THREAD
+                .with(|c| {
+                    c.borrow().as_ref().map(|t| match t.name() {
+                        Some(name) => name.to_string(),
+                        None => t.id().to_string(),
+                    })
+                })
+                .unwrap_or_else(|| {
+                    if is_main_thread() { "main".to_string() } else { "unknown thread".to_string() }
+                });
+            wasm_lite::console::error(&format!("[wasm_lite_std {who}] {msg}"));
+
+            // Deliver the panic to a `join`er, if this thread has a sender.
+            PANIC_SENDER.with(|cell| {
+                if let Some(sender) = cell.borrow_mut().take() {
+                    flush_captured_prints_to_console_current_thread_impl();
+                    sender(msg);
+                }
+            });
+        }));
+    });
 }
 
 impl Default for Builder {

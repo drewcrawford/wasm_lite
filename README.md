@@ -268,6 +268,11 @@ wrong. For that uniformity to hold, two things have to be true:
   `rustflags`, so an async doctest crate must repeat the threads/atomics link
   args under `[build] rustdocflags` — see `examples/async-doctest-demo`.)
 
+`wasm_lite_std` installs a single canonical panic hook (once, on first spawn) that
+logs each panic exactly once with thread attribution and routes it to the join
+channel — so it owns the panic hook for threaded programs; install any custom hook
+(`set_panic_hook`) *before* the first spawn.
+
 On panics: `panic = "abort"` is the supported model. On wasm a panic is an
 `unreachable` **trap local to one instance** — verified: a panicking worker traps
 only itself; the main thread and other workers keep running and shared memory
