@@ -2,6 +2,10 @@
 name = "wasm_lite_codegen"
 version = "0.1.0"
 edition = "2024"
+authors = ["Drew Crawford <drew@sealedabstract.com>"]
+license = "MIT OR Apache-2.0"
 description = "Reads wasm_lite import descriptors from a wasm module and generates the matching JavaScript glue."
+keywords = ["wasm", "webassembly", "codegen", "javascript", "bindings"]
+categories = ["wasm", "development-tools::build-utils"]
 
 [dependencies]

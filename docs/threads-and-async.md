@@ -130,20 +130,23 @@ The default `wasm32` panic prints nothing, so `wasm_lite_std`'s worker hook
 (`[wasm_lite_std ThreadId(N)] panicked at …`) — never silent — *in addition to*
 routing it to the join channel. That covers the interactive/browser case fully.
 
-The CLI (`cargo test` / doctests via the runner) is only partly there today:
+The CLI (`cargo test` / doctests via the runner) surfaces panics as follows:
 
 | Panic site | Browser console | CLI (terminal) |
 |---|---|---|
 | main thread, hook installed | ✓ message | ✓ message + `FAILED` (runner prints the captured console on failure) |
 | main thread, no hook | trap only | trap only — install `set_panic_hook()` |
-| **joined** worker | ✓ message | ✓ via the channel → the joiner re-panics on main → captured |
-| **detached** worker | ✓ message | ✗ **not surfaced** — the worker is a separate JS realm, and the runner only captures the *main* realm's console |
+| **joined** worker | ✓ message | ✓ fails: via the channel → the joiner re-panics on main → captured |
+| **detached** worker | ✓ message | ⚠ message only — bridged up as a warning; does **not** fail the test |
 
-Worker console output is **bridged to the main realm** so it reaches the CLI: a
-worker forwards each console line up the spawn chain via `postMessage`, and the
-runner prints any worker-panic lines (even on a passing test). So a detached
-worker panic now shows on the terminal as a warning, e.g.
-`[wasm_lite_std ThreadId(0)] panicked at …`, while the test still passes.
+A worker is a separate JS realm, so the runner can't read its console directly.
+Instead worker console output is **bridged to the main realm**: each worker
+forwards its console lines up the spawn chain via `postMessage`, and the runner
+prints any worker-panic lines. So a *detached* worker panic does reach the
+terminal — as a warning, e.g. `[wasm_lite_std ThreadId(0)] panicked at …` — even
+though, matching `std`, an unjoined worker's panic doesn't fail the test (see
+**Detached vs. awaited** below). A *joined* worker panic, by contrast, travels
+the join channel and re-panics on the awaiter, which *does* fail the test.
 
 **Detached vs. awaited.** A *detached* (never-joined) worker panic is logged but
 doesn't fail the test — matching `std`, where an unjoined thread's panic prints

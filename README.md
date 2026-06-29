@@ -1,12 +1,10 @@
 # wasm_lite
 
-A "smol"-style rewrite of wasm-bindgen: bind JavaScript and Rust to each other
-on `wasm32-unknown-unknown`, with no *runtime* dependencies and a small
+A dependency-light rewrite of wasm-bindgen: bind JavaScript and Rust to each
+other on `wasm32-unknown-unknown`, with no *runtime* dependencies and a small
 host-side codegen tool. The core (`import!`, `JsValue`, runtime) and the codegen
 are dependency-free; the proc-macros (`wasm_lite_macro`) use `syn`/`quote`, which
 are build-time-only (zero bytes in the `.wasm`).
-
-A checkout of wasm-bindgen is available in the `wasm-bindgen/` folder for reference.
 
 **Coming from wasm-bindgen?** See [MIGRATION.md](./MIGRATION.md) for a detailed
 pros/cons comparison, a side-by-side "rosetta stone" of how to do X in each, and
@@ -63,6 +61,69 @@ pub fn greet(name: &str) -> String { format!("hello, {name}!") }
 
 See the [binding model](./docs/binding-model.md) docs for the full story.
 
+## Quickstart
+
+**Prerequisites**
+
+* A Rust toolchain and the wasm target: `rustup target add wasm32-unknown-unknown`.
+* A WebDriver-capable browser on `PATH`: Firefox + `geckodriver`, or Chrome +
+  `chromedriver`. The runner drives a *real* browser, so one must be installed.
+
+**Run an example end to end**
+
+The `runner` is a `cargo` runner: it reads the descriptor sections from your
+compiled `.wasm`, generates the JS glue, serves it, and opens it in a browser
+(for `cargo run`) or drives it headless and exits (for `cargo test`).
+
+```bash
+# 1. Build the runner once (from the workspace root).
+cargo build -p runner
+
+# 2. Point the wasm target at it. The examples already ship a .cargo/config.toml
+#    that defaults `--target` to wasm32; you just supply the runner path.
+export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$PWD/target/debug/runner"
+
+# 3. Run an example in the browser (no `--target` needed; the example sets it).
+cd examples/hello-rust
+cargo run            # opens the module in your browser
+cargo test           # runs any #[wasm_lite_test]s headless and exits
+```
+
+`examples/hello-rust` covers imports, handles, strings, bytes, and `js_class!`.
+The other examples (see [Workspace layout](#workspace-layout)) build the same
+way; the threaded/async ones additionally need **nightly + `-Z build-std`** and
+the atomics link flags — see
+[Threads, async & shared memory](./docs/threads-and-async.md) and the
+`run-browser-tests.sh` script under `crates/wasm_lite_std/`.
+
+**Wire it into your own crate**
+
+```toml
+# Cargo.toml
+[dependencies]
+wasm_lite = "0.1"
+```
+
+```toml
+# .cargo/config.toml
+[build]
+target = "wasm32-unknown-unknown"
+
+[target.wasm32-unknown-unknown]
+runner = "/abs/path/to/wasm_lite/target/debug/runner"   # or set the env var above
+```
+
+Then `cargo run` / `cargo test` as in step 3. To generate glue *without* the
+runner (e.g. to ship it yourself), use the `wasm-lite` CLI directly — this is the
+manual form of what the runner automates:
+
+```bash
+cargo install --path crates/wasm_lite_cli      # provides the `wasm-lite` binary
+cargo build --target wasm32-unknown-unknown    # produces target/.../app.wasm
+wasm-lite app.wasm -o glue.js                  # generates the JS glue
+# import { instantiate, <your exports> } from "./glue.js"
+```
+
 ## Documentation
 
 | doc | covers |
@@ -72,6 +133,7 @@ See the [binding model](./docs/binding-model.md) docs for the full story.
 | [Threads, async & shared memory](./docs/threads-and-async.md) | `+atomics` builds, `thread::spawn`, `wasm_lite_std` (`Mutex`/`RwLock`/`Condvar`/`mpsc`, sync + async), the `spawn_local` executor, panic surfacing, the `std::time` veneer |
 | [wasm-bindgen interop](./docs/interop.md) | the `wasm-bindgen` feature and `.to_wasm_bindgen()` / `.to_wasm_lite()` conversions |
 | [Crate layering & roadmap](./docs/roadmap.md) | planned `wasm_lite_js`/`wasm_lite_web` split and known gaps |
+| [Design notes](./docs/design-notes.md) | forward-looking strategy for running wasm_lite and wasm-bindgen (incl. wgpu) in one binary |
 | [wasm-bindgen thread-ownership census](./docs/wasm-thread-ownership-census.md) | db-dump data: ~1% of the wasm-bindgen ecosystem owns wasm threads (backs the interop strategy) |
 | [Migration guide](./MIGRATION.md) | moving from wasm-bindgen: pros/cons, rosetta stone, gotchas |
 

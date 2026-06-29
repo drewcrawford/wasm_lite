@@ -2,7 +2,11 @@
 name = "wasm_lite_cli"
 version = "0.1.0"
 edition = "2024"
+authors = ["Drew Crawford <drew@sealedabstract.com>"]
+license = "MIT OR Apache-2.0"
 description = "CLI that generates wasm_lite JavaScript glue from a compiled wasm module."
+keywords = ["wasm", "webassembly", "cli", "javascript", "bindings"]
+categories = ["wasm", "command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "wasm-lite"

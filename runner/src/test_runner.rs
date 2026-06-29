@@ -189,7 +189,8 @@ fn run_suite(browser: &Browser, port: u16, names: &[String]) -> Result<i32, Stri
     let mut failed = 0;
 
     for name in names {
-        browser.goto(&format!("http://127.0.0.1:{port}/?test={name}"))?;
+        let encoded_name = encode_query_component(name);
+        browser.goto(&format!("http://127.0.0.1:{port}/?test={encoded_name}"))?;
         wait_done(browser)?;
 
         if browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
@@ -229,6 +230,24 @@ fn wait_done(browser: &Browser) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn encode_query_component(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                encoded.push('%');
+                encoded.push(HEX[(byte >> 4) as usize] as char);
+                encoded.push(HEX[(byte & 0x0f) as usize] as char);
+            }
+        }
+    }
+    encoded
 }
 
 fn plural(n: usize) -> &'static str {

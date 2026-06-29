@@ -86,15 +86,14 @@
 //! | Feature | wasm_lite_std | wasm_thread |
 //! |---------|------------------|-------------|
 //! | **Native support** | Unified API (same code runs on native and wasm) | Re-exports `std::thread::*` on native |
-//! | **Node.js support** | Yes, via `worker_threads` | Browser only |
+//! | **Toolchain** | `wasm_lite` codegen + runner; **no wasm-bindgen / wasm-pack** | wasm-bindgen + wasm-pack |
+//! | **Worker bootstrap** | Codegen-emitted (`wl_worker.js`); no JS to write or ship | External JS files; `es_modules` feature for module workers |
 //! | **Event loop integration** | [`yield_to_event_loop_async()`] for cooperative scheduling | No equivalent |
 //! | **Spawn hooks** | Global hooks that run at thread start | Not available |
 //! | **Parking primitives** | [`park()`]/[`Thread::unpark()`] on wasm workers | Not implemented |
 //! | **Scoped threads** | Not implemented | `scope()` allows borrowing non-`'static` data |
 //! | **std compatibility** | Custom [`Thread`]/[`ThreadId`] (similar API) | Re-exports `std::thread::{Thread, ThreadId}` |
-//! | **Worker scripts** | Inline JS via `wasm_bindgen(inline_js)` | External JS files; `es_modules` feature for module workers |
-//! | **wasm-pack targets** | ES modules (`web`) only | `web` and `no-modules` via feature flag |
-//! | **Dependencies** | wasm_lite, atomic-waker | web-sys (many features), futures crate |
+//! | **Dependencies** | `wasm_lite` + `atomic-waker` (zero wasm-bindgen) | web-sys (many features), futures crate |
 //! | **Thread handle** | [`JoinHandle::thread()`] returns `&Thread` | `thread()` is unimplemented (panics) |
 //!
 //! ## Shared capabilities
@@ -120,18 +119,18 @@
 //! - `wasm_thread` uses `Arc<Packet<UnsafeCell>>` with a custom `Signal` primitive and `Waker` list
 //!
 //! **Async waiting:**
-//! - `wasm_lite_std` wraps JavaScript Promises via `wasm-bindgen-futures::JsFuture`
+//! - `wasm_lite_std` runs a small event-loop executor (`spawn_local`) that sleeps on
+//!   `Atomics.waitAsync` and is woken cross-thread by `memory.atomic.notify` — no JS Promise glue
 //! - `wasm_thread` implements `futures::future::poll_fn` with manual `Waker` tracking
 //!
 //! ## When to use which
 //!
 //! **Choose wasm_lite_std when:**
-//! - You need Node.js support (wasm_thread is browser-only)
+//! - You want to stay off wasm-bindgen entirely (no `wasm-bindgen`/`js-sys`/`web-sys` in the build)
 //! - You want identical behavior on native and wasm (e.g., for testing)
 //! - You need park/unpark synchronization primitives
 //! - You need spawn hooks for initialization (logging, tracing, etc.)
 //! - You prefer fewer dependencies and no external JS files
-//! - You want an actively developed library with responsive issue/PR handling
 //!
 //! **Choose wasm_thread when:**
 //! - You need scoped threads for borrowing non-`'static` data
@@ -200,7 +199,7 @@
 //! For async contexts, use `join_async`:
 //!
 //! ```compile_only
-//! // In an async context (e.g., with wasm_bindgen_futures::spawn_local)
+//! // In an async context (e.g., a future running on wasm_lite_std::spawn_local)
 //! let result = handle.join_async().await.unwrap();
 //! ```
 //!
@@ -249,7 +248,7 @@
 //! # });
 //! # }
 //! # #[cfg(target_arch = "wasm32")]
-//! # fn main() {} // JsFuture is !Send; the wasm path is covered by tests/browser.rs
+//! # fn main() {} // the wasm future is !Send; the wasm path is covered by tests/browser.rs
 //! ```
 //!
 //! ## Thread local storage
@@ -288,26 +287,25 @@
 //! clear_spawn_hooks();
 //! ```
 //!
-//! ## Async task tracking (WASM)
+//! ## Async tasks on a worker (WASM)
 //!
-//! When spawning async tasks inside a worker thread using `wasm_bindgen_futures::spawn_local`,
-//! you must notify the runtime so the worker waits for tasks to complete before exiting:
+//! Async work runs on the built-in event-loop executor: `wasm_lite_std::spawn_local(fut)`
+//! queues a future on the current thread. A worker drains its `spawn_local` queue before
+//! tearing down (the bootstrap polls the exported `__wl_executor_idle`), so tasks spawned
+//! this way are awaited automatically — no manual bookkeeping:
 //!
 //! ```
 //! # #[cfg(target_arch = "wasm32")]
 //! # {
-//! use wasm_lite_std::{task_begin, task_finished};
-//!
-//! task_begin();
-//! wasm_bindgen_futures::spawn_local(async {
-//!     // ... async work ...
-//!     task_finished();
+//! wasm_lite_std::spawn_local(async {
+//!     // ... async work; the worker won't close until this completes ...
 //! });
 //! # }
 //! ```
 //!
-//! These functions are no-ops on native platforms, so you can use them unconditionally
-//! in cross-platform code.
+//! For async work driven by some *other* mechanism (not the built-in executor), bracket it
+//! with [`task_begin`]/[`task_finished`] so the worker still waits for it before exiting.
+//! Both are no-ops on native, so they're safe to call unconditionally in cross-platform code.
 //!
 //! # WASM Limitations
 //!
@@ -332,8 +330,8 @@
 //!
 //! ## Environment support
 //!
-//! - **Browser**: Web Workers with shared memory
-//! - **Node.js**: worker_threads module
+//! - **Browser**: Web Workers over shared memory, driven by the `wasm_lite` runner.
+//!   (There is no Node.js backend today — the runner is browser-only.)
 //!
 //! # Building for WASM
 //!

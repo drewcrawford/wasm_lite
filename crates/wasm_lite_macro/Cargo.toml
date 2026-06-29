@@ -2,7 +2,11 @@
 name = "wasm_lite_macro"
 version = "0.1.0"
 edition = "2024"
-description = "Procedural macros for wasm_lite."
+authors = ["Drew Crawford <drew@sealedabstract.com>"]
+license = "MIT OR Apache-2.0"
+description = "Procedural macros for wasm_lite (import!, #[export], js_class!, #[wasm_lite_test])."
+keywords = ["wasm", "webassembly", "proc-macro", "bindings", "javascript"]
+categories = ["wasm", "development-tools::procedural-macro-helpers"]
 
 [lib]
 proc-macro = true

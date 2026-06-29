@@ -17,26 +17,10 @@ macro_rules! async_test {
 
 /// Runs a future to completion, blocking the current thread until it's done.
 ///
-/// # Platform behavior
-///
-/// - **Native**: Uses a simple polling loop with thread yielding.
-/// - **WASM (in worker context)**: Spawns a child worker that runs the future using
-///   `wasm_bindgen_futures::spawn_local`, which properly integrates with the JS event loop.
-///   The calling thread blocks on `Atomics.wait` until the result is ready.
-///
-/// # Requirements
-///
-/// On WASM, this function requires:
-/// - Being called from a worker thread (not the main browser thread), since it uses `Atomics.wait`
-/// - The future and its output must be `Send + 'static`
-///
-/// On wasm, ensure such code runs in a worker context (not the main browser
-/// thread), since it relies on `Atomics.wait`.
-///
-/// # Panics
-///
-/// On WASM main thread, this will spin forever waiting for the result (same as before),
-/// because `Atomics.wait` is not available there.
+/// Native-only helper for the `async_test!` macro: it drives the future with a
+/// simple polling loop and thread yielding. The wasm async test path goes
+/// through the runner instead (`#[wasm_lite_test]` + `async_doctest!`), so this
+/// is not compiled on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn<F, T>(future: F) -> T
 where
