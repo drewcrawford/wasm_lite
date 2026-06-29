@@ -1,8 +1,8 @@
 //! Bindings to the JavaScript `Date` global.
 
-// `now()` returns milliseconds elapsed since the Unix epoch (`Date.now()`).
 crate::import! {
     "Date" {
+        /// Returns the number of milliseconds elapsed since the Unix epoch (`Date.now()`).
         fn now() -> f64;
     }
 }

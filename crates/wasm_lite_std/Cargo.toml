@@ -10,6 +10,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Drew Crawford <drew@sealedabstract.com>"]
 description = "std::thread + std::sync veneer over wasm_lite (ported from wasm_safe_thread)."
+categories = ["wasm", "concurrency", "asynchronous"]
 
 [dependencies]
 atomic-waker = "1.1.2"

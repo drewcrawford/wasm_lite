@@ -15,7 +15,7 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
-use syn::{Error, Ident, LitStr, Token, Type, braced, parenthesized};
+use syn::{Attribute, Error, Ident, LitStr, Token, Type, braced, parenthesized};
 
 use crate::ty::*;
 
@@ -31,6 +31,7 @@ struct Namespace {
 
 /// `fn name(params) -> ret as "js";`.
 struct ImportFn {
+    doc_attrs: Vec<Attribute>,
     name: Ident,
     params: Vec<(Ident, Type)>,
     ret: Option<Type>,
@@ -62,6 +63,8 @@ impl Parse for Namespace {
 
 impl Parse for ImportFn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let attrs = input.call(Attribute::parse_outer)?;
+        let doc_attrs = attrs.into_iter().filter(|a| a.path().is_ident("doc")).collect();
         input.parse::<Token![fn]>()?;
         let name: Ident = input.parse()?;
 
@@ -93,7 +96,7 @@ impl Parse for ImportFn {
         };
         input.parse::<Token![;]>()?;
 
-        Ok(ImportFn { name, params, ret, js })
+        Ok(ImportFn { doc_attrs, name, params, ret, js })
     }
 }
 
@@ -199,7 +202,9 @@ fn build_fn(ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream2, TokenStream
         quote! {}
     };
 
+    let doc_attrs = &f.doc_attrs;
     let item = quote! {
+        #(#doc_attrs)*
         pub fn #name( #(#orig_params),* ) #wrapper_ret {
             #extern_decl
             #body

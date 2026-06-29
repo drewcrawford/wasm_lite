@@ -2,6 +2,7 @@
 
 crate::import! {
     "performance" {
+        /// Returns a high-resolution timestamp in milliseconds since the page load (`performance.now()`).
         fn now() -> f64;
     }
 }

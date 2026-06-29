@@ -485,7 +485,7 @@ fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, Toke
 /// types (`&JsArray`, `-> JsArray`) cross as value-table handles and are
 /// wrapped/unwrapped automatically. Use `as "jsName"` to bind a differing JS name.
 ///
-/// [`import!`]: wasm_lite::import
+/// [`import!`]: macro@import
 #[proc_macro]
 pub fn js_class(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as JsClass);
