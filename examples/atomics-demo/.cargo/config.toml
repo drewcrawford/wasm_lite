@@ -1,0 +1,32 @@
+# Build this example for wasm32 with shared memory + atomics.
+#
+# This REQUIRES the nightly toolchain, because enabling the `atomics` target
+# feature means the standard library must be recompiled with it — there is no
+# pre-built atomics `std` for `wasm32-unknown-unknown`. Hence `build-std`.
+#
+#   cargo +nightly run
+#
+# (or `cargo +nightly build`, then point the runner at the `.wasm`).
+
+[build]
+target = "wasm32-unknown-unknown"
+rustflags = [
+    # Enable the threads-related wasm features.
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+    # Make linear memory shared (a SharedArrayBuffer); requires a maximum.
+    "-C", "link-arg=--shared-memory",
+    "-C", "link-arg=--max-memory=1073741824", # 1 GiB
+    # Import the memory so JS creates the WebAssembly.Memory and (later) every
+    # worker can be handed the same shared object.
+    "-C", "link-arg=--import-memory",
+]
+
+# Recompile `std` (and `panic_abort`) with the atomics feature above.
+[unstable]
+build-std = ["std", "panic_abort"]
+
+# Use the wasm_lite runner for `cargo run` / `cargo test`. Set the path here or
+# via CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER:
+#   runner = "/abs/path/to/wasm_lite/target/debug/runner"
+[target.wasm32-unknown-unknown]
+# runner = "..."

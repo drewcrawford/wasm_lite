@@ -1,0 +1,15 @@
+[package]
+name = "atomics-demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wasm_lite = { path = "../../crates/wasm_lite" }
+
+# Atomics builds use `panic = "abort"` (there is no unwinder), matching the
+# `build-std = ["std", "panic_abort"]` in `.cargo/config.toml`.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

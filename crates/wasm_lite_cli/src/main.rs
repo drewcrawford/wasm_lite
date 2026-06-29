@@ -56,7 +56,8 @@ fn run(args: Args) -> Result<(), String> {
 
     let descriptors = wasm_lite_codegen::descriptors_from_wasm(&wasm)?;
     let exports = wasm_lite_codegen::exports_from_wasm(&wasm)?;
-    let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports);
+    let memory = wasm_lite_codegen::imported_memory(&wasm)?;
+    let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
 
     match args.output {
         Some(path) => std::fs::write(&path, glue)

@@ -11,4 +11,4 @@ members = [
 # wasm-only import, so it must never be built for the host target. Build it
 # explicitly for wasm32. (`wasm_lite` itself is an rlib and builds fine on the
 # host, so it stays a workspace member for IDE/CI coverage.)
-exclude = ["examples/hello-rust"]
+exclude = ["examples/hello-rust", "examples/atomics-demo"]

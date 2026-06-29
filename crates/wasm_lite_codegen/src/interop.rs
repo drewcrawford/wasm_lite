@@ -79,7 +79,8 @@ pub fn build_interop(input: &Path) -> Result<InteropBundle, String> {
     let exports = crate::exports_from_wasm(&wasm)?;
     Ok(InteropBundle {
         loader_js: LOADER_JS.to_string(),
-        wl_glue_js: generate_glue(&descriptors, &exports),
+        // wasm-bindgen modules use their own (exported) memory.
+        wl_glue_js: generate_glue(&descriptors, &exports, None),
         wb_glue_js: patch_wasm_bindgen_glue(&wb_js),
         wasm,
     })

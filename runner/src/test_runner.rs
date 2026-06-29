@@ -75,7 +75,8 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
 
     let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
     let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
-    let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports);
+    let memory = wasm_lite_codegen::imported_memory(&module)?;
+    let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
     let test_names = wasm_lite_codegen::test_names(&module);
     let bootstrap = if test_names.is_empty() {
         MAIN_BOOTSTRAP

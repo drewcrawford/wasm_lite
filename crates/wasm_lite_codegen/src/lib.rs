@@ -19,6 +19,7 @@ pub use descriptor::{AbiArg, Descriptor};
 pub use exports::{Export, ExportRet, exports_from_wasm};
 pub use generate::generate_glue;
 pub use interop::{InteropBundle, build_interop, patch_wasm_bindgen_glue};
+pub use wasm::{MemoryImport, imported_memory};
 
 /// Name of the custom section the `import!` macro writes descriptors into.
 pub const SECTION_NAME: &str = "__wasm_lite_imports";

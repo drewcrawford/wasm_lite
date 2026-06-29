@@ -194,7 +194,8 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
             } else {
                 let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
                 let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
-                let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports);
+                let memory = wasm_lite_codegen::imported_memory(&module)?;
+                let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
                 // The codegen glue exports `instantiate`; the runner appends a
                 // bootstrap that runs the module's `main`.
                 let program_js = format!(
@@ -338,10 +339,15 @@ fn respond(
         404 => "Not Found",
         _ => "Unknown",
     };
+    // Cross-origin isolation headers: browsers only expose `SharedArrayBuffer`
+    // (and thus shared linear memory for `+atomics` builds) to isolated pages.
+    // Harmless for the non-shared examples.
     let header = format!(
         "HTTP/1.1 {status} {reason}\r\n\
          Content-Type: {content_type}\r\n\
          Content-Length: {len}\r\n\
+         Cross-Origin-Opener-Policy: same-origin\r\n\
+         Cross-Origin-Embedder-Policy: require-corp\r\n\
          Connection: close\r\n\
          \r\n",
         len = body.len()

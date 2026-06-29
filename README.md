@@ -10,7 +10,9 @@ A checkout of wasm-bindgen is available in the `wasm-bindgen/` folder for refere
 ## Design goals
 
 * Runner for major web browsers — **done** (WebDriver: Firefox/Chrome/Safari).
-* Support with and without +atomics — *not started.*
+* Support with and without +atomics — **foundation done**: shared-memory
+  `+atomics` builds compile, instantiate, and run (atomic ops + TLS); spawning
+  threads onto Web Workers is the next step.
 * Unit test support — **done** (`#[wasm_lite_test]`, `cargo test` via a custom runner).
 * Bind JS APIs to Rust and vice versa — **done** (`import!` / `#[export]`).
 * Doctest support — **done** (runs rustdoc doctests in a browser).
@@ -53,7 +55,8 @@ wasm-lite app.wasm -o glue.js                     # generates the JS glue
 Examples (each standalone, builds to `wasm32-unknown-unknown`):
 `examples/hello-rust` (imports, handles, strings, bytes, `js_class!`),
 `exports-demo` (Rust→JS exports), `tests-demo` (`#[wasm_lite_test]`),
-`doctest-demo` (doctests), `interop` (wasm-bindgen bridge).
+`doctest-demo` (doctests), `interop` (wasm-bindgen bridge),
+`atomics-demo` (shared memory + atomics; nightly).
 
 ## Binding model
 
@@ -155,6 +158,35 @@ runner = "path/to/runner"
   Call `wasm_lite::set_panic_hook()` at the top of a doctest so failures report
   the panic message.
 
+## Shared memory & atomics
+
+wasm_lite runs modules built with the threads-related wasm features
+(`+atomics,+bulk-memory,+mutable-globals`) on a **shared** linear memory (a
+`SharedArrayBuffer`). This is the foundation for threads; actually spawning work
+onto Web Workers is not implemented yet, but everything below is in place:
+
+* **Toolchain.** `+atomics` means `std` must be recompiled with it, so these
+  builds need **nightly** and `-Z build-std`. See
+  `examples/atomics-demo/.cargo/config.toml`: it sets the target features, links
+  with `--shared-memory --max-memory=… --import-memory`, and adds
+  `build-std = ["std", "panic_abort"]`. Build with `cargo +nightly run`.
+* **Imported memory.** `--import-memory` makes the module import its memory
+  rather than define it, so JS owns the one `WebAssembly.Memory` object (the same
+  object every future worker will share). The codegen reads the module's imported
+  memory limits and emits `makeMemory()` plus an `instantiate(url, memory?)` that
+  creates the shared memory (or accepts one) and supplies it as an import.
+* **Cross-origin isolation.** Browsers only hand out `SharedArrayBuffer` to
+  cross-origin-isolated pages, so the runner serves
+  `Cross-Origin-Opener-Policy: same-origin` and
+  `Cross-Origin-Embedder-Policy: require-corp` on every response.
+* **Init.** LLD emits a `start` function that sets up the main thread's TLS and
+  initializes passive data segments on first instantiation — so single-threaded
+  atomic code and `thread_local!` work with no manual setup.
+
+`JsValue` is already `!Send`/`!Sync`: a handle indexes a per-realm value table,
+so it is only valid on the worker that created it — the type system will forbid
+sending one across threads once spawning lands.
+
 ## wasm-bindgen interop
 
 Enable the `wasm-bindgen` feature to link a crate that itself uses wasm-bindgen.
@@ -181,7 +213,10 @@ upper layers build on.
   owned-object args, and `instanceof`-checked downcasting — each needs a new
   codegen shim kind. Constructors + properties are the prerequisite for starting
   `wasm_lite_js` / `wasm_lite_web`.
-* `+atomics` / threads (and the `wasm_lite_std` layer over Workers).
+* Threads: spawn work onto Web Workers over the existing shared memory —
+  per-thread stack + TLS setup (`__wasm_init_tls`, a fresh `__stack_pointer`), a
+  worker bootstrap, and a `spawn` binding — then the `wasm_lite_std` veneer
+  (`std::thread`-like) on top. (Shared memory + atomics themselves: done, above.)
 * Nested generics like `Option<Vec<u8>>` on the import side (the macro grammar
   takes single-ident inner types today; the proc-macro export side already
   allows nesting). `Option<&[u8]>` arguments on the import side.
