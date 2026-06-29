@@ -3,8 +3,8 @@
 //! (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`).
 //!
 //! Two shapes are supported:
-//!   * a `wasm_lite::tests!` harness (a `__wasm_lite_tests` section): each test
-//!     runs in a fresh page load (`?test=i`) so a panic only fails that test;
+//!   * a `#[wasm_lite_test]` harness (a `__wasm_lite_tests` section): each test
+//!     runs in a fresh page load (`?test=<path>`) so a panic only fails that test;
 //!   * a plain `bin`: run `main` once (pass = ran to completion).
 
 use crate::webdriver::Browser;

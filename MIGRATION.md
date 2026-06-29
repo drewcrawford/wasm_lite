@@ -228,7 +228,21 @@ wasm_bindgen_test_configure!(run_in_browser);
 fn it_works() { assert_eq!(2 + 2, 4); }
 ```
 
-**wasm_lite** — see [`examples/tests-demo/tests/suite.rs`](./examples/tests-demo/tests/suite.rs)
+**wasm_lite**, normal unit-test layout — see
+[`examples/tests-demo/src/lib.rs`](./examples/tests-demo/src/lib.rs)
+```rust
+#[cfg(test)]
+mod tests {
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+    fn it_works() {
+        assert_eq!(2 + 2, 4);
+    }
+}
+```
+
+For a standalone wasm integration-test target, use `harness = false` and
+`test_main!()` — see [`examples/tests-demo/tests/suite.rs`](./examples/tests-demo/tests/suite.rs):
 ```rust
 use wasm_lite::wasm_lite_test;
 #[wasm_lite_test]

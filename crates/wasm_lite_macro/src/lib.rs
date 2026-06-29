@@ -21,9 +21,9 @@ use crate::ty::*;
 
 /// Mark a function as a wasm_lite test (analogous to `#[test]`).
 ///
-/// Generates an exported `__wl_test_<name>` entry point (which installs the
-/// panic hook and calls the test) and records the test's name in the
-/// `__wasm_lite_tests` section so the runner discovers and drives it.
+/// Generates an exported `__wl_test_<module_path>::<name>` entry point (which
+/// installs the panic hook and calls the test) and records the test's Rust path
+/// in the `__wasm_lite_tests` section so the runner discovers and drives it.
 ///
 /// By default the test body runs on the browser **main thread**, where
 /// `Atomics.wait`-based blocking APIs are unavailable. Pass `(worker)` to run the
@@ -48,8 +48,6 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
     let name = &func.sig.ident;
     let entry = format_ident!("__wl_test_{}", name);
-    let section = section_literal(&name.to_string());
-    let len = name.to_string().len() + 1;
 
     // Worker tests defer the verdict: mark pending, run the body on a worker, and
     // pass only once its join resolves (an awaited worker panic propagates through
@@ -72,14 +70,24 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     quote! {
         #func
-        #[unsafe(no_mangle)]
+        #[unsafe(export_name = concat!("__wl_test_", module_path!(), "::", stringify!(#name)))]
         pub extern "C" fn #entry() {
             #entry_body
         }
         const _: () = {
+            const __WL_TEST_NAME_LEN: usize = concat!(module_path!(), "::", stringify!(#name), "\n").len();
             #[used]
             #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wasm_lite_tests"))]
-            static __WL_TEST_NAME: [u8; #len] = *#section;
+            static __WL_TEST_NAME: [u8; __WL_TEST_NAME_LEN] = {
+                let bytes = concat!(module_path!(), "::", stringify!(#name), "\n").as_bytes();
+                let mut out = [0u8; __WL_TEST_NAME_LEN];
+                let mut i = 0;
+                while i < __WL_TEST_NAME_LEN {
+                    out[i] = bytes[i];
+                    i += 1;
+                }
+                out
+            };
         };
     }
     .into()

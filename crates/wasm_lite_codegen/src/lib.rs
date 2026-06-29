@@ -33,7 +33,7 @@ pub fn uses_wasm_bindgen(wasm: &[u8]) -> bool {
     )
 }
 
-/// Names of the tests declared via `wasm_lite::tests!`, in order.
+/// Rust paths of the tests declared via `#[wasm_lite_test]`, in order.
 ///
 /// Empty if the module has no test section (i.e. it isn't a test harness).
 pub fn test_names(wasm: &[u8]) -> Vec<String> {
