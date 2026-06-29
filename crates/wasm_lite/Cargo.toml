@@ -1,15 +1,15 @@
 [package]
 name = "wasm_lite"
+description = "Minimal JS bindings for Rust compiled to wasm, with no runtime dependencies."
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Minimal JS bindings for Rust compiled to wasm, with no runtime dependencies."
-
 keywords.workspace = true
 categories.workspace = true
 repository.workspace = true
 homepage.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 wasm_lite_macro = { path = "../wasm_lite_macro" }
