@@ -10,9 +10,6 @@ use crate as thread;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
 use crate::time::Instant;
 
 pub(crate) async fn lock_async<T>(mutex: &Mutex<T>) -> Guard<'_, T> {
@@ -88,12 +85,24 @@ pub(crate) async fn lock_async_timeout<T>(
                 struct Race<F1, F2> {
                     notify: Option<F1>,
                     timeout: Option<F2>,
+                    deadline: Instant,
                 }
 
                 impl<F1: Future + Unpin, F2: Future + Unpin> Future for Race<F1, F2> {
                     type Output = bool; // true if timed out
 
                     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                        // The deadline is authoritative: once it has elapsed, report a
+                        // timeout even if a notification also became ready. The timeout
+                        // future (a worker sleeping to the deadline) only guarantees a
+                        // wake — the clock decides the verdict. Without this, a
+                        // notification arriving at/after the deadline is preferred (it is
+                        // polled first), so a contended lock released past its deadline
+                        // would be granted instead of timing out.
+                        if Instant::now() >= self.deadline {
+                            return Poll::Ready(true);
+                        }
+
                         // Poll notification future
                         if let Some(ref mut notify) = self.notify {
                             if Pin::new(notify).poll(cx).is_ready() {
@@ -117,6 +126,7 @@ pub(crate) async fn lock_async_timeout<T>(
                 let timed_out = Race {
                     notify: Some(receiver),
                     timeout: Some(timeout_receiver),
+                    deadline,
                 }
                 .await;
 

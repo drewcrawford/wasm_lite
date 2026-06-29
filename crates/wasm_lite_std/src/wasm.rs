@@ -128,6 +128,3 @@ pub fn task_finished() {
 pub fn pending_tasks() -> u32 {
     PENDING_TASKS.with(|c| c.get())
 }
-
-#[cfg(test)]
-mod tests;

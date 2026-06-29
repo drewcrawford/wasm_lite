@@ -31,7 +31,6 @@ fn _auto_trait_assertions() {
 // On wasm32, join() panics on the main thread (Atomics.wait unavailable).
 // This produces "RuntimeError: unreachable" in console - expected for wasm panics.
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(target_arch = "wasm32", should_panic)]
 fn test_spawn_and_join() {
     let handle = spawn(|| 42);
@@ -77,13 +76,11 @@ async_test! {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn test_current_thread() {
     let _current = current();
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn test_console_redirect_api_smoke() {
     redirect_println_eprintln_to_console_current_thread();
     install_println_eprintln_console_hook();
@@ -136,7 +133,6 @@ crate::async_test! {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn test_yield_now() {
     yield_now();
 }
@@ -152,12 +148,8 @@ async_test! {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn test_sleep() {
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::time::Instant;
-    #[cfg(target_arch = "wasm32")]
-    use crate::time::Instant;
+        use crate::time::Instant;
 
     let start = Instant::now();
     sleep(Duration::from_millis(50));
@@ -171,10 +163,7 @@ fn test_sleep() {
 
 crate::async_test! {
     async fn sleep_bg() {
-        #[cfg(not(target_arch = "wasm32"))]
-        use std::time::Instant;
-        #[cfg(target_arch = "wasm32")]
-        use crate::time::Instant;
+                use crate::time::Instant;
 
         let start = Instant::now();
         let bg = Builder::new()
@@ -190,14 +179,12 @@ crate::async_test! {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn test_available_parallelism() {
     let parallelism = available_parallelism().unwrap();
     assert!(parallelism.get() >= 1);
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn test_thread_local() {
     use std::cell::Cell;
 
@@ -216,7 +203,6 @@ fn test_thread_local() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn test_thread_local_try_with() {
     use std::cell::Cell;
 
@@ -553,10 +539,7 @@ crate::async_test! {
 // Test park_timeout on background thread
 crate::async_test! {
     async fn test_park_timeout_background() {
-        #[cfg(not(target_arch = "wasm32"))]
-        use std::time::Instant;
-        #[cfg(target_arch = "wasm32")]
-        use crate::time::Instant;
+                use crate::time::Instant;
 
         let handle = Builder::new()
             .name("park_timeout".to_string())
@@ -695,5 +678,71 @@ async_test! {
         });
         let result = handle.join_async().await;
         assert!(result.is_err(), "join_async should return Err when thread panics");
+    }
+}
+
+#[test]
+fn test_is_main_thread() {
+    // The test harness runs this on the process's initial thread.
+    assert!(crate::is_main_thread(), "test runs on the main thread");
+    // A thread spawned by this crate is not the main thread.
+    let from_worker = spawn(crate::is_main_thread).join().unwrap();
+    assert!(!from_worker, "a spawned thread is not the main thread");
+}
+
+// The `time` veneer: behavior that is identical on native and wasm. These run
+// under libtest natively; the wasm path is exercised by `tests/browser.rs`.
+mod time_tests {
+    use crate::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn instant_is_monotonic() {
+        let a = Instant::now();
+        let b = Instant::now();
+        assert!(b >= a, "Instant::now() must be nondecreasing");
+        // The reverse difference saturates to zero rather than panicking.
+        assert_eq!(a.saturating_duration_since(b), Duration::ZERO);
+        assert_eq!(a.checked_duration_since(b).is_none() || a == b, true);
+    }
+
+    #[test]
+    fn instant_arithmetic_roundtrips() {
+        let t = Instant::now();
+        let later = t + Duration::from_secs(5);
+        assert_eq!(later - t, Duration::from_secs(5));
+        assert_eq!(later - Duration::from_secs(5), t);
+        assert!(later > t);
+    }
+
+    #[test]
+    fn systemtime_after_epoch() {
+        let now = SystemTime::now();
+        let since_epoch = now
+            .duration_since(UNIX_EPOCH)
+            .expect("now() is after the Unix epoch");
+        // Sanity: well after 2001 (1_000_000_000s since epoch).
+        assert!(since_epoch > Duration::from_secs(1_000_000_000));
+        assert_eq!(SystemTime::UNIX_EPOCH, UNIX_EPOCH);
+    }
+
+    #[test]
+    fn systemtime_duration_since_orders_and_errors() {
+        let earlier = UNIX_EPOCH + Duration::from_secs(10);
+        let later = UNIX_EPOCH + Duration::from_secs(40);
+        assert_eq!(
+            later.duration_since(earlier).unwrap(),
+            Duration::from_secs(30)
+        );
+        // Reversed: an Err carrying the positive gap.
+        let err = earlier.duration_since(later).unwrap_err();
+        assert_eq!(err.duration(), Duration::from_secs(30));
+
+        // checked_sub down to exactly the epoch works on every platform. (Going
+        // *below* the epoch is representable natively but not on wasm, so it is
+        // only asserted in the wasm browser suite.)
+        assert_eq!(
+            earlier.checked_sub(Duration::from_secs(10)).unwrap(),
+            UNIX_EPOCH
+        );
     }
 }

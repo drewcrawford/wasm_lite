@@ -49,6 +49,20 @@
 //! assert_eq!(rx.recv_sync().unwrap(), 5);
 //! ```
 //!
+//! # Time
+//!
+//! The [`time`] module is a cross-platform [`std::time`] veneer: on native it
+//! re-exports the real types; on wasm32 it provides drop-in [`Instant`](time::Instant)
+//! and [`SystemTime`](time::SystemTime) backed by the browser clocks, with no
+//! `wasm-bindgen` dependency.
+//!
+//! ```
+//! use wasm_lite_std::time::{Duration, Instant};
+//!
+//! let start = Instant::now();
+//! let _elapsed: Duration = start.elapsed();
+//! ```
+//!
 //! # Threading primitives
 //!
 //! In addition to synchronization primitives, this crate provides a `std::thread`-like API:
@@ -235,7 +249,7 @@
 //! # });
 //! # }
 //! # #[cfg(target_arch = "wasm32")]
-//! # fn main() {} // JsFuture is !Send, tested separately via wasm_bindgen_test
+//! # fn main() {} // JsFuture is !Send; the wasm path is covered by tests/browser.rs
 //! ```
 //!
 //! ## Thread local storage
@@ -346,8 +360,7 @@ pub mod mpsc;
 pub mod mutex;
 pub mod rwlock;
 pub mod spinlock;
-#[cfg(target_arch = "wasm32")]
-mod time;
+pub mod time;
 #[cfg(not(target_arch = "wasm32"))]
 mod stdlib;
 #[cfg(test)]
@@ -447,6 +460,17 @@ where
 /// Gets a handle to the thread that invokes it.
 pub fn current() -> Thread {
     backend::current()
+}
+
+/// Returns `true` unless the current thread was spawned by this crate.
+///
+/// - **Native**: `true` on the process's initial thread (and any thread not
+///   created via [`spawn`]/[`Builder`]); `false` on threads this crate spawned.
+/// - **WASM**: `true` on the browser main thread, `false` on a spawned Web Worker.
+///   This is the thread where `Atomics.wait` is unavailable, so blocking APIs
+///   ([`park`], blocking locks) must not be used there.
+pub fn is_main_thread() -> bool {
+    backend::is_main_thread()
 }
 
 /// Puts the current thread to sleep for at least the specified duration.

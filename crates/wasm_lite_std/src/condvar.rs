@@ -8,10 +8,6 @@ use crate::spinlock::Spinlock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-
-#[cfg(target_arch = "wasm32")]
 use crate::time::Instant;
 
 #[cfg(target_arch = "wasm32")]

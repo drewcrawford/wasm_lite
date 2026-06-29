@@ -2,9 +2,6 @@
 use super::Mutex;
 use crate::guard::Guard;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
 use crate::time::Instant;
 
 pub(crate) fn lock_sync<T>(mutex: &Mutex<T>) -> Guard<'_, T> {

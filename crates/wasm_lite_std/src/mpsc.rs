@@ -32,10 +32,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-
-#[cfg(target_arch = "wasm32")]
 use crate::time::Instant;
 
 /// The shared state of the channel.

@@ -6,7 +6,7 @@ use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 #[cfg(target_arch = "wasm32")]
-use web_time::{Duration, Instant};
+use crate::time::{Duration, Instant};
 
 #[cfg(target_arch = "wasm32")]
 use crate as thread;
@@ -14,7 +14,6 @@ use r#continue::continuation;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[test]
 fn test_spinlock_basic() {
     let spinlock = Spinlock::new(42);
@@ -48,7 +47,6 @@ async fn test_spinlock_concurrent_access() {
     assert_eq!(spinlock.with_mut(|data| *data), 1000);
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[test]
 fn test_mutex_try_lock_success() {
     let mutex = Mutex::new(42);
@@ -61,8 +59,6 @@ async fn test_mutex_try_lock_contention() {
     //for the time being, wasm_thread only works in browser
     //see https://github.com/rustwasm/wasm-bindgen/issues/4534,
     //though we also need wasm_thread support.
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
     let mutex = Arc::new(Mutex::new(42));
     let guard = mutex.try_lock().unwrap();
 
@@ -78,7 +74,6 @@ async fn test_mutex_try_lock_contention() {
     drop(guard);
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[test]
 fn test_mutex_lock_spin() {
     let mutex = Mutex::new(0);
@@ -95,8 +90,6 @@ async fn test_mutex_lock_block() {
     //for the time being, wasm_thread only works in browser
     //see https://github.com/rustwasm/wasm-bindgen/issues/4534,
     //though we also need wasm_thread support.
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
 
@@ -126,8 +119,6 @@ async fn test_mutex_concurrent_increment() {
     //for the time being, wasm_thread only works in browser
     //see https://github.com/rustwasm/wasm-bindgen/issues/4534,
     //though we also need wasm_thread support.
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     let mutex = Arc::new(Mutex::new(0));
     let handles: Vec<_> = (0..10)
@@ -153,7 +144,6 @@ async fn test_mutex_concurrent_increment() {
     assert_eq!(*guard, 1000);
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[test]
 fn test_mutex_lock_async() {
     test_executors::spin_on(async {
@@ -163,7 +153,6 @@ fn test_mutex_lock_async() {
     });
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[test]
 fn test_mutex_async_contention() {
     test_executors::spin_on(async {
@@ -190,7 +179,6 @@ fn test_mutex_async_contention() {
     });
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[test]
 fn test_guard_drop_releases_lock() {
     let mutex = Arc::new(Mutex::new(42));
@@ -202,7 +190,6 @@ fn test_guard_drop_releases_lock() {
     assert_eq!(*guard, 42);
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[test]
 fn test_mutex_lock_spin_timeout() {
     let mutex = Mutex::new(0);
@@ -220,8 +207,6 @@ fn test_mutex_lock_spin_timeout() {
 
 #[test_executors::async_test]
 async fn test_mutex_lock_spin_timeout_fails() {
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
@@ -253,8 +238,6 @@ async fn test_mutex_lock_spin_timeout_fails() {
 
 #[test_executors::async_test]
 async fn test_mutex_lock_block_timeout() {
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
@@ -319,8 +302,6 @@ async fn test_mutex_lock_block_timeout() {
 
 #[test_executors::async_test]
 async fn test_mutex_lock_sync_timeout() {
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
@@ -351,8 +332,6 @@ async fn test_mutex_lock_sync_timeout() {
 
 #[test_executors::async_test]
 async fn test_mutex_lock_async_timeout() {
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     let mutex = Arc::new(Mutex::new(0));
 

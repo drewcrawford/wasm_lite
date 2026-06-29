@@ -14,6 +14,7 @@ mod macros;
 mod value;
 
 pub mod console;
+pub mod date;
 pub mod performance;
 pub mod thread;
 

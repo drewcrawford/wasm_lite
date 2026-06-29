@@ -7,9 +7,6 @@ use crate as thread;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
 use crate::time::Instant;
 
 pub(crate) fn lock_block<T>(mutex: &Mutex<T>) -> Guard<'_, T> {

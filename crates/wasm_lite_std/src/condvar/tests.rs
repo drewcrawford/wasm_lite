@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(target_arch = "wasm32")]
-use web_time::Duration;
+use crate::time::Duration;
 
 #[cfg(target_arch = "wasm32")]
 use crate as thread;
@@ -15,9 +15,6 @@ use r#continue::continuation;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-// Configure WASM tests to run in browser (required for thread spawning)
-#[cfg(all(test, target_arch = "wasm32"))]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 #[test_executors::async_test]
 //#[cfg(not(target_arch = "wasm32"))] // HANGS on WASM

@@ -205,7 +205,7 @@ impl Builder {
     }
 
     /// Set the wasm-bindgen shim name for worker spawning.
-    /// This should match the binary/example name (e.g., "single_spawn", "wasm-bindgen-test").
+    /// This should match the binary/example name (e.g., "single_spawn", "browser").
     pub fn shim_name(mut self, name: String) -> Self {
         self._shim_name = Some(name);
         self

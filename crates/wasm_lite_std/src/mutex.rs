@@ -25,9 +25,6 @@ use crate as thread;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
 use crate::time::Instant;
 
 mod async_impl;
@@ -236,7 +233,7 @@ impl<T> Mutex<T> {
     /// ```
     /// use wasm_lite_std::Mutex;
     /// # #[cfg(target_arch = "wasm32")]
-    /// use web_time::{Duration, Instant};
+    /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
     ///
@@ -324,7 +321,7 @@ impl<T> Mutex<T> {
     /// ```
     /// use wasm_lite_std::Mutex;
     /// # #[cfg(target_arch = "wasm32")]
-    /// use web_time::{Duration, Instant};
+    /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
     ///
@@ -408,7 +405,7 @@ impl<T> Mutex<T> {
     /// # test_executors::spin_on(async {
     /// use wasm_lite_std::Mutex;
     /// # #[cfg(target_arch = "wasm32")]
-    /// use web_time::{Duration, Instant};
+    /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
     ///
@@ -495,7 +492,7 @@ impl<T> Mutex<T> {
     /// ```
     /// use wasm_lite_std::Mutex;
     /// # #[cfg(target_arch = "wasm32")]
-    /// use web_time::{Duration, Instant};
+    /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
     ///

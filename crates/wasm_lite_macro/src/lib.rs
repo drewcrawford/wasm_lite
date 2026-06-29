@@ -24,20 +24,57 @@ use crate::ty::*;
 /// Generates an exported `__wl_test_<name>` entry point (which installs the
 /// panic hook and calls the test) and records the test's name in the
 /// `__wasm_lite_tests` section so the runner discovers and drives it.
+///
+/// By default the test body runs on the browser **main thread**, where
+/// `Atomics.wait`-based blocking APIs are unavailable. Pass `(worker)` to run the
+/// body on a dedicated Web Worker instead — there blocking primitives
+/// (`lock_block`, `recv_block`, `park`, …) work:
+///
+/// ```ignore
+/// #[wasm_lite::wasm_lite_test(worker)]
+/// fn blocking_recv() {
+///     let (tx, rx) = wasm_lite_std::mpsc::channel();
+///     tx.send_block(1).unwrap();
+///     assert_eq!(rx.recv_block(), Ok(1));
+/// }
+/// ```
+///
+/// The `(worker)` form expands to a fail-closed async harness (spawn the body on
+/// a worker, await its join, propagate panics), so it requires `wasm_lite_std`
+/// in scope.
 #[proc_macro_attribute]
-pub fn wasm_lite_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as TestArgs);
     let func = parse_macro_input!(item as ItemFn);
     let name = &func.sig.ident;
     let entry = format_ident!("__wl_test_{}", name);
     let section = section_literal(&name.to_string());
     let len = name.to_string().len() + 1;
 
+    // Worker tests defer the verdict: mark pending, run the body on a worker, and
+    // pass only once its join resolves (an awaited worker panic propagates through
+    // `.unwrap()` and fails the test). Main-thread tests just call the body.
+    let entry_body = if args.worker {
+        quote! {
+            ::wasm_lite::set_panic_hook();
+            ::wasm_lite_std::__rt::test_pending();
+            ::wasm_lite_std::spawn_local(async {
+                ::wasm_lite_std::spawn(#name).join_async().await.unwrap();
+                ::wasm_lite_std::__rt::test_pass();
+            });
+        }
+    } else {
+        quote! {
+            ::wasm_lite::set_panic_hook();
+            #name();
+        }
+    };
+
     quote! {
         #func
         #[unsafe(no_mangle)]
         pub extern "C" fn #entry() {
-            ::wasm_lite::set_panic_hook();
-            #name();
+            #entry_body
         }
         const _: () = {
             #[used]
@@ -46,6 +83,27 @@ pub fn wasm_lite_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         };
     }
     .into()
+}
+
+/// Arguments to `#[wasm_lite_test]`: nothing (main thread) or `(worker)`.
+struct TestArgs {
+    worker: bool,
+}
+
+impl Parse for TestArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Ok(TestArgs { worker: false });
+        }
+        let ident: Ident = input.parse()?;
+        if ident != "worker" {
+            return Err(Error::new_spanned(
+                &ident,
+                "expected `worker` or no argument",
+            ));
+        }
+        Ok(TestArgs { worker: true })
+    }
 }
 
 /// Export a Rust function to JavaScript callers.

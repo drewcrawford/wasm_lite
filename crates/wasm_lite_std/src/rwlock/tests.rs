@@ -77,7 +77,7 @@ fn test_lock_block() {
     assert!(rx.recv_timeout(Duration::from_millis(10)).is_err());
     drop(lock); //thread should now acquire lock
     rx.recv().unwrap(); //wait for thread to acquire lock
-    let time = std::time::Instant::now();
+    let time = crate::time::Instant::now();
     mutex.lock_block_read();
     //ensure time took >50ms
     assert!(time.elapsed() > Duration::from_millis(10));

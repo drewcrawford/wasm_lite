@@ -167,7 +167,7 @@ impl Condvar {
     /// use wasm_lite_std::{Mutex, condvar::Condvar};
     /// use std::sync::Arc;
     /// # #[cfg(target_arch = "wasm32")]
-    /// use web_time::{Duration, Instant};
+    /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
     /// # use std::thread;
@@ -292,7 +292,7 @@ impl Condvar {
     /// use wasm_lite_std::{Mutex, condvar::Condvar};
     /// use std::sync::Arc;
     /// # #[cfg(target_arch = "wasm32")]
-    /// use web_time::{Duration, Instant};
+    /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
     /// # use std::thread;

@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use std::future::Future;
 
+// Native-only: the wasm test path runs through `tests/browser.rs` via the
+// wasm_lite runner (`#[wasm_lite::wasm_lite_test]`), so this emits nothing on
+// wasm32 rather than depending on a wasm test harness.
 #[macro_export]
 macro_rules! async_test {
     (async fn $name:ident() $body:block) => {
-        #[cfg(target_arch = "wasm32")]
-        #[wasm_bindgen_test::wasm_bindgen_test]
-        async fn $name() $body
-
         #[cfg(not(target_arch = "wasm32"))]
         #[test]
         fn $name() {
@@ -31,8 +30,8 @@ macro_rules! async_test {
 /// - Being called from a worker thread (not the main browser thread), since it uses `Atomics.wait`
 /// - The future and its output must be `Send + 'static`
 ///
-/// Use `wasm_bindgen_test_configure!(run_in_dedicated_worker)` in doctests to ensure
-/// the test runs in a worker context.
+/// On wasm, ensure such code runs in a worker context (not the main browser
+/// thread), since it relies on `Atomics.wait`.
 ///
 /// # Panics
 ///

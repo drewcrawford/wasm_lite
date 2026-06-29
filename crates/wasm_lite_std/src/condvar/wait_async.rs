@@ -157,7 +157,7 @@ impl Condvar {
     /// use wasm_lite_std::{Mutex, condvar::Condvar};
     /// use std::sync::Arc;
     /// # #[cfg(target_arch = "wasm32")]
-    /// use web_time::{Duration, Instant};
+    /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
     /// # use std::thread;
@@ -232,12 +232,24 @@ impl Condvar {
         struct Race<F1, F2> {
             notify: Option<F1>,
             timeout: Option<F2>,
+            deadline: Instant,
         }
 
         impl<F1: Future + Unpin, F2: Future + Unpin> Future for Race<F1, F2> {
             type Output = bool; // true if timed out
 
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                // The deadline is authoritative: once it has elapsed, report a
+                // timeout even if a notification also became ready. The timeout
+                // future (a worker sleeping to the deadline) only guarantees a
+                // wake — the clock decides the verdict. Without this, a notify
+                // arriving at/after the deadline is preferred (it is polled
+                // first), so a notify racing an elapsed deadline would be
+                // reported as a successful wait instead of a timeout.
+                if Instant::now() >= self.deadline {
+                    return Poll::Ready(true);
+                }
+
                 // Poll notification future
                 if let Some(ref mut notify) = self.notify {
                     if Pin::new(notify).poll(cx).is_ready() {
@@ -261,6 +273,7 @@ impl Condvar {
         let timed_out = Race {
             notify: Some(notify_receiver),
             timeout: Some(timeout_receiver),
+            deadline,
         }
         .await;
 
@@ -313,7 +326,7 @@ impl Condvar {
     /// use wasm_lite_std::{Mutex, condvar::Condvar};
     /// use std::sync::Arc;
     /// # #[cfg(target_arch = "wasm32")]
-    /// use web_time::{Duration, Instant};
+    /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
     /// # use std::thread;

@@ -9,6 +9,27 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::thread;
 use std::time::Duration;
 
+std::thread_local! {
+    /// True on a thread this crate spawned. The process's initial thread (and any
+    /// thread created outside this crate) never runs the spawn trampoline, so its
+    /// value stays `false`. Mirrors the wasm backend's `IS_WORKER`.
+    static IS_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Mark the current thread as one spawned by this crate (called at thread start).
+fn mark_worker_thread() {
+    IS_WORKER.with(|c| c.set(true));
+}
+
+/// Returns `true` unless the current thread was spawned by this crate.
+///
+/// On native this distinguishes the initial/foreign threads ("main") from threads
+/// created via [`spawn`]/[`Builder`]; on wasm it identifies the browser main thread
+/// (where `Atomics.wait` is unavailable). See [`crate::is_main_thread`].
+pub fn is_main_thread() -> bool {
+    IS_WORKER.with(|c| !c.get())
+}
+
 /// A thread local storage key which owns its contents.
 pub struct LocalKey<T: 'static> {
     inner: &'static std::thread::LocalKey<T>,
@@ -196,6 +217,7 @@ impl Builder {
     {
         let (sender, receiver) = mpsc::channel();
         let std_handle = self.inner.spawn(move || {
+            mark_worker_thread();
             crate::hooks::run_spawn_hooks();
             let result = catch_unwind(AssertUnwindSafe(f));
             let _ = sender.send_sync(result);
@@ -223,6 +245,7 @@ where
 {
     let (sender, receiver) = mpsc::channel();
     let std_handle = thread::spawn(move || {
+        mark_worker_thread();
         crate::hooks::run_spawn_hooks();
         let result = catch_unwind(AssertUnwindSafe(f));
         let _ = sender.send_sync(result);
