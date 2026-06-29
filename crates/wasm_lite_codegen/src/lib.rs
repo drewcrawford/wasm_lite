@@ -17,7 +17,7 @@ mod wasm;
 
 pub use descriptor::{AbiArg, Descriptor};
 pub use exports::{Export, ExportRet, exports_from_wasm};
-pub use generate::generate_glue;
+pub use generate::{generate_glue, generate_worker};
 pub use interop::{InteropBundle, build_interop, patch_wasm_bindgen_glue};
 pub use wasm::{MemoryImport, imported_memory};
 

@@ -10,9 +10,9 @@ A checkout of wasm-bindgen is available in the `wasm-bindgen/` folder for refere
 ## Design goals
 
 * Runner for major web browsers — **done** (WebDriver: Firefox/Chrome/Safari).
-* Support with and without +atomics — **foundation done**: shared-memory
-  `+atomics` builds compile, instantiate, and run (atomic ops + TLS); spawning
-  threads onto Web Workers is the next step.
+* Support with and without +atomics — **done**: shared-memory `+atomics` builds
+  run, and threads spawn onto Web Workers (`wasm_lite::thread::spawn`). A
+  `std::thread`-like layer (`wasm_lite_std`) is the next step.
 * Unit test support — **done** (`#[wasm_lite_test]`, `cargo test` via a custom runner).
 * Bind JS APIs to Rust and vice versa — **done** (`import!` / `#[export]`).
 * Doctest support — **done** (runs rustdoc doctests in a browser).
@@ -46,7 +46,7 @@ wasm-lite app.wasm -o glue.js                     # generates the JS glue
 
 | crate | role |
 |---|---|
-| `crates/wasm_lite` | core: `import!`, `#[export]`, `js_class!`, `JsValue`, runtime (`__wl_malloc`/`__wl_free`, panic hook), `console`/`performance` bindings |
+| `crates/wasm_lite` | core: `import!`, `#[export]`, `js_class!`, `JsValue`, runtime (`__wl_malloc`/`__wl_free`, panic hook), `thread::spawn`, `console`/`performance` bindings |
 | `crates/wasm_lite_macro` | zero-dep proc-macros: `#[export]`, `#[wasm_lite_test]`, `js_class!` |
 | `crates/wasm_lite_codegen` | host-side: read descriptor sections, generate JS glue |
 | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |
@@ -56,7 +56,8 @@ Examples (each standalone, builds to `wasm32-unknown-unknown`):
 `examples/hello-rust` (imports, handles, strings, bytes, `js_class!`),
 `exports-demo` (Rust→JS exports), `tests-demo` (`#[wasm_lite_test]`),
 `doctest-demo` (doctests), `interop` (wasm-bindgen bridge),
-`atomics-demo` (shared memory + atomics; nightly).
+`atomics-demo` (shared memory + atomics; nightly),
+`threads-demo` (`thread::spawn` over Web Workers; nightly).
 
 ## Binding model
 
@@ -184,8 +185,34 @@ onto Web Workers is not implemented yet, but everything below is in place:
   atomic code and `thread_local!` work with no manual setup.
 
 `JsValue` is already `!Send`/`!Sync`: a handle indexes a per-realm value table,
-so it is only valid on the worker that created it — the type system will forbid
-sending one across threads once spawning lands.
+so it is only valid on the worker that created it — the type system forbids
+sending one across threads.
+
+### Spawning threads
+
+`wasm_lite::thread::spawn(move || { … })` runs a closure on a new Web Worker
+sharing this module's compiled `WebAssembly.Module` and shared memory — **no
+wasm-bindgen, js-sys, or web-sys**. The `Worker` lives entirely in the generated
+glue behind a single `__wl_spawn` import:
+
+* `spawn` boxes the closure (double-boxed to a thin `u32` pointer) and calls
+  `__wl_spawn`.
+* The glue allocates a fresh stack + TLS block (`__wl_thread_alloc`) and starts a
+  worker, postMessaging `{ module, memory, work, stackTop, tlsPtr }`.
+* The worker (a codegen-emitted bootstrap, `wl_worker.js`) instantiates the same
+  module on the same memory, points `__stack_pointer` at the new stack, calls
+  `__wasm_init_tls`, then `__wl_thread_entry` — which reconstitutes the closure
+  and runs it. Threads coordinate via `core::sync::atomic`.
+
+This requires the worker bootstrap to import the glue *without* re-running
+`main`, so the runner serves the glue (`program.js`) separately from a small
+bootstrap module. A threaded build must export the linker's thread symbols;
+`examples/threads-demo/.cargo/config.toml` shows the flags
+(`--export=__stack_pointer`, `__tls_size`, `__wasm_init_tls`, …).
+
+Spawning is **detached** today (no `JoinHandle`); a `std::thread`-like layer with
+`JoinHandle`/`park`/`Mutex`/`Condvar`/`mpsc` is planned as `wasm_lite_std`
+(modelled on `wasm_safe_thread`).
 
 ## wasm-bindgen interop
 
@@ -213,10 +240,11 @@ upper layers build on.
   owned-object args, and `instanceof`-checked downcasting — each needs a new
   codegen shim kind. Constructors + properties are the prerequisite for starting
   `wasm_lite_js` / `wasm_lite_web`.
-* Threads: spawn work onto Web Workers over the existing shared memory —
-  per-thread stack + TLS setup (`__wasm_init_tls`, a fresh `__stack_pointer`), a
-  worker bootstrap, and a `spawn` binding — then the `wasm_lite_std` veneer
-  (`std::thread`-like) on top. (Shared memory + atomics themselves: done, above.)
+* `wasm_lite_std`: a `std::thread` + `std::sync` veneer (`spawn -> JoinHandle`,
+  `park`/`unpark`, `Mutex`/`RwLock`/`Condvar`/`mpsc`) built on the detached
+  `thread::spawn` primitive — modelled on (and likely a port of)
+  `wasm_safe_thread`, with its wasm backend retargeted off wasm-bindgen onto
+  `__wl_spawn`. (Shared memory, atomics, and detached spawn: done, above.)
 * Nested generics like `Option<Vec<u8>>` on the import side (the macro grammar
   takes single-ident inner types today; the proc-macro export side already
   allows nesting). `Option<&[u8]>` arguments on the import side.

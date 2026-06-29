@@ -20,6 +20,12 @@ mod webdriver;
 const PROGRAM_JS: &str = "/program.js";
 /// Path under which a wasm module is served.
 const PROGRAM_WASM: &str = "/program.wasm";
+/// Bootstrap module: imports the glue and runs the program's `main`. Kept
+/// separate from the glue so a spawned worker can import the glue without
+/// re-running `main`.
+const BOOTSTRAP_JS: &str = "/bootstrap.js";
+/// Worker bootstrap module for spawned threads (shared-memory builds only).
+const WL_WORKER_JS: &str = "/wl_worker.js";
 /// Interop only: the wasm_lite-generated glue module.
 const WL_GLUE_JS: &str = "/wl_glue.js";
 /// Interop only: the (patched) wasm-bindgen-generated glue module.
@@ -102,8 +108,12 @@ fn serve_interactive(program: &Path) -> ! {
     let url = format!("http://{addr}/");
 
     println!("serving on {url}");
-    open_browser(&url);
-    println!("opening browser... (ctrl-c to stop)");
+    // WASM_LITE_NO_OPEN keeps the server up without launching a browser (e.g.
+    // when an external automated browser will connect).
+    if std::env::var_os("WASM_LITE_NO_OPEN").is_none() {
+        open_browser(&url);
+        println!("opening browser... (ctrl-c to stop)");
+    }
 
     serve(listener, &routes);
 }
@@ -148,15 +158,11 @@ fn parse_args() -> Result<Args, String> {
 /// Build the route table for the given program, dispatching on its extension.
 fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
     let ext = program.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let html = index_html(program).into_bytes();
+    let mut routes = Vec::new();
 
-    let mut routes = vec![Route {
-        path: "/",
-        content_type: "text/html; charset=utf-8",
-        body: html,
-    }];
-
-    match ext {
+    // Each branch serves the program's modules and returns the entry module the
+    // HTML shell should load.
+    let entry: &'static str = match ext {
         "js" => {
             let source = read(program)?;
             routes.push(Route {
@@ -164,6 +170,7 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
                 content_type: "text/javascript; charset=utf-8",
                 body: source,
             });
+            PROGRAM_JS
         }
         "wasm" => {
             let module = read(program)?;
@@ -191,26 +198,42 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
                     content_type: "application/wasm",
                     body: bundle.wasm,
                 });
+                PROGRAM_JS
             } else {
                 let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
                 let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
                 let memory = wasm_lite_codegen::imported_memory(&module)?;
                 let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
-                // The codegen glue exports `instantiate`; the runner appends a
-                // bootstrap that runs the module's `main`.
-                let program_js = format!(
-                    "{glue}\nconst instance = await instantiate({PROGRAM_WASM:?});\ninstance.exports.main();\n"
-                );
+                // program.js is the glue ONLY (no auto-run), so a spawned worker
+                // can import it. A separate bootstrap module runs `main`.
                 routes.push(Route {
                     path: PROGRAM_JS,
                     content_type: "text/javascript; charset=utf-8",
-                    body: program_js.into_bytes(),
+                    body: glue.into_bytes(),
                 });
                 routes.push(Route {
                     path: PROGRAM_WASM,
                     content_type: "application/wasm",
                     body: module,
                 });
+                let bootstrap = "import { instantiate } from \"./program.js\";\n\
+                     const instance = await instantiate(\"./program.wasm\");\n\
+                     instance.exports.main();\n";
+                routes.push(Route {
+                    path: BOOTSTRAP_JS,
+                    content_type: "text/javascript; charset=utf-8",
+                    body: bootstrap.into(),
+                });
+                // Shared-memory builds spawn threads onto workers: serve the
+                // worker bootstrap (it imports the glue at "./program.js").
+                if memory.is_some() {
+                    routes.push(Route {
+                        path: WL_WORKER_JS,
+                        content_type: "text/javascript; charset=utf-8",
+                        body: wasm_lite_codegen::generate_worker("./program.js").into_bytes(),
+                    });
+                }
+                BOOTSTRAP_JS
             }
         }
         other => {
@@ -218,7 +241,16 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
                 "unsupported program type {other:?}; expected .js or .wasm"
             ));
         }
-    }
+    };
+
+    routes.insert(
+        0,
+        Route {
+            path: "/",
+            content_type: "text/html; charset=utf-8",
+            body: index_html(program, entry).into_bytes(),
+        },
+    );
 
     Ok(routes)
 }
@@ -237,8 +269,8 @@ fn bind() -> std::io::Result<TcpListener> {
     }
 }
 
-/// The HTML shell that loads the program as an ES module.
-fn index_html(program: &Path) -> String {
+/// The HTML shell that loads the program as an ES module from `entry`.
+fn index_html(program: &Path, entry: &str) -> String {
     let title = program
         .file_name()
         .and_then(|n| n.to_str())
@@ -253,7 +285,7 @@ fn index_html(program: &Path) -> String {
          <body>\n\
          <pre id=\"output\"></pre>\n\
          <script>{CONSOLE_MIRROR}</script>\n\
-         <script type=\"module\" src=\"{PROGRAM_JS}\"></script>\n\
+         <script type=\"module\" src=\"{entry}\"></script>\n\
          </body>\n\
          </html>\n"
     )

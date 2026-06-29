@@ -10,6 +10,7 @@ mod value;
 
 pub mod console;
 pub mod performance;
+pub mod thread;
 
 /// Bridge to `wasm_bindgen::JsValue` (enable the `wasm-bindgen` feature).
 #[cfg(feature = "wasm-bindgen")]

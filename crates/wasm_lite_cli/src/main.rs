@@ -60,8 +60,24 @@ fn run(args: Args) -> Result<(), String> {
     let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
 
     match args.output {
-        Some(path) => std::fs::write(&path, glue)
-            .map_err(|e| format!("failed to write {}: {e}", path.display()))?,
+        Some(path) => {
+            std::fs::write(&path, glue)
+                .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+            // A shared-memory build can spawn threads: emit the worker bootstrap
+            // module as `wl_worker.js` beside the glue (the glue's __wl_spawn
+            // loads "./wl_worker.js", which imports the glue back).
+            if memory.is_some() {
+                let glue_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or("output path has no file name")?;
+                let worker = wasm_lite_codegen::generate_worker(&format!("./{glue_name}"));
+                let worker_path = path.with_file_name("wl_worker.js");
+                std::fs::write(&worker_path, worker)
+                    .map_err(|e| format!("failed to write {}: {e}", worker_path.display()))?;
+                eprintln!("wrote {} (thread worker bootstrap)", worker_path.display());
+            }
+        }
         None => print!("{glue}"),
     }
     Ok(())
