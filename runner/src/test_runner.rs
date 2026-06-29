@@ -254,11 +254,14 @@ const TEST_HTML: &str = "<!DOCTYPE html>\n\
     </body></html>\n";
 
 /// Bootstrap for a plain `bin`: run `main`, recording success or the error.
+///
+/// An async test marks `__wl_async_pending`, so we do NOT declare success at
+/// main-return — the async body sets the verdict when it completes (fail-closed).
 const MAIN_BOOTSTRAP: &str = r#"
 try {
     const instance = await instantiate("/program.wasm");
     instance.exports.main();
-    globalThis.__wl_done = { ok: true, error: "" };
+    if (!globalThis.__wl_async_pending) globalThis.__wl_done = { ok: true, error: "" };
 } catch (e) {
     globalThis.__wl_done = { ok: false, error: String((e && e.stack) || e) };
 }
@@ -270,7 +273,7 @@ const name = new URLSearchParams(location.search).get("test");
 try {
     const instance = await instantiate("/program.wasm");
     instance.exports["__wl_test_" + name]();
-    globalThis.__wl_done = { ok: true, error: "" };
+    if (!globalThis.__wl_async_pending) globalThis.__wl_done = { ok: true, error: "" };
 } catch (e) {
     globalThis.__wl_done = { ok: false, error: String((e && e.stack) || e) };
 }

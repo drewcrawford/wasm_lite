@@ -312,7 +312,9 @@ impl Builder {
                             None => t.id().to_string(),
                         })
                     })
-                    .unwrap_or_else(|| "unknown thread".to_string());
+                    .unwrap_or_else(|| {
+                        if is_main_thread() { "main".to_string() } else { "unknown thread".to_string() }
+                    });
                 wasm_lite::console::error(&format!("[wasm_lite_std {who}] {msg}"));
 
                 let sent = PANIC_SENDER.with(|cell| {

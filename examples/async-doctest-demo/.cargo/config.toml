@@ -1,0 +1,40 @@
+# Build this example for wasm32 with shared memory + atomics + thread spawning.
+# Requires nightly (atomics ⇒ recompile std):  cargo +nightly run
+
+[build]
+target = "wasm32-unknown-unknown"
+# Doctests are linked by rustdoc, which uses `rustdocflags`, not `rustflags` —
+# so the threads/atomics link args must be repeated there or the doctest's
+# memory isn't imported (and `__wl_spawn` goes unprovided).
+rustflags = [
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+    "-C", "link-arg=--shared-memory",
+    "-C", "link-arg=--max-memory=1073741824",
+    "-C", "link-arg=--import-memory",
+    # Thread spawning needs these linker-generated symbols exported so the
+    # worker bootstrap can set up each thread's stack and TLS. (The Rust-side
+    # __wl_thread_entry / __wl_thread_alloc / __wl_thread_free are kept and
+    # exported by the wasm_lite crate itself.)
+    "-C", "link-arg=--export=__stack_pointer",
+    "-C", "link-arg=--export=__tls_base",
+    "-C", "link-arg=--export=__tls_size",
+    "-C", "link-arg=--export=__tls_align",
+    "-C", "link-arg=--export=__wasm_init_tls",
+]
+rustdocflags = [
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+    "-C", "link-arg=--shared-memory",
+    "-C", "link-arg=--max-memory=1073741824",
+    "-C", "link-arg=--import-memory",
+    "-C", "link-arg=--export=__stack_pointer",
+    "-C", "link-arg=--export=__tls_base",
+    "-C", "link-arg=--export=__tls_size",
+    "-C", "link-arg=--export=__tls_align",
+    "-C", "link-arg=--export=__wasm_init_tls",
+]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[target.wasm32-unknown-unknown]
+# runner = "/abs/path/to/wasm_lite/target/debug/runner"

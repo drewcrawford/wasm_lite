@@ -502,5 +502,84 @@ pub fn install_println_eprintln_console_hook() {
     });
 }
 
+/// Run a future as a **fail-closed** async test (doctests, tests, `main`) — works in doctests, tests, and
+/// `main`.
+///
+/// The wasm test runner decides pass/fail by polling a still-live browser page,
+/// not by `main` returning. So this drives the future on the event-loop executor
+/// and **defers the verdict** until the future completes: a panic inside it
+/// (including an awaited worker panic propagated by `.unwrap()`) fails the test,
+/// and a hang fails via the runner's timeout. An async test can never pass by
+/// default. On native it simply blocks on the future, so a panic propagates to
+/// the normal harness.
+///
+/// ```ignore
+/// wasm_lite::set_panic_hook();
+/// wasm_lite_std::async_doctest!(async {
+///     let v = wasm_lite_std::spawn(|| 2 + 2).join_async().await.unwrap();
+///     assert_eq!(v, 4);
+/// });
+/// ```
+#[macro_export]
+macro_rules! async_doctest {
+    ($fut:expr) => {{
+        #[cfg(target_arch = "wasm32")]
+        {
+            $crate::__rt::test_pending();
+            $crate::spawn_local(async move {
+                let _ = $fut.await;
+                $crate::__rt::test_pass();
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = $crate::__rt::block_on($fut);
+        }
+    }};
+}
+
+/// Runtime hooks for [`async_doctest!`](crate::async_doctest). Not a stable API.
+#[doc(hidden)]
+pub mod __rt {
+    #[cfg(target_arch = "wasm32")]
+    #[link(wasm_import_module = "__wasm_lite")]
+    unsafe extern "C" {
+        #[link_name = "__wl_test_pending"]
+        fn pending();
+        #[link_name = "__wl_test_pass"]
+        fn pass();
+    }
+
+    /// Mark the test as having pending async work, so the runner defers its verdict.
+    #[cfg(target_arch = "wasm32")]
+    pub fn test_pending() {
+        unsafe { pending() }
+    }
+
+    /// Signal that the async test body completed successfully.
+    #[cfg(target_arch = "wasm32")]
+    pub fn test_pass() {
+        unsafe { pass() }
+    }
+
+    /// Native fallback: drive a future to completion by polling.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        use std::pin::pin;
+        use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+        static VT: RawWakerVTable =
+            RawWakerVTable::new(|_| RawWaker::new(std::ptr::null(), &VT), |_| {}, |_| {}, |_| {});
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) };
+        let mut cx = Context::from_waker(&waker);
+        let mut f = pin!(future);
+        loop {
+            match f.as_mut().poll(&mut cx) {
+                Poll::Ready(v) => return v,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

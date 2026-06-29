@@ -57,24 +57,41 @@ function __wl_drop(idx) {
     __wl_free.push(idx);
 }
 
-// Async executor support. __wl_schedule kicks one event-loop turn; only called
-// when the module uses `spawn_local`.
+// Async executor support. Drive one executor turn; a panic in a polled task
+// traps here, which we turn into a test failure (fail-closed) rather than an
+// uncaught error in a timer/microtask callback.
+function __wl_tick() {
+    try {
+        __wl_instance.exports.__wl_async_tick();
+    } catch (e) {
+        globalThis.__wl_done = { ok: false, error: String((e && e.stack) || e) };
+    }
+}
+// __wl_schedule kicks one event-loop turn; only called when the module uses
+// `spawn_local`.
 function __wl_schedule() {
-    setTimeout(() => __wl_instance.exports.__wl_async_tick(), 0);
+    setTimeout(__wl_tick, 0);
 }
 
 // Sleep the executor until a Waker bumps the wake atom. `Atomics.waitAsync`
 // resolves on a `memory.atomic.notify` to `ptr` — including one from another
 // worker — so cross-thread wakes reach the main thread without busy-polling.
 function __wl_wait_async(ptr, expected) {
-    const tick = () => __wl_instance.exports.__wl_async_tick();
     if (typeof Atomics.waitAsync === \"function\") {
         const r = Atomics.waitAsync(new Int32Array(__wl_memory.buffer), ptr >>> 2, expected);
-        if (r.async) { r.value.then(tick); return; }
+        if (r.async) { r.value.then(__wl_tick); return; }
     }
     // No waitAsync, or the value already changed (\"not-equal\"): re-poll soon.
-    setTimeout(tick, 0);
+    setTimeout(__wl_tick, 0);
 }
+
+// Fail-closed async-test verdict. The test body marks itself \"pending\" so the
+// bootstrap won't declare success when `main` returns; the body signals pass
+// when it actually completes. A panic in between fails via __wl_tick above, and
+// a hang falls to the runner's timeout — so an async test can never pass by
+// default.
+function __wl_test_pending() { globalThis.__wl_async_pending = true; }
+function __wl_test_pass() { globalThis.__wl_done = { ok: true, error: \"\" }; }
 
 // Cross-realm log bridge. A worker is a separate JS realm, so its console output
 // is invisible to the (headless) test runner, which only captures the main realm.
@@ -244,10 +261,17 @@ pub fn generate_glue(
     // to drive the async executor; shared-memory builds also get __wl_spawn for
     // thread spawning. (Unused entries are harmless — the wasm only imports what
     // it references.)
+    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass";
     if memory.is_some() {
-        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_spawn: __wl_spawn, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async };\n");
+        let _ = writeln!(
+            js,
+            "    imports[\"__wasm_lite\"] = {{ __wl_drop: __wl_drop, __wl_spawn: __wl_spawn, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, {test_rt} }};"
+        );
     } else {
-        js.push_str("    imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async };\n");
+        let _ = writeln!(
+            js,
+            "    imports[\"__wasm_lite\"] = {{ __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, {test_rt} }};"
+        );
     }
 
     for d in imports {
@@ -687,7 +711,7 @@ mod tests {
         assert!(js.contains("imports[\"performance\"][\"now\"] = () => globalThis[\"performance\"][\"now\"]();"));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
-        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async };"));
+        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass };"));
     }
 
     #[test]

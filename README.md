@@ -65,7 +65,10 @@ Examples (each standalone, builds to `wasm32-unknown-unknown`):
 `threads-demo` (`thread::spawn` over Web Workers; nightly),
 `std-threads-demo` (`wasm_lite_std::spawn`, the std-like API; nightly),
 `async-demo` (non-blocking `join_async` on the main thread; nightly),
-`async-mutex-demo` (main `lock_async` woken cross-thread by a worker; nightly).
+`async-mutex-demo` (main `lock_async` woken cross-thread by a worker; nightly),
+`async-doctest-demo` (a fail-closed async **doctest**; nightly),
+`async-fail-demo` / `async-pass-demo` (fail-closed async-test verdict; nightly),
+`panic-demo` (worker panic surfaced on the CLI; nightly).
 
 ## Binding model
 
@@ -251,16 +254,19 @@ wrong. For that uniformity to hold, two things have to be true:
   tool for it is *cooperative cancellation* (a token the tasks check), not a hard
   `terminate()` that strands held locks.
 
-* **Async tests are fail-closed** *(planned)*. `#[wasm_lite_async_test]` /
-  `async_doctest!` never pass by default — unlike `rustdoc`/`libtest`, where
-  `main` returning *is* the verdict (so a deferred async failure can't be seen).
-  The only thing that records success is the async body reaching its end; a panic,
-  dropped task, or deadlock therefore cannot masquerade as a pass. Panics report
-  *fast and attributed* (the panic hook writes the verdict + message before the
-  `abort` trap, with a `try/catch` around the executor tick as a backstop); a true
-  deadlock degrades to a diagnostic timeout. (The verdict is rendered by the
-  runner polling a still-live browser page, not by `main` returning — which is
-  what makes deferring it past `main` possible.)
+* **Async tests are fail-closed** — `wasm_lite_std::async_doctest!(async { … })`
+  (usable in doctests, `#[wasm_lite_test]` bodies, and `main`). Unlike
+  `rustdoc`/`libtest`, where `main` returning *is* the verdict (so a deferred
+  async failure can't be seen), the body marks itself pending so the verdict is
+  deferred; the *only* thing that records success is the body reaching its end.
+  A panic, dropped task, or deadlock cannot masquerade as a pass: a panic in a
+  polled task traps the executor tick, which a `try/catch` turns into
+  `{ok:false}` (with the message via the captured console), and a hang falls to
+  the runner's timeout. The verdict is rendered by the runner polling a
+  still-live browser page, not by `main` returning — which is what makes
+  deferring it possible. (Caveat: rustdoc links doctests with `rustdocflags`, not
+  `rustflags`, so an async doctest crate must repeat the threads/atomics link
+  args under `[build] rustdocflags` — see `examples/async-doctest-demo`.)
 
 On panics: `panic = "abort"` is the supported model. On wasm a panic is an
 `unreachable` **trap local to one instance** — verified: a panicking worker traps
@@ -304,12 +310,11 @@ without failing. An **awaited** panic *propagates*: the worker's panic is
 delivered to `join_async().await` as `Err(message)` (sent through the channel
 before the worker aborts), so a wrapper returning `T` unwraps it and re-panics on
 the awaiter — failing the test, exactly like `std::thread::join` /
-`tokio::JoinHandle` (which hand you a `Result` you unwrap). *Caveat:* on the wasm
-main thread the await runs on the `spawn_local` executor, and turning that
-propagated panic into a hard CLI **failure** (rather than a passing-with-warning)
-needs the fail-closed async-test verdict (defer the verdict past `main`; wrap the
-executor tick in `try/catch`) — *planned*, and the same machinery that makes async
-doctests trustworthy.
+`tokio::JoinHandle` (which hand you a `Result` you unwrap). When that await runs on
+the main-thread executor (the usual case), wrap it in `async_doctest!` so the
+re-panic becomes a hard CLI **failure** with the message (proven in
+`examples/async-fail-demo`) rather than a passing-with-warning — the same
+fail-closed machinery that makes async doctests trustworthy.
 
 Doctests go through the same path, so they inherit all of the above. A failing
 *sync* doctest with `set_panic_hook()` reports the full message + `FAILED` on the
