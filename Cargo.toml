@@ -1,5 +1,10 @@
+
+
 [workspace]
 resolver = "2"
+
+
+
 members = [
     "runner",
     "crates/wasm_lite",
@@ -8,8 +13,20 @@ members = [
     "crates/wasm_lite_cli",
     "crates/wasm_lite_std",
 ]
+
+
 # The wasm example is its own detached crate: it's a `bin` that links against a
 # wasm-only import, so it must never be built for the host target. Build it
 # explicitly for wasm32. (`wasm_lite` itself is an rlib and builds fine on the
 # host, so it stays a workspace member for IDE/CI coverage.)
 exclude = ["examples/hello-rust", "examples/atomics-demo", "examples/threads-demo", "examples/std-threads-demo", "examples/async-demo", "examples/async-mutex-demo", "examples/panic-demo", "examples/await-panic-demo", "examples/async-pass-demo", "examples/async-fail-demo", "examples/async-doctest-demo", "examples/worker-spawn-local-demo"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Drew Crawford <drew@sealedabstract.com>"]
+license = "MIT OR Apache-2.0"
+keywords = ["wasm", "webassembly", "javascript", "bindings", "wasm-bindgen"]
+categories = ["wasm", "web-programming", "development-tools::ffi"]
+repository = "https://github.com/drewcrawford/wasm_lite"
+homepage = "https://sealedabstract.com/code/wasm_lite"

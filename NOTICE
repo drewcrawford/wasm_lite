@@ -1,0 +1,6 @@
+wasm_lite https://sealedabstract.com/code/wasm_lite
+A dependency-light rewrite of wasm-bindgen for wasm32-unknown-unknown.
+Copyright 2025 Drew Crawford.
+
+Includes code ported from wasm_safe_thread (MIT OR Apache-2.0),
+Copyright Drew Crawford — https://crates.io/crates/wasm_safe_thread

@@ -1,12 +1,15 @@
 [package]
 name = "wasm_lite"
-version = "0.1.0"
-edition = "2024"
-authors = ["Drew Crawford <drew@sealedabstract.com>"]
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Minimal JS bindings for Rust compiled to wasm, with no runtime dependencies."
-keywords = ["wasm", "webassembly", "javascript", "bindings", "wasm-bindgen"]
-categories = ["wasm", "web-programming", "development-tools::ffi"]
+
+keywords.workspace = true
+categories.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 wasm_lite_macro = { path = "../wasm_lite_macro" }
