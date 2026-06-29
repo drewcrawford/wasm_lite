@@ -22,3 +22,10 @@ wasm_lite = { path = "../wasm_lite" }
 
 [dev-dependencies]
 test_executors = "0.4.1"
+
+# Browser test suite (wasm32, via the wasm_lite runner). harness = false because
+# libtest doesn't run on wasm32-unknown-unknown; #[wasm_lite_test] + the runner
+# drive it instead.
+[[test]]
+name = "browser"
+harness = false

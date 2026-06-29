@@ -170,13 +170,19 @@ runner = "path/to/runner"
 * Doctests run too (rustdoc's doctest binaries are detected and driven headless).
   Call `wasm_lite::set_panic_hook()` at the top of a doctest so failures report
   the panic message.
+* **Async / threaded code** is tested fail-closed with `wasm_lite_std::async_doctest!`
+  (in a `#[wasm_lite_test]` body or a doctest). `wasm_lite_std`'s own browser suite
+  (`crates/wasm_lite_std/tests/browser.rs`, a `harness = false` target — libtest
+  doesn't run on wasm32) exercises `Mutex`/`RwLock`/`Condvar`/`mpsc` (sync + async)
+  and `spawn`/`join_async` in a real browser; run it with
+  `crates/wasm_lite_std/run-browser-tests.sh`.
 
 ## Shared memory & atomics
 
 wasm_lite runs modules built with the threads-related wasm features
 (`+atomics,+bulk-memory,+mutable-globals`) on a **shared** linear memory (a
-`SharedArrayBuffer`). This is the foundation for threads; actually spawning work
-onto Web Workers is not implemented yet, but everything below is in place:
+`SharedArrayBuffer`) — the foundation for threads (`wasm_lite::thread::spawn` and
+the `wasm_lite_std` layer above it). Everything below is in place:
 
 * **Toolchain.** `+atomics` means `std` must be recompiled with it, so these
   builds need **nightly** and `-Z build-std`. See
@@ -341,36 +347,53 @@ loader with our glue, and provides explicit `.to_wasm_bindgen()` /
 Following the wasm-bindgen ecosystem split (language vs browser):
 
 * `wasm_lite` — core (above). *Like `wasm-bindgen`.*
-* `wasm_lite_js` *(future)* — ECMAScript built-ins (`Object`, `Array`, `Map`,
-  `JSON`, `Date`, …) bound with `js_class!`. *Like `js-sys`.*
-* `wasm_lite_web` *(future)* — Web/host APIs (DOM, `fetch`, …). *Like `web-sys`.*
-* `wasm_lite_std` *(in progress)* — std-like veneer: a `std::thread` + `std::sync`
-  port of [`wasm_safe_thread`](https://crates.io/crates/wasm_safe_thread) with its
-  wasm backend retargeted off wasm-bindgen onto `wasm_lite::thread::spawn` +
+* `wasm_lite_std` — **done**: std-like veneer over `wasm_lite`, a port of
+  [`wasm_safe_thread`](https://crates.io/crates/wasm_safe_thread) with its wasm
+  backend retargeted off wasm-bindgen onto `wasm_lite::thread::spawn` +
   `core::arch::wasm32` atomics. Both **sync** and **async** paths work:
   `spawn`/`JoinHandle` (`join`/`join_async`), `park`/`unpark`, `Mutex`/`Condvar`/
   `RwLock`/`mpsc` (sync + async), and a `spawn_local` event-loop executor for
-  non-blocking async on the main thread. Its only runtime dep is `continue`
-  (a wasm-bindgen-free continuation primitive).
+  non-blocking async on the main thread. Only runtime dep: `continue` (a
+  wasm-bindgen-free continuation primitive). Browser-validated (see Testing).
+  *Like `std` (the `std::thread`/`std::sync` slice).*
+* `wasm_lite_js` *(future)* — ECMAScript built-ins (`Object`, `Array`, `Map`,
+  `JSON`, `Date`, …) bound with `js_class!`. *Like `js-sys`.*
+* `wasm_lite_web` *(future)* — Web/host APIs (DOM, `fetch`, …). *Like `web-sys`.*
 
 Bindings stay out of core so it remains small; `js_class!` is the primitive all
-upper layers build on.
+upper layers build on (so its constructors + property get/set are the gate for
+`wasm_lite_js`/`wasm_lite_web`).
 
 ## Known gaps / roadmap
 
-* `js_class!`: constructors (`new Foo()`), property get/set (`el.textContent`),
-  owned-object args, and `instanceof`-checked downcasting — each needs a new
-  codegen shim kind. Constructors + properties are the prerequisite for starting
-  `wasm_lite_js` / `wasm_lite_web`.
-* `wasm_lite_std`: a `std::thread` + `std::sync` veneer (`spawn -> JoinHandle`,
-  `park`/`unpark`, `Mutex`/`RwLock`/`Condvar`/`mpsc`) built on the detached
-  `thread::spawn` primitive — modelled on (and likely a port of)
-  `wasm_safe_thread`, with its wasm backend retargeted off wasm-bindgen onto
-  `__wl_spawn`. (Shared memory, atomics, and detached spawn: done, above.)
-* Nested generics like `Option<Vec<u8>>` on the import side (the macro grammar
-  takes single-ident inner types today; the proc-macro export side already
-  allows nesting). `Option<&[u8]>` arguments on the import side.
-* `js_class!` constructors (`new Foo()`) + property get/set — the prerequisite
-  for standing up `wasm_lite_js` / `wasm_lite_web`.
-* Deployment niceties: a `wasm-lite bundle` command, session pooling/idle reaper
-  for the persistent browser, test filtering (`cargo test NAME`).
+Roughly in priority order — the threading/async/testing layer is complete and
+browser-validated; the next frontier is the binding crates.
+
+* **Cooperative cancellation** for graceful worker shutdown. Drain-before-teardown
+  is done, but a worker whose task *never completes* lingers forever. The plan: a
+  `CancelToken` (shared atomic + `continue` waiters; `cancel`/`is_cancelled`/
+  `cancelled()`) plus a `run_until_cancelled(token, fut) -> Option<T>` combinator,
+  so a cancelled task exits cleanly and the worker drains + closes. It's
+  library-only — the cross-thread wake reuses the executor path (no runtime/glue
+  changes). *Designed, not built.* (`*_timeout` APIs already give a crude
+  poll-based version today.)
+* **`js_class!` constructors (`new Foo()`) + property get/set** (`el.textContent`),
+  plus owned-object args and `instanceof`-checked downcasting — each needs a new
+  codegen shim kind. This is the **prerequisite for `wasm_lite_js`/`wasm_lite_web`**.
+* **`wasm_lite_js` / `wasm_lite_web`** — the binding crates (ECMAScript built-ins,
+  then DOM/host APIs), gated on the `js_class!` work above.
+* **Worker pool** — one Web Worker is created per `spawn` today; a persistent pool
+  would cut spawn cost and enable a synchronous `block_on` against pre-warmed
+  workers. Pairs with cooperative cancellation for pool teardown.
+* **Broaden the wasm test suite** — `crates/wasm_lite_std/tests/browser.rs` is a
+  curated 6-test subset (the ~91 native unit tests can't run on wasm32 via
+  libtest); add coverage for timeouts, multi-reader `RwLock`, `park`/`unpark`, etc.
+* **Deployment niceties** — a `wasm-lite bundle` command, session pooling/idle
+  reaper for the persistent browser, and test filtering (`cargo test NAME`).
+* **Smaller items** — deeply nested generics on imports (single-level
+  `Option<Vec<u8>>`/`Option<&[u8]>`/`Result<…>` already work since the `import!`
+  proc-macro rewrite; `Option<Result<…>>` does not); a `panic = "unwind"` mode
+  (catch-unwind per poll, drop just the failed task, poison its locks — vs
+  `abort`'s per-thread trap); and refreshing the `wasm_lite_std` crate-level doc
+  comment, which still carries `wasm_safe_thread`'s wasm-bindgen-era comparison
+  table.
