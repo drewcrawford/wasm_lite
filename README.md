@@ -50,11 +50,11 @@ wasm-lite app.wasm -o glue.js                     # generates the JS glue
 
 | crate | role |
 |---|---|
-| `crates/wasm_lite` | core: `import!`, `#[export]`, `js_class!`, `JsValue`, runtime (`__wl_malloc`/`__wl_free`, panic hook), `thread::spawn`, `console`/`performance` bindings |
-| `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): `import!`, `#[export]`, `#[wasm_lite_test]`, `js_class!` (shared type→ABI dispatch in `ty`) |
+| `crates/wasm_lite` | core: `import!`, `#[export]`, `js_class!`, `JsValue`, runtime (`__wl_malloc`/`__wl_free`, panic hook), `thread::spawn`, `console`/`performance`/`date` bindings |
+| `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): `import!`, `#[export]`, `#[wasm_lite_test]` (`(worker)` runs the body on a Web Worker), `js_class!` (shared type→ABI dispatch in `ty`) |
 | `crates/wasm_lite_codegen` | host-side: read descriptor sections, generate JS glue |
 | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |
-| `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`, sync + async); ported from `wasm_safe_thread`, retargeted off wasm-bindgen onto `wasm_lite` + a `spawn_local` event-loop executor |
+| `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync + async); ported from `wasm_safe_thread`, retargeted off wasm-bindgen onto `wasm_lite` + a `spawn_local` event-loop executor |
 | `runner` | WebDriver runner; serves a bin interactively, or drives tests/doctests headless and exits |
 
 Examples (each standalone, builds to `wasm32-unknown-unknown`):
@@ -165,6 +165,10 @@ runner = "path/to/runner"
 
 * `#[wasm_lite_test]` marks a test; it is recorded in `__wasm_lite_tests` and
   the runner discovers and drives each one in a browser (pass / fail / panic).
+  By default the body runs on the **main thread**; `#[wasm_lite_test(worker)]`
+  runs it on a dedicated Web Worker instead (a fail-closed `spawn` + `join_async`
+  wrapper) so blocking APIs (`lock_block`, `recv_block`, `park`, synchronous
+  `join`) — which trap on the main thread — can be tested.
 * Plain `cargo run --example foo` serves the bin interactively in the browser;
   `cargo test` runs headless and exits — the runner distinguishes them by path.
 * Doctests run too (rustdoc's doctest binaries are detected and driven headless).
@@ -173,8 +177,9 @@ runner = "path/to/runner"
 * **Async / threaded code** is tested fail-closed with `wasm_lite_std::async_doctest!`
   (in a `#[wasm_lite_test]` body or a doctest). `wasm_lite_std`'s own browser suite
   (`crates/wasm_lite_std/tests/browser.rs`, a `harness = false` target — libtest
-  doesn't run on wasm32) exercises `Mutex`/`RwLock`/`Condvar`/`mpsc` (sync + async)
-  and `spawn`/`join_async` in a real browser; run it with
+  doesn't run on wasm32) exercises `Mutex`/`RwLock`/`Condvar`/`mpsc`/`time` across
+  the spin/block/sync/async variants (including timeouts) and `spawn`/`join_async`
+  in a real browser — blocking variants via `(worker)` tests; run it with
   `crates/wasm_lite_std/run-browser-tests.sh`.
 
 ## Shared memory & atomics
@@ -335,6 +340,25 @@ Doctests go through the same path, so they inherit all of the above. A failing
 CLI. Note: with Rust 2024 *merged* doctests, the first `panic = "abort"` aborts
 the whole bundle, so later doctests in the crate don't run.
 
+## `std::time` veneer
+
+`wasm_lite_std::time` is a cross-platform [`std::time`] replacement, mirroring the
+threading API: on native it re-exports the real `std::time` types; on wasm32 it
+provides drop-in `Instant` and `SystemTime` backed by the browser clocks
+(`performance.now()` and `Date.now()`, via `wasm_lite::performance`/`wasm_lite::date`)
+— with **no** `wasm-bindgen`/`js-sys` dependency (unlike [`web-time`]). `Duration`
+is re-exported unchanged. `Instant` is stored as a `Duration` from its time origin
+so it is `Eq`/`Ord`/`Hash` like the real thing; `SystemTime` cannot represent
+instants before the Unix epoch (arithmetic past `UNIX_EPOCH` returns `None`).
+
+`wasm_lite_std::is_main_thread()` rounds out the threading surface: `true` on the
+browser main thread (and the native process's initial thread), `false` on a
+spawned worker — the thread where `Atomics.wait` (blocking locks, `park`) is
+unavailable.
+
+[`std::time`]: https://doc.rust-lang.org/std/time/
+[`web-time`]: https://crates.io/crates/web-time
+
 ## wasm-bindgen interop
 
 Enable the `wasm-bindgen` feature to link a crate that itself uses wasm-bindgen.
@@ -377,6 +401,25 @@ browser-validated; the next frontier is the binding crates.
   library-only — the cross-thread wake reuses the executor path (no runtime/glue
   changes). *Designed, not built.* (`*_timeout` APIs already give a crude
   poll-based version today.)
+* **Async timer / `sleep_async`** — a `setTimeout`-backed timer (a
+  `__wl_set_timeout`-style runtime import resolving a `continue` waiter on the
+  event loop). Gives an `async sleep` usable on the main thread (`thread::sleep`
+  uses `Atomics.wait`, which traps there) and, more importantly, replaces the
+  current `*_timeout` implementation — which spawns a **whole Web Worker per
+  timeout** just to sleep to the deadline — with a cheap event-loop timer.
+  *Highest-leverage `std`-coverage item: it also improves existing internals.*
+* **Entropy (`crypto.getRandomValues`)** — a wasm-bindgen-free randomness source
+  bound via `import!`, exposed as a `getrandom` backend. On
+  `wasm32-unknown-unknown` `HashMap` falls back to a weak fixed seed, and the
+  `getrandom`/`rand`/`uuid` ecosystem otherwise needs `getrandom`'s `js` feature
+  (which pulls in wasm-bindgen). Unblocks a large slice of crates while staying
+  on-mission.
+* **More `std::sync` / `std::thread` parity** — `Once`/`OnceLock`/`LazyLock`
+  (worker-safe, async-aware init; std's blocking init can trap on the main
+  thread), `Barrier`, and `thread::scope` (scoped threads borrowing non-`'static`
+  data — flagged missing in the `wasm_thread` comparison). Library-only additions
+  to the `wasm_lite_std` veneer. (Browser-shaped `std` APIs — `std::net`,
+  `std::fs`, `std::env` — belong to `wasm_lite_web` below, not a `std` drop-in.)
 * **`js_class!` constructors (`new Foo()`) + property get/set** (`el.textContent`),
   plus owned-object args and `instanceof`-checked downcasting — each needs a new
   codegen shim kind. This is the **prerequisite for `wasm_lite_js`/`wasm_lite_web`**.
@@ -385,9 +428,11 @@ browser-validated; the next frontier is the binding crates.
 * **Worker pool** — one Web Worker is created per `spawn` today; a persistent pool
   would cut spawn cost and enable a synchronous `block_on` against pre-warmed
   workers. Pairs with cooperative cancellation for pool teardown.
-* **Broaden the wasm test suite** — `crates/wasm_lite_std/tests/browser.rs` is a
-  curated 6-test subset (the ~91 native unit tests can't run on wasm32 via
-  libtest); add coverage for timeouts, multi-reader `RwLock`, `park`/`unpark`, etc.
+* **Broaden the wasm test suite** — `crates/wasm_lite_std/tests/browser.rs` now
+  ports the bulk of the native unit suite (~46 tests: `Mutex`/`Spinlock`/`Condvar`/
+  `mpsc`/`time` across spin/block/sync/async + timeouts), using `(worker)` tests
+  for blocking variants. Remaining: multi-reader `RwLock`, `park`/`unpark`, and the
+  Node-only paths (the runner is browser-only).
 * **Deployment niceties** — a `wasm-lite bundle` command, session pooling/idle
   reaper for the persistent browser, and test filtering (`cargo test NAME`).
 * **Smaller items** — deeply nested generics on imports (single-level
@@ -395,5 +440,6 @@ browser-validated; the next frontier is the binding crates.
   proc-macro rewrite; `Option<Result<…>>` does not); a `panic = "unwind"` mode
   (catch-unwind per poll, drop just the failed task, poison its locks — vs
   `abort`'s per-thread trap); and refreshing the `wasm_lite_std` crate-level doc
-  comment, which still carries `wasm_safe_thread`'s wasm-bindgen-era comparison
-  table.
+  comment, whose `wasm_thread` comparison table still lists wasm-bindgen/js-sys
+  deps (the code no longer uses them — the test harness was moved off
+  `wasm_bindgen_test` onto `#[wasm_lite_test]`).
