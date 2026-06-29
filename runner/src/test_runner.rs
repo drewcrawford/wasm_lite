@@ -8,7 +8,7 @@
 //!   * a plain `bin`: run `main` once (pass = ran to completion).
 
 use crate::webdriver::Browser;
-use crate::{PROGRAM_JS, PROGRAM_WASM, Route, bind, read, serve};
+use crate::{BOOTSTRAP_JS, PROGRAM_JS, PROGRAM_WASM, Route, WL_WORKER_JS, bind, read, serve};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -78,33 +78,47 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
     let memory = wasm_lite_codegen::imported_memory(&module)?;
     let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
     let test_names = wasm_lite_codegen::test_names(&module);
-    let bootstrap = if test_names.is_empty() {
+    let body = if test_names.is_empty() {
         MAIN_BOOTSTRAP
     } else {
         HARNESS_BOOTSTRAP
     };
-    let program_js = format!("{glue}{bootstrap}");
+    // program.js is the glue ONLY (so a spawned worker can import it without
+    // re-running the test); a separate bootstrap module drives the test.
+    let bootstrap = format!("import {{ instantiate }} from \"./program.js\";\n{body}");
 
-    Ok(Prepared {
-        routes: vec![
-            Route {
-                path: "/",
-                content_type: "text/html; charset=utf-8",
-                body: TEST_HTML.as_bytes().to_vec(),
-            },
-            Route {
-                path: PROGRAM_JS,
-                content_type: "text/javascript; charset=utf-8",
-                body: program_js.into_bytes(),
-            },
-            Route {
-                path: PROGRAM_WASM,
-                content_type: "application/wasm",
-                body: module,
-            },
-        ],
-        test_names,
-    })
+    let mut routes = vec![
+        Route {
+            path: "/",
+            content_type: "text/html; charset=utf-8",
+            body: TEST_HTML.as_bytes().to_vec(),
+        },
+        Route {
+            path: PROGRAM_JS,
+            content_type: "text/javascript; charset=utf-8",
+            body: glue.into_bytes(),
+        },
+        Route {
+            path: BOOTSTRAP_JS,
+            content_type: "text/javascript; charset=utf-8",
+            body: bootstrap.into_bytes(),
+        },
+        Route {
+            path: PROGRAM_WASM,
+            content_type: "application/wasm",
+            body: module,
+        },
+    ];
+    // Shared-memory builds spawn threads onto workers: serve the worker bootstrap.
+    if memory.is_some() {
+        routes.push(Route {
+            path: WL_WORKER_JS,
+            content_type: "text/javascript; charset=utf-8",
+            body: wasm_lite_codegen::generate_worker("./program.js").into_bytes(),
+        });
+    }
+
+    Ok(Prepared { routes, test_names })
 }
 
 /// Run a plain `bin`: success is `main` completing without a trap.
@@ -113,6 +127,7 @@ fn run_main(browser: &Browser, port: u16) -> Result<i32, String> {
     wait_done(browser)?;
 
     if browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
+        surface_worker_panics(browser)?;
         println!("test result: ok");
         return Ok(0);
     }
@@ -132,6 +147,42 @@ fn run_main(browser: &Browser, port: u16) -> Result<i32, String> {
     Ok(1)
 }
 
+/// Surface worker-thread panics on an otherwise-passing test.
+///
+/// A panic only traps its own worker, so a detached worker's panic doesn't fail
+/// the test (matching `std`, where an unjoined thread's panic prints but doesn't
+/// fail) — but it must not be *silent* on the CLI. Worker console output is
+/// bridged to the main realm (see the generated glue), so here we scan the
+/// captured console for panic lines and print them as warnings. Best-effort: a
+/// short grace lets a just-detached worker flush before we look.
+fn surface_worker_panics(browser: &Browser) -> Result<(), String> {
+    if !browser.eval_bool("return (globalThis.__wl_spawn_count || 0) > 0;")? {
+        return Ok(()); // no workers spawned — nothing to wait for
+    }
+    // Wait until the directly-spawned workers have each reported "done" (they do
+    // so even after a panic, via the bootstrap's `finally`), so their bridged
+    // console output has landed. Bounded, so a genuinely stuck worker can't hang
+    // a passing test.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline
+        && !browser.eval_bool(
+            "return (globalThis.__wl_worker_done || 0) >= (globalThis.__wl_spawn_count || 0);",
+        )?
+    {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let panics = browser.eval_string(
+        "return (globalThis.__wl_console || []).filter(e => e.includes('panicked')).join('\\n');",
+    )?;
+    if !panics.trim().is_empty() {
+        eprintln!("warning: a worker thread panicked (test still passed — likely a bug):");
+        for line in panics.lines() {
+            eprintln!("    {line}");
+        }
+    }
+    Ok(())
+}
+
 /// Run a `tests!` harness: each test in a fresh page load, libtest-style output.
 fn run_suite(browser: &Browser, port: u16, names: &[String]) -> Result<i32, String> {
     println!("\nrunning {} test{}", names.len(), plural(names.len()));
@@ -142,6 +193,7 @@ fn run_suite(browser: &Browser, port: u16, names: &[String]) -> Result<i32, Stri
         wait_done(browser)?;
 
         if browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
+            surface_worker_panics(browser)?;
             println!("test {name} ... ok");
         } else {
             failed += 1;
@@ -198,7 +250,7 @@ const TEST_HTML: &str = "<!DOCTYPE html>\n\
         console[level] = (...args) => { original(...args); globalThis.__wl_console.push(args.join(\" \")); };\n\
     }\n\
     </script>\n\
-    <script type=\"module\" src=\"/program.js\"></script>\n\
+    <script type=\"module\" src=\"/bootstrap.js\"></script>\n\
     </body></html>\n";
 
 /// Bootstrap for a plain `bin`: run `main`, recording success or the error.

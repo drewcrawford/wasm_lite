@@ -292,16 +292,29 @@ The CLI (`cargo test` / doctests via the runner) is only partly there today:
 | **joined** worker | ✓ message | ✓ via the channel → the joiner re-panics on main → captured |
 | **detached** worker | ✓ message | ✗ **not surfaced** — the worker is a separate JS realm, and the runner only captures the *main* realm's console |
 
-So a detached worker panic is visible in the browser but **invisible on the CLI**
-(the test can even read as `ok`). Closing that needs a worker→main diagnostics
-bridge (forward worker console/panic to the main realm — over `postMessage` up the
-spawn chain, or a shared-memory log buffer the runner drains) plus printing panic
-lines on success too (matching `std`, which prints detached-thread panics without
-failing the test). *Planned.* Doctests go through the same `run_main` path, so they
-inherit all of the above — plus, with Rust 2024 *merged* doctests, the first
-`panic = "abort"` aborts the whole bundle, so later doctests in the crate don't
-run; until the bridge lands, prefer `set_panic_hook()` + keeping worker work
-*joined* in doctests you want diagnosable on the CLI.
+Worker console output is **bridged to the main realm** so it reaches the CLI: a
+worker forwards each console line up the spawn chain via `postMessage`, and the
+runner prints any worker-panic lines (even on a passing test). So a detached
+worker panic now shows on the terminal as a warning, e.g.
+`[wasm_lite_std ThreadId(0)] panicked at …`, while the test still passes.
+
+**Detached vs. awaited.** A *detached* (never-joined) worker panic is logged but
+doesn't fail the test — matching `std`, where an unjoined thread's panic prints
+without failing. An **awaited** panic *propagates*: the worker's panic is
+delivered to `join_async().await` as `Err(message)` (sent through the channel
+before the worker aborts), so a wrapper returning `T` unwraps it and re-panics on
+the awaiter — failing the test, exactly like `std::thread::join` /
+`tokio::JoinHandle` (which hand you a `Result` you unwrap). *Caveat:* on the wasm
+main thread the await runs on the `spawn_local` executor, and turning that
+propagated panic into a hard CLI **failure** (rather than a passing-with-warning)
+needs the fail-closed async-test verdict (defer the verdict past `main`; wrap the
+executor tick in `try/catch`) — *planned*, and the same machinery that makes async
+doctests trustworthy.
+
+Doctests go through the same path, so they inherit all of the above. A failing
+*sync* doctest with `set_panic_hook()` reports the full message + `FAILED` on the
+CLI. Note: with Rust 2024 *merged* doctests, the first `panic = "abort"` aborts
+the whole bundle, so later doctests in the crate don't run.
 
 ## wasm-bindgen interop
 
