@@ -5,12 +5,16 @@
 # off wasm-bindgen onto wasm_lite's `thread::spawn` primitive + core atomics.
 [package]
 name = "wasm_lite_std"
-version = "0.1.0"
-edition = "2024"
-license = "MIT OR Apache-2.0"
-authors = ["Drew Crawford <drew@sealedabstract.com>"]
 description = "std::thread + std::sync veneer over wasm_lite (ported from wasm_safe_thread)."
-categories = ["wasm", "concurrency", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 atomic-waker = "1.1.2"

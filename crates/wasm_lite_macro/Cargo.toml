@@ -1,12 +1,15 @@
 [package]
 name = "wasm_lite_macro"
-version = "0.1.0"
-edition = "2024"
-authors = ["Drew Crawford <drew@sealedabstract.com>"]
-license = "MIT OR Apache-2.0"
 description = "Procedural macros for wasm_lite (import!, #[export], js_class!, #[wasm_lite_test])."
-keywords = ["wasm", "webassembly", "proc-macro", "bindings", "javascript"]
-categories = ["wasm", "development-tools::procedural-macro-helpers"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
 
 [lib]
 proc-macro = true
