@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Minimal reader for the wasm binary format — just enough to find a custom
 //! section by name. See <https://webassembly.github.io/spec/core/binary/>.
 

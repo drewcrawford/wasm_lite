@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Procedural macros for wasm_lite, built on `syn` + `quote`.
 //!
 //! Three macros: `#[export]` (Rust→JS exports), `#[wasm_lite_test]` (test

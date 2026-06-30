@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // One wasm module containing BOTH worlds: this bin uses wasm_lite, and links a
 // library (`wb_widget`) that uses wasm-bindgen. A JsValue minted by wasm-bindgen
 // is bridged into wasm_lite and logged through it.

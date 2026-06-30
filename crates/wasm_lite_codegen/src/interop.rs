@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Interop bundling for modules that mix wasm_lite and wasm-bindgen.
 //!
 //! Runs the wasm-bindgen CLI to finalize the module and emit its glue, then

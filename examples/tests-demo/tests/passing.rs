@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! An all-passing suite, to verify a clean run exits 0.
 
 use wasm_lite::wasm_lite_test;

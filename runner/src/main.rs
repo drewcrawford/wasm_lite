@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! wasm_lite runner.
 //!
 //! Serves a single program over a local HTTP server and opens it in the

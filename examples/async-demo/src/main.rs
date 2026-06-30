@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Async path: the main thread can't block (`atomic.wait` traps there), so it
 // joins worker threads *asynchronously* via the wasm_lite_std event-loop
 // executor. `spawn` runs work on Web Workers; `spawn_local` drives an async task

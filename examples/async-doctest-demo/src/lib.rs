@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Async doctests run fail-closed in the browser via the wasm_lite runner.
 
 /// Doubles a number — with an **async** doctest that joins a worker.

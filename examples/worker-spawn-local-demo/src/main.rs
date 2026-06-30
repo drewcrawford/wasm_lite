@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // A WORKER that itself calls spawn_local. Before drain-before-teardown the worker
 // closed the instant its closure returned, dropping the async task and freeing
 // the TLS its queue lived in. Now the worker stays alive until its executor

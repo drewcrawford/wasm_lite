@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Covers the three outcomes: a pass, a failed assertion, and an explicit panic.
 
 use wasm_lite::wasm_lite_test;

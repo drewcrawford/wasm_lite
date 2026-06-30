@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // A panic only traps its own worker — main and other workers keep running, and
 // shared memory persists. The danger is a SILENT panic on a detached worker, so
 // wasm_lite_std's panic hook always logs to the console with thread attribution

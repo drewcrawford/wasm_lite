@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A "third-party" library that happens to use wasm-bindgen. It knows nothing
 //! about wasm_lite; it's linked into a wasm_lite binary to demonstrate interop.
 

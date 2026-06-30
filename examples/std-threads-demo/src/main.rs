@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Spawns threads through the std-like `wasm_lite_std` API (ported from
 // wasm_safe_thread), running on wasm_lite's worker primitive. Workers coordinate
 // via atomics; the main thread can't join (Atomics.wait is forbidden there).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Interop bridge between [`crate::JsValue`] and `wasm_bindgen::JsValue`.
 //!
 //! Both crates manage JS objects through their own value tables, so a handle

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Small declarative macros.
 //!
 //! `import!` used to live here as a `macro_rules!` tt-muncher; it is now a

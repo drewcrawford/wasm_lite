@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Host-side code generation for wasm_lite.
 //!
 //! The wasm-side `import!` macro records a descriptor for every imported JS

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Demonstrates a shared-memory `+atomics` build: linear memory is a
 // SharedArrayBuffer (created by JS and imported), and Rust uses real atomic
 // instructions and thread-local storage. This is the single-threaded

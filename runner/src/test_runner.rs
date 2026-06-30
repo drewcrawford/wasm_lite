@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Headless test mode: run a wasm program in a browser and exit with a status
 //! code, for use as a Cargo test runner
 //! (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`).

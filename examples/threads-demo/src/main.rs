@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Spawns real worker threads over wasm_lite's shared memory and coordinates
 // them with atomics. Each worker adds its index to a shared sum; the last one
 // to finish logs the total. The browser main thread cannot block

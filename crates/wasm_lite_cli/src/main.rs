@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `wasm-lite`: generate the JavaScript glue for a compiled wasm_lite module.
 //!
 //! Usage:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The descriptor format written by the `import!` macro.
 //!
 //! Each import is one line: `kind|namespace|import_name|js_name|argtags|rettag\n`,

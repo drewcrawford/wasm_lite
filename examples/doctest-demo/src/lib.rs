@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A crate whose doctests run in the browser via the wasm_lite runner.
 //!
 //! Calling [`wasm_lite::set_panic_hook`] at the top of a doctest makes failures

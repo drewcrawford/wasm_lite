@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Opaque handles to JavaScript values.
 //!
 //! Rust can't hold a JS object directly, so the host keeps a *value table* (an

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Generate the JavaScript glue module from import descriptors.
 
 use crate::descriptor::{AbiArg, Descriptor, Kind, Ret};

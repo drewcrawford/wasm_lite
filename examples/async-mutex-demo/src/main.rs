@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Async Mutex across threads: a worker holds the lock and mutates the value;
 // the main thread acquires it with `lock_async().await` — which must wait for the
 // worker's release and is woken *cross-thread* (the worker's drop notifies the

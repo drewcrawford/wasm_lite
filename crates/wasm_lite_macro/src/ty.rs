@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Shared type classification and descriptor tags.
 //!
 //! All three macros (`#[export]`, `js_class!`, `import!`) agree on how a Rust

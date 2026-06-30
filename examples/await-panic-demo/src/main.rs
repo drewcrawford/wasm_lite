@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Does a panic inside an AWAITED future propagate to the awaiter? It does: the
 // worker's panic is delivered to `join_async().await` as `Err(message)` (the
 // panic hook sends it through the channel before the worker aborts). A wrapper

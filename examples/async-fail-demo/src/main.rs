@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Fail-closed async test that FAILS: an AWAITED worker panics, and the panic
 // propagates (Err -> unwrap -> re-panic on the awaiter), failing the test — even
 // though main returned cleanly. Build with nightly:  cargo +nightly run

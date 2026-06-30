@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A tiny, dependency-free WebDriver client, with optional browser reuse.
 //!
 //! Spawns geckodriver / chromedriver / safaridriver and drives the browser over

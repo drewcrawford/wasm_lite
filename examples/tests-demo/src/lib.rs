@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Library unit-test example for the normal Rust test layout.
 
 pub fn continue_value(value: i32) -> i32 {

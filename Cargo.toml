@@ -24,10 +24,10 @@ exclude = ["examples/hello-rust", "examples/atomics-demo", "examples/threads-dem
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88.0"
 authors = ["Drew Crawford <drew@sealedabstract.com>"]
 license = "MIT OR Apache-2.0"
 keywords = ["wasm", "webassembly", "javascript", "bindings", "wasm-bindgen"]
 categories = ["wasm", "web-programming", "development-tools::ffi"]
 repository = "https://github.com/drewcrawford/wasm_lite"
 homepage = "https://sealedabstract.com/code/wasm_lite"
-rust-version = "1.85.1"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Exercises generalized imports: two `&str` imports (console.log / console.error)
 // and a numeric-returning import (performance.now), all from the wasm_lite lib.
 //

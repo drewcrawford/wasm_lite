@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! The `import!` proc-macro: declare imported JS functions grouped by namespace.
 //!
 //! For each `fn`, emits a safe Rust wrapper plus a function-local wasm import

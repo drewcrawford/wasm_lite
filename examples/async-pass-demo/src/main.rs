@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Fail-closed async test that PASSES: the body awaits a worker and asserts.
 // `async_test!` defers the verdict past `main`; the body signals success only on
 // completion. Build with nightly:  cargo +nightly run

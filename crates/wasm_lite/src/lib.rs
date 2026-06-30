@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # wasm_lite
 //!
 //! ![logo](https://github.com/drewcrawford/wasm_lite/raw/main/art/logo.png)

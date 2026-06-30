@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Low-level thread spawning over Web Workers.
 //!
 //! This is the primitive a `std::thread`-like layer builds on. It requires a

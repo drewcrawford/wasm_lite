@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Rust functions exported to JS via `#[wasm_lite::export]`.
 //!
 //! Each export is one line in the `__wl_exports` section: `name|argtags|rettag`.
