@@ -8,4 +8,4 @@ if [[ " $* " =~ " --relaxed " ]]; then
     WARN_FLAGS=""
 fi
 
-RUSTDOCFLAGS="$WARN_FLAGS" cargo doc --workspace --no-deps
+RUSTDOCFLAGS="$WARN_FLAGS" cargo doc --workspace --no-deps --lib

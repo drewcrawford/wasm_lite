@@ -14,7 +14,7 @@
 //! - [`performance`] — `performance.now()` binding
 //! - [`thread`] — raw cross-thread primitives (prefer [`wasm_lite_std`] for
 //!   the full `std::thread` + `std::sync` surface)
-//! - [`interop`] *(feature `wasm-bindgen`)* — conversions to/from `wasm_bindgen::JsValue`
+//! - `interop` *(feature `wasm-bindgen`)* — conversions to/from `wasm_bindgen::JsValue`
 //!
 //! [`wasm_lite_std`]: https://crates.io/crates/wasm_lite_std
 
