@@ -18,8 +18,7 @@ unchanged:
 * a worker that returns to JS can disappear while Rust async tasks still live in
   its TLS unless the bootstrap drains them deliberately.
 
-[wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/)'s own
-[threaded example](https://wasm-bindgen.github.io/wasm-bindgen/examples/raytrace.html)
+The [wasm-bindgen threaded example](https://wasm-bindgen.github.io/wasm-bindgen/examples/raytrace.html)
 documents several consequences of making threads fit a broad target matrix:
 threaded code needs specific output targets (`web` or `no-modules` in that
 guide), bundler output is not generally supported for that path, worker shims

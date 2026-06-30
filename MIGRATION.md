@@ -1,21 +1,21 @@
 # Migrating from [wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/) to wasm_lite
 
 This guide is for people who already ship Rust on `wasm32-unknown-unknown` with
-`wasm-bindgen` and are evaluating
-`wasm_lite`. It assumes you know the wasm-bindgen flow (`#[wasm_bindgen]`,
-`wasm-pack`, `js-sys`/`web-sys`, `wasm-bindgen-futures`). The
+`wasm-bindgen` and are evaluating `wasm_lite`. It assumes you know the
+wasm-bindgen flow (`#[wasm_bindgen]`, `wasm-pack`, `js-sys`/`web-sys`,
+`wasm-bindgen-futures`). The
 [README](./README.md) is the feature baseline; this document goes deeper on the
 trade-offs, gives a side-by-side "rosetta stone", and walks through the gotchas
 you will actually hit.
 
-> **TL;DR.** `wasm_lite` is a smaller, dependency-light reimplementation of the
-> *core idea* of wasm-bindgen (describe a binding's ABI in a custom wasm section,
-> generate JS glue from the compiled module). It is **not** a drop-in replacement
-> and it does **not** yet have the binding ecosystem (`js-sys`/`web-sys`),
-> Promise interop, or closures-into-JS. What it *does* have that wasm-bindgen
-> does not: a built-in browser test/run/doctest runner, a wasm-bindgen-free
-> threading + async story (`wasm_lite_std`), and zero runtime dependencies /
-> zero bytes of proc-macro output in the `.wasm`.
+> **TL;DR.** `wasm_lite` is a browser-first Rust/JavaScript binding layer built
+> around real-browser run/test/doctest tooling, first-class atomics/threads, and
+> generated ES-module glue. It reuses the *core idea* of wasm-bindgen — describe
+> a binding's ABI in a custom wasm section, then generate JS glue from the
+> compiled module — but it is **not** a drop-in replacement and it does **not**
+> yet have the broad binding ecosystem (`js-sys`/`web-sys`), Promise interop, or
+> closures-into-JS. Zero runtime dependencies are part of the implementation
+> discipline, not the whole pitch.
 
 ---
 
@@ -69,12 +69,13 @@ honest version.
 
 | | wasm-bindgen | wasm_lite |
 |---|---|---|
-| **Runtime deps in your `.wasm`** | pulls `wasm-bindgen` (and usually `js-sys`/`web-sys`) into the dependency graph | **zero** runtime deps; core crate + codegen pull nothing. Proc-macros use `syn`/`quote` but those are build-time only (0 bytes in `.wasm`) |
-| **Toolchain** | needs the external `wasm-bindgen` CLI *and* (for `wasm-pack`) a Node toolchain | one host binary, `wasm-lite`, that reads the `.wasm` and emits a single ES module. No Node, no bundler required |
+| **Browser target** | supports a broad target matrix (`bundler`, `web`, `nodejs`, `no-modules`, Deno, module variants), with behavior that varies by target | targets modern browsers first: one ES-module loader, module workers, COOP/COEP serving, and one runner path |
 | **Testing** | `wasm-bindgen-test` + `wasm-bindgen-test-runner` (separate crates) | built in: `#[wasm_lite_test]`, `cargo test` via a custom runner, **and doctests run in a real browser**. `cargo run --example foo` serves the bin interactively |
 | **Threads** | not in wasm-bindgen proper; you reach for `wasm_thread`/`wasm-bindgen-rayon`, which depend on wasm-bindgen + js-sys | `wasm_lite::thread::spawn` over Web Workers with **no wasm-bindgen/js-sys/web-sys**, plus a `std::thread`-shaped layer (`wasm_lite_std`) with `Mutex`/`RwLock`/`Condvar`/`mpsc`/`JoinHandle` |
+| **Toolchain** | needs the external `wasm-bindgen` CLI *and* (for `wasm-pack`) a Node toolchain | one host binary, `wasm-lite`, that reads the `.wasm` and emits a single ES module. No Node, no bundler required |
 | **Async on the main thread** | `wasm-bindgen-futures` (great for awaiting JS Promises) | an event-loop executor that `Atomics.waitAsync`-sleeps instead of busy-polling, designed for **cross-thread** coordination (`join_async`, `lock_async`) |
 | **`std::time` on wasm** | typically `web-time` (depends on wasm-bindgen/js-sys) | `wasm_lite_std::time` — drop-in `Instant`/`SystemTime`, **no** wasm-bindgen/js-sys |
+| **Runtime deps in your `.wasm`** | pulls `wasm-bindgen` (and usually `js-sys`/`web-sys`) into the dependency graph | **zero** runtime deps; core crate + codegen pull nothing. Proc-macros use `syn`/`quote` but those are build-time only (0 bytes in `.wasm`) |
 | **Architecture surface** | large, mature, lots of moving parts | small enough to read end to end; the whole ABI is "pack `(ptr<<32 | len)` into an `i64`, objects are `u32` table indices" |
 
 ### Where wasm-bindgen wins (today)
@@ -93,9 +94,10 @@ honest version.
 
 ### Who should migrate now
 
-- **Good fit:** compute-in-wasm libraries, CLI-shaped or worker-heavy workloads,
-  anything where you want threads without dragging in the wasm-bindgen stack, and
-  projects that value a tiny dependency graph and a built-in test runner.
+- **Good fit:** compute-in-wasm libraries, browser apps that want one run/test
+  runner path, worker-heavy workloads, anything where you want threads without
+  dragging in the wasm-bindgen stack, and projects that value a small auditable
+  binding model.
 - **Wait for now:** DOM-heavy front ends that lean on `web-sys`, anything that
   `await`s `fetch`/Promises, code that passes closures to JS event listeners, or
   crates whose dependencies assume `getrandom`'s `js` feature.
