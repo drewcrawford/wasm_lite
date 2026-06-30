@@ -99,13 +99,13 @@ pub fn build_interop(input: &Path) -> Result<InteropBundle, String> {
 pub fn patch_wasm_bindgen_glue(js: &str) -> String {
     let mut out = String::with_capacity(js.len() + 64);
     for line in js.lines() {
-        if let Some(rest) = line.trim_start().strip_prefix("import * as ") {
-            if let Some((ident, _)) = rest.split_once(" from ") {
-                out.push_str("const ");
-                out.push_str(ident.trim());
-                out.push_str(" = {};\n");
-                continue;
-            }
+        if let Some(rest) = line.trim_start().strip_prefix("import * as ")
+            && let Some((ident, _)) = rest.split_once(" from ")
+        {
+            out.push_str("const ");
+            out.push_str(ident.trim());
+            out.push_str(" = {};\n");
+            continue;
         }
         out.push_str(line);
         out.push('\n');

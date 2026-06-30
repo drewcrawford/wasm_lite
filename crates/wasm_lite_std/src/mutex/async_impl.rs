@@ -105,19 +105,19 @@ pub(crate) async fn lock_async_timeout<T>(
                         }
 
                         // Poll notification future
-                        if let Some(ref mut notify) = self.notify {
-                            if Pin::new(notify).poll(cx).is_ready() {
-                                self.notify = None;
-                                return Poll::Ready(false); // Got notification
-                            }
+                        if let Some(ref mut notify) = self.notify
+                            && Pin::new(notify).poll(cx).is_ready()
+                        {
+                            self.notify = None;
+                            return Poll::Ready(false); // Got notification
                         }
 
                         // Poll timeout future
-                        if let Some(ref mut timeout) = self.timeout {
-                            if Pin::new(timeout).poll(cx).is_ready() {
-                                self.timeout = None;
-                                return Poll::Ready(true); // Timed out
-                            }
+                        if let Some(ref mut timeout) = self.timeout
+                            && Pin::new(timeout).poll(cx).is_ready()
+                        {
+                            self.timeout = None;
+                            return Poll::Ready(true); // Timed out
                         }
 
                         Poll::Pending

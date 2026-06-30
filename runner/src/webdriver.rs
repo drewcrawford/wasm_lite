@@ -98,16 +98,16 @@ impl Browser {
         let lock = Lock::acquire();
         let kind = Kind::from_env();
 
-        if let Some((port, session, _pid)) = read_state() {
-            if session_alive(port, &session) {
-                return Ok(Browser {
-                    driver: None,
-                    port,
-                    session,
-                    keep_session: true,
-                    _lock: Some(lock),
-                });
-            }
+        if let Some((port, session, _pid)) = read_state()
+            && session_alive(port, &session)
+        {
+            return Ok(Browser {
+                driver: None,
+                port,
+                session,
+                keep_session: true,
+                _lock: Some(lock),
+            });
         }
 
         let port = free_port()?;
@@ -200,10 +200,10 @@ fn spawn_driver(kind: &Kind, port: u16) -> Result<Child, String> {
 fn wait_ready(port: u16) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Ok(body) = http(port, "GET", "/status", None) {
-            if body.contains("\"ready\":true") {
-                return Ok(());
-            }
+        if let Ok(body) = http(port, "GET", "/status", None)
+            && body.contains("\"ready\":true")
+        {
+            return Ok(());
         }
         if Instant::now() > deadline {
             return Err("WebDriver did not become ready".to_string());

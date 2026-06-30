@@ -401,7 +401,7 @@ async fn test_condvar_notify_one_only_wakes_one() {
     }
 
     let (mutex, _) = &*pair;
-    assert_eq!(*mutex.lock_sync(), true);
+    assert!(*mutex.lock_sync());
 }
 
 #[test_executors::async_test]

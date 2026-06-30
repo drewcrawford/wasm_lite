@@ -702,7 +702,7 @@ mod time_tests {
         assert!(b >= a, "Instant::now() must be nondecreasing");
         // The reverse difference saturates to zero rather than panicking.
         assert_eq!(a.saturating_duration_since(b), Duration::ZERO);
-        assert_eq!(a.checked_duration_since(b).is_none() || a == b, true);
+        assert!(a.checked_duration_since(b).is_none() || a == b);
     }
 
     #[test]

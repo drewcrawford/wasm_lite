@@ -11,12 +11,13 @@ use syn::{Ident, LitByteStr, Type};
 
 /// The ident of a bare path type with no generics (e.g. `JsValue`, `bool`).
 pub(crate) fn simple_ident(ty: &Type) -> Option<&Ident> {
-    if let Type::Path(tp) = ty {
-        if tp.qself.is_none() && tp.path.segments.len() == 1 {
-            let seg = &tp.path.segments[0];
-            if seg.arguments.is_empty() {
-                return Some(&seg.ident);
-            }
+    if let Type::Path(tp) = ty
+        && tp.qself.is_none()
+        && tp.path.segments.len() == 1
+    {
+        let seg = &tp.path.segments[0];
+        if seg.arguments.is_empty() {
+            return Some(&seg.ident);
         }
     }
     None
@@ -40,10 +41,10 @@ pub(crate) fn is_str(ty: &Type) -> bool {
 }
 
 pub(crate) fn is_byte_slice(ty: &Type) -> bool {
-    if let Type::Reference(r) = ty {
-        if let Type::Slice(s) = &*r.elem {
-            return is_ident(&s.elem, "u8");
-        }
+    if let Type::Reference(r) = ty
+        && let Type::Slice(s) = &*r.elem
+    {
+        return is_ident(&s.elem, "u8");
     }
     false
 }
@@ -82,12 +83,11 @@ pub(crate) fn payload_tag(ty: &Type) -> Option<String> {
 /// If `ty` is `Name<Inner>` with exactly one type argument, return `Inner`.
 pub(crate) fn generic1<'a>(ty: &'a Type, name: &str) -> Option<&'a Type> {
     let seg = last_segment(ty, name)?;
-    if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
-        if ab.args.len() == 1 {
-            if let syn::GenericArgument::Type(t) = &ab.args[0] {
-                return Some(t);
-            }
-        }
+    if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments
+        && ab.args.len() == 1
+        && let syn::GenericArgument::Type(t) = &ab.args[0]
+    {
+        return Some(t);
     }
     None
 }

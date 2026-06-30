@@ -22,7 +22,7 @@ fn test_lock_try() {
     drop(lock2);
     //fail to acquire write lock
     let lock2 = mutex.try_lock_write();
-    assert!(!lock2.is_ok());
+    assert!(lock2.is_err());
 
     drop(lock);
     let mut write_lock = mutex.try_lock_write();
@@ -34,7 +34,7 @@ fn test_lock_try() {
 
     //fail to acquire a new read lock
     let read_lock = mutex.try_lock_read();
-    assert!(!read_lock.is_ok());
+    assert!(read_lock.is_err());
 
     drop(write_lock);
     //new read lock

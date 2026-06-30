@@ -73,6 +73,7 @@ pub extern "C" fn __wl_thread_alloc(size: usize) -> *mut u8 {
 
 /// Free a block from [`__wl_thread_alloc`] (`size` must match).
 #[doc(hidden)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __wl_thread_free(ptr: *mut u8, size: usize) {
     if size == 0 {

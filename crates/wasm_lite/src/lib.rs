@@ -74,6 +74,7 @@ pub extern "C" fn __wl_malloc(len: usize) -> *mut u8 {
 
 /// Free a buffer from [`__wl_malloc`] (`len` must match the allocation).
 #[doc(hidden)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __wl_free(ptr: *mut u8, len: usize) {
     if len == 0 {
