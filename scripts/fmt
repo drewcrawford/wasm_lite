@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+cargo fmt --check
+
+for manifest in examples/*/Cargo.toml; do
+    cargo fmt --check --manifest-path "$manifest" --all
+done

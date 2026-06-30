@@ -594,7 +594,7 @@ impl Parse for JsMethod {
 
 fn build_js_class(class_def: &JsClass) -> syn::Result<TokenStream2> {
     let class = &class_def.class;
-    let module = format_ident!("__wl_class_{}", class);
+    let module = format_ident!("__wl_class_{}", snake_case_ident(class));
     let class_lit = LitStr::new(&class.to_string(), Span::call_site());
 
     let mut wrappers: Vec<TokenStream2> = Vec::new();
@@ -672,6 +672,35 @@ fn build_js_class(class_def: &JsClass) -> syn::Result<TokenStream2> {
             }
         }
     })
+}
+
+fn snake_case_ident(ident: &Ident) -> String {
+    let raw = ident.to_string();
+    let raw = raw.strip_prefix("r#").unwrap_or(&raw);
+    let mut out = String::new();
+    let mut chars = raw.chars().peekable();
+    let mut prev: Option<char> = None;
+
+    while let Some(ch) = chars.next() {
+        if ch.is_uppercase() {
+            let next = chars.peek().copied();
+            let needs_sep = prev.is_some_and(|p| {
+                p != '_'
+                    && (p.is_lowercase()
+                        || p.is_ascii_digit()
+                        || next.is_some_and(char::is_lowercase))
+            });
+            if needs_sep {
+                out.push('_');
+            }
+            out.extend(ch.to_lowercase());
+        } else {
+            out.push(ch);
+        }
+        prev = Some(ch);
+    }
+
+    out
 }
 
 /// How a `js_class!` method argument crosses into the underlying `import!` call.

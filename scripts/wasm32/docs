@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ " $* " =~ " --relaxed " ]]; then
+    export RELAXED_WARNINGS=1
+fi
+source "$(dirname "$0")/_env"
+cd "$REPO_ROOT"
+
+RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo doc -p wasm_lite --target wasm32-unknown-unknown --no-deps
+RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo +nightly doc -p wasm_lite_std --target wasm32-unknown-unknown --no-deps
+
+for example in \
+    examples/exports-demo \
+    examples/doctest-demo \
+    examples/interop
+do
+    echo "documenting $example"
+    (cd "$example" && RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo doc --target wasm32-unknown-unknown --no-deps)
+done
+
+RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" cargo +nightly doc -p wasm_lite_std --target wasm32-unknown-unknown --no-deps -Z build-std=std,panic_abort

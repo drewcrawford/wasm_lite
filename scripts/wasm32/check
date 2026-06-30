@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ " $* " =~ " --relaxed " ]]; then
+    export RELAXED_WARNINGS=1
+fi
+source "$(dirname "$0")/_env"
+cd "$REPO_ROOT"
+
+RUSTFLAGS="$WASM32_RUSTFLAGS" cargo check -p wasm_lite --target wasm32-unknown-unknown
+RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly check -p wasm_lite_std --target wasm32-unknown-unknown
+
+for example in \
+    examples/hello-rust \
+    examples/exports-demo \
+    examples/tests-demo \
+    examples/doctest-demo \
+    examples/interop
+do
+    echo "checking $example"
+    (cd "$example" && RUSTFLAGS="$WASM32_RUSTFLAGS" cargo check --target wasm32-unknown-unknown)
+done
+
+for example in \
+    examples/atomics-demo \
+    examples/threads-demo \
+    examples/std-threads-demo \
+    examples/async-demo \
+    examples/async-mutex-demo \
+    examples/panic-demo \
+    examples/await-panic-demo \
+    examples/async-pass-demo \
+    examples/async-fail-demo \
+    examples/async-doctest-demo \
+    examples/worker-spawn-local-demo
+do
+    echo "checking $example"
+    (cd "$example" && RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" cargo +nightly check)
+done

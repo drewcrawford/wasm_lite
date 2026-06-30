@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ " $* " =~ " --relaxed " ]]; then
+    export RELAXED_WARNINGS=1
+fi
+source "$(dirname "$0")/_env"
+cd "$REPO_ROOT"
+
+CARGO_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" != "--relaxed" ]]; then
+        CARGO_ARGS+=("$arg")
+    fi
+done
+
+cargo build -p runner
+
+echo "testing examples/tests-demo passing suite"
+(cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test passing)
+
+echo "testing examples/doctest-demo doctests"
+(cd examples/doctest-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --doc)
+
+echo "testing wasm_lite_std browser suite"
+if ((${#CARGO_ARGS[@]})); then
+    RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \
+    RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+    cargo +nightly test -p wasm_lite_std --test browser \
+        --target wasm32-unknown-unknown -Z build-std=std,panic_abort "${CARGO_ARGS[@]}"
+else
+    RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \
+    RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+    cargo +nightly test -p wasm_lite_std --test browser \
+        --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+fi

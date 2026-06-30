@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+
+WARN_FLAGS="-D warnings"
+if [[ " $* " =~ " --relaxed " ]]; then
+    WARN_FLAGS=""
+fi
+
+RUSTFLAGS="$WARN_FLAGS" cargo check --workspace
