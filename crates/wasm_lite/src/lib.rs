@@ -1,9 +1,22 @@
-//! wasm_lite: minimal JavaScript bindings for Rust compiled to wasm.
+//! A dependency-light JavaScript binding layer for `wasm32-unknown-unknown`.
 //!
 //! Imports are declared with the [`import!`] macro, which records a descriptor
 //! for each import into the `__wasm_lite_imports` custom wasm section. The
-//! host-side `wasm_lite_codegen` crate reads that section and generates the
-//! matching JavaScript shims, so no JS is hand-written per import.
+//! `runner` cargo-runner (or the `wasm-lite` CLI directly) reads that section,
+//! generates the matching JavaScript shims, and serves or drives the module — no
+//! JS is hand-written per import, and no `wasm-bindgen` / `wasm-pack` toolchain
+//! is required.
+//!
+//! # Modules
+//!
+//! - [`console`] — `console.log` / `console.error` bindings
+//! - [`date`] — `Date.now()` binding
+//! - [`performance`] — `performance.now()` binding
+//! - [`thread`] — raw cross-thread primitives (prefer [`wasm_lite_std`] for
+//!   the full `std::thread` + `std::sync` surface)
+//! - [`interop`] *(feature `wasm-bindgen`)* — conversions to/from `wasm_bindgen::JsValue`
+//!
+//! [`wasm_lite_std`]: https://crates.io/crates/wasm_lite_std
 
 // The proc-macros (`import!`, `#[export]`, `js_class!`) emit absolute
 // `::wasm_lite::…` paths (a proc-macro can't use `$crate`). This self-alias lets

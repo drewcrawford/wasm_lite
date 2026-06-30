@@ -7,6 +7,7 @@
 //! the shim looks the object up. Dropping a `JsValue` frees its table slot via
 //! the `__wasm_lite.__wl_drop` runtime import.
 
+use core::fmt;
 use core::marker::PhantomData;
 
 /// A handle to a JavaScript value living in the host's value table.
@@ -34,6 +35,12 @@ impl JsValue {
             idx,
             _not_thread_safe: PhantomData,
         }
+    }
+}
+
+impl fmt::Debug for JsValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JsValue").field("idx", &self.idx).finish()
     }
 }
 

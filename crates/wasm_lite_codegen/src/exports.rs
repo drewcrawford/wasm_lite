@@ -3,7 +3,8 @@
 //! Each export is one line in the `__wl_exports` section: `name|argtags|rettag`.
 
 /// A Rust function exported to JavaScript.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Export {
     /// The JS-callable name (the Rust fn name).
     pub name: String,
@@ -14,7 +15,8 @@ pub struct Export {
 }
 
 /// How an exported function's argument crosses from JS into wasm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ExportArg {
     /// A number/bool, passed through.
     Num,
@@ -29,7 +31,8 @@ pub enum ExportArg {
 }
 
 /// A scalar payload inside an `Option`/`Result` sret return.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Payload {
     I32,
     U32,
@@ -64,7 +67,8 @@ impl Payload {
 }
 
 /// How an export's return value is presented to JS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ExportRet {
     /// No return value.
     Void,

@@ -13,7 +13,8 @@
 use crate::exports::Payload;
 
 /// Whether an import is a namespaced free function or a method on a receiver.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Kind {
     /// `globalThis[namespace][js_name](args)`.
     Function,
@@ -22,7 +23,8 @@ pub enum Kind {
 }
 
 /// The return marshalling of an import.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Ret {
     /// No return value.
     Void,
@@ -41,7 +43,8 @@ pub enum Ret {
 }
 
 /// A single imported JavaScript function.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Descriptor {
     /// Whether this is a namespaced function or a method call.
     pub kind: Kind,
@@ -58,7 +61,8 @@ pub struct Descriptor {
 }
 
 /// How an argument crosses the wasm boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AbiArg {
     /// A `&str`: arrives as two wasm params `(ptr, len)`; decode from memory.
     Str,

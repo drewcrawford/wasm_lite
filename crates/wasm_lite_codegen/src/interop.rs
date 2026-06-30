@@ -10,6 +10,8 @@ use std::path::Path;
 use std::process::Command;
 
 /// The assembled JS + wasm pieces of an interop bundle.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct InteropBundle {
     /// The wasm-bindgen-finalized module (serve/write as `program.wasm`).
     pub wasm: Vec<u8>,

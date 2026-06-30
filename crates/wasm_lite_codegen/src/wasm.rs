@@ -29,7 +29,8 @@ pub fn custom_section<'a>(wasm: &'a [u8], name: &str) -> Result<Option<&'a [u8]>
 
 /// An imported memory, as produced by linking with `--import-memory`
 /// (e.g. shared-memory `+atomics` builds, where JS creates the `WebAssembly.Memory`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct MemoryImport {
     /// Import module (LLD uses `env`).
     pub module: String,
