@@ -19,9 +19,51 @@ you will actually hit.
 
 ---
 
+## Goals that shape the migration choice
+
+Before comparing APIs, be clear about the target. wasm_lite is built for modern
+browsers first. It does not try to match wasm-bindgen's full JavaScript output
+matrix (`bundler`, `web`, `nodejs`, `no-modules`, Deno, module variants). That
+means a wasm_lite migration is a bad fit if your priority is Node CommonJS,
+IE-era script loading, legacy no-module scripts, or packaging compatibility with
+every bundler. It is a good fit when the browser is the product target and you
+want the toolchain to own the browser details directly.
+
+That choice has practical advantages over a compatibility-first target matrix:
+the generated glue has one ES-module shape, worker bootstrap can assume module
+workers, shared-memory runs can always be served with COOP/COEP, and the
+test/log/panic path does not need separate Node, no-module, bundler, and browser
+variants.
+
+The practical goals are:
+
+* **Atomics and threads as a supported path.** wasm_lite's codegen and runner
+  know about shared memory, module workers, COOP/COEP headers, TLS/stack setup,
+  and worker teardown.
+* **Std-like browser Rust.** `wasm_lite_std` provides the thread/sync/time slice:
+  `spawn`, `JoinHandle`, `Mutex`, `RwLock`, `Condvar`, `mpsc`, `Instant`, and
+  `SystemTime`, with async alternatives where the main thread cannot block.
+* **Testing and logging as core behavior.** The runner drives `cargo run`,
+  `cargo test`, and rustdoc doctests in real browsers, runs harness tests in
+  fresh page loads, captures console output, bridges worker logs, and surfaces
+  panics to the CLI.
+* **One runner path.** Serving, codegen, browser launch, worker bootstrap, test
+  execution, and panic/log reporting are one system, which keeps browser-specific
+  fixes local and deliberate.
+
+These goals come from real wasm-bindgen pain points too: wasm-bindgen-test
+defaults to Node unless configured otherwise, normal `#[test]` is not the wasm
+test primitive, its own test README lists fresh per-test instances as future
+work, and the [`wasm_ffi`](https://github.com/drewcrawford/wasm_ffi) fork exists
+partly because doctests, worker log capture, realtime headless output,
+Node/thread behavior, and logging performance needed application-driven fixes.
+
+---
+
 ## 1. Should you migrate? Detailed pros and cons
 
-The README has a short "design goals" list. Here is the longer, honest version.
+The README has the short project-goals and status overview. Here is the longer,
+honest version.
 
 ### Where wasm_lite wins
 

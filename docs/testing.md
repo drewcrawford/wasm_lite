@@ -8,6 +8,41 @@ wasm_lite runs your tests in a *real* browser. The runner discovers each test,
 drives it headless, and reports pass / fail / panic back to `cargo`. This page is
 organized by task.
 
+## Testing goals
+
+Testing is a first-class part of the design, not a separate JS-side harness that
+users assemble later.
+
+* **Browser by default.** The
+  [wasm-bindgen-test runner](https://github.com/rustwasm/wasm-bindgen/blob/main/crates/test/README.md)
+  documents a Node execution path unless a suite opts into browser mode.
+  wasm_lite's runner always uses a real browser, because modern browser behavior
+  — module workers, `SharedArrayBuffer`, COOP/COEP, `Atomics.waitAsync`, and
+  WebDriver-observed failures — is the target.
+* **Cargo-shaped workflow.** The same binary is both server and test runner. It
+  serves `cargo run` interactively, runs `cargo test` headless, and detects
+  rustdoc doctest artifacts (`rustdoctest...`) so doctests go through the same
+  browser path.
+* **Isolation by default.** `#[wasm_lite_test]` names are discovered from the
+  `__wasm_lite_tests` section, and each test runs in a fresh page load. That
+  avoids one test's panic or mutated JS state poisoning the next test. The
+  wasm-bindgen-test runner docs list "running each test in its own Wasm
+  instance" as future work in that harness.
+* **Fail-closed async.** The generated glue has explicit pending/pass test
+  hooks. An async test must mark itself pending and later mark itself passed; if
+  a future panics, is dropped, or hangs, the runner reports failure or timeout
+  instead of accepting `main` returning as success.
+* **CLI-visible logs and panics.** The HTML shell captures `console.log`,
+  `console.error`, `console.warn`, and `console.info`; generated worker glue
+  forwards worker console output to the main realm; and the test runner prints
+  captured panic messages rather than leaving users with a bare wasm trap.
+
+This is informed by the [`wasm_ffi`](https://github.com/drewcrawford/wasm_ffi)
+work on wasm-bindgen: that fork exists largely because real applications exposed
+gaps in doctests, worker log capture, realtime headless output, Node/thread
+behavior, and logging performance. wasm_lite bakes those lessons into the
+runner instead of treating them as after-the-fact patches.
+
 ## Point `cargo test` at the runner
 
 Set the runner as the wasm target's test/run command (see the

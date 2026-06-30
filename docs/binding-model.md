@@ -4,6 +4,14 @@
 [threads & async](./threads-and-async.md), [interop](./interop.md),
 [roadmap](./roadmap.md), [migration guide](../MIGRATION.md).)*
 
+The binding model follows the same browser-first goals as the rest of the
+project: keep the runtime dependency graph empty, make the wasm ABI small enough
+to audit, and let the host-side codegen/runner own the browser-specific glue.
+Instead of an all-in-one `#[wasm_bindgen]` macro, Rust emits normal wasm
+imports/exports plus descriptors in custom sections; `wasm-lite` reads those
+descriptors after compilation and generates the ES-module loader, wrappers, and
+worker-aware runtime shims.
+
 **Import JS into Rust** — `import!`, grouped by JS namespace:
 
 ```rust

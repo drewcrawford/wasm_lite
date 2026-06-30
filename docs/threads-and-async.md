@@ -4,6 +4,30 @@
 [testing](./testing.md), [interop](./interop.md), [roadmap](./roadmap.md),
 [migration guide](../MIGRATION.md).)*
 
+## Threading goals
+
+Atomics, workers, and std-like concurrency are first-class targets for
+wasm_lite. The main target is still the browser, so the design starts from
+browser constraints instead of pretending `std::thread` can be dropped in
+unchanged:
+
+* the browser main thread cannot block on `Atomics.wait`;
+* shared memory requires `SharedArrayBuffer` and cross-origin isolation headers;
+* workers are separate JS realms, so logs and value handles need explicit
+  routing;
+* a worker that returns to JS can disappear while Rust async tasks still live in
+  its TLS unless the bootstrap drains them deliberately.
+
+wasm-bindgen's own
+[threaded example](https://wasm-bindgen.github.io/wasm-bindgen/examples/raytrace.html)
+documents several consequences of making threads fit a broad target matrix:
+threaded code needs specific output targets (`web` or `no-modules` in that
+guide), bundler output is not generally supported for that path, worker shims
+are hand-shaped, and there is no standard `std::thread`-like model. wasm_lite
+narrows the target to modern browsers so the implementation can own the whole
+path: shared memory creation, module-worker startup, TLS/stack setup, async
+draining, COOP/COEP serving, logging, and test capture.
+
 ## Shared memory & atomics
 
 wasm_lite runs modules built with the threads-related wasm features

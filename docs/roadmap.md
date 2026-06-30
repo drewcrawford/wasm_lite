@@ -4,6 +4,46 @@
 [testing](./testing.md), [threads & async](./threads-and-async.md),
 [interop](./interop.md), [migration guide](../MIGRATION.md).)*
 
+## Goals that shape the roadmap
+
+The roadmap is not "rebuild all of wasm-bindgen." It is guided by a smaller set
+of browser-first goals:
+
+* **Modern browsers are the primary backend.** wasm_lite intentionally emits a
+  modern ES-module browser loader and serves it through the runner. It does not
+  currently generate Node CommonJS, IE-era script loading, legacy no-module
+  scripts, or a matrix of bundler-specific outputs. wasm-bindgen's broader
+  target matrix is valuable, but it creates target-specific behavior: its
+  [CLI](https://wasm-bindgen.github.io/wasm-bindgen/reference/cli.html) has
+  `bundler`, `web`, `nodejs`, `no-modules`, Deno, and module variants; its docs
+  call out [JS snippet](https://wasm-bindgen.github.io/wasm-bindgen/reference/js-snippets.html)
+  support and [threaded wasm](https://wasm-bindgen.github.io/wasm-bindgen/examples/raytrace.html)
+  caveats that vary by target. wasm_lite spends that complexity budget on the
+  browser path instead. The concrete payoff is one ES-module loader, module
+  workers, consistent COOP/COEP serving, and one implementation of test/log/panic
+  capture rather than a compatibility layer for every old script model.
+* **Atomics and threads are first-class, not an example-only afterthought.** The
+  existing implementation already reads imported shared memory, creates the
+  shared `WebAssembly.Memory`, emits `wl_worker.js`, starts module workers, and
+  serves COOP/COEP headers. Roadmap items like a worker pool, cooperative
+  cancellation, `sleep_async`, and broader `std::sync` parity are extensions of
+  that same path.
+* **Std-like APIs should exist where the browser can support them.** `Mutex`,
+  `RwLock`, `Condvar`, `mpsc`, `JoinHandle`, `Instant`, and `SystemTime` are not
+  just demos; they are the compatibility layer many Rust crates want. Roadmap
+  items such as `Once`, `Barrier`, scoped threads, and a no-atomics
+  `queueMicrotask` executor continue that theme.
+* **Testing and logging are product features.** The runner already detects
+  rustdoc doctest artifacts, runs wasm tests in real browsers, captures console
+  output, and surfaces main-thread and worker panics to the CLI. Roadmap items
+  such as test filtering, browser session pooling, and deployment bundling are
+  runner work because one server/test runner owns the local feedback loop.
+* **Interop is a migration tool, not the destination.** The supported direction
+  is currently "wasm-lite is the final codegen step." Reverse interop and shim
+  strategies exist because real applications may need wgpu/web-sys today, but
+  the long-term browser-first design still wants wasm_lite's runner, atomics,
+  logging, and test semantics to remain coherent.
+
 ## Planned crate layering
 
 Following the wasm-bindgen ecosystem split (language vs browser):

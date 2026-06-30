@@ -2,14 +2,25 @@
 //!
 //! ![logo](https://github.com/drewcrawford/wasm_lite/raw/main/art/logo.png)
 //!
-//! A dependency-light rewrite of wasm-bindgen: bind JavaScript and Rust to each
-//! other on `wasm32-unknown-unknown`, with no *runtime* dependencies and a small
-//! host-side codegen tool.
+//! A browser-first Rust/JavaScript binding layer for `wasm32-unknown-unknown`:
+//! bind JavaScript and Rust to each other with zero *runtime* dependencies in
+//! the core crate and host codegen, generated ES-module glue, and a runner that
+//! treats modern browsers as the main backend.
 //!
-//! The core crate ([`import!`], [`JsValue`], runtime helpers) and the host
-//! codegen are dependency-free. The proc-macros (`wasm_lite_macro`) use
-//! `syn`/`quote`, which are build-time-only and add zero bytes to the final
-//! `.wasm`.
+//! [`wasm_lite`](crate) is intentionally narrower than wasm-bindgen. It focuses
+//! on the path where one tool owns the browser loop end to end: codegen, local
+//! serving, WebDriver launch, `cargo run`, `cargo test`, rustdoc doctests,
+//! worker bootstrap, logs, and panics. Atomics, Web Workers, and std-like
+//! browser concurrency through [`wasm_lite_std`] are part of that target, not a
+//! separate afterthought.
+//!
+//! Put differently: this is not an IE6-era compatibility project. WebAssembly
+//! already implies a modern-enough runtime; [`wasm_lite`](crate) leans into that
+//! instead of carrying legacy script-tag, no-module, CommonJS, and
+//! bundler-specific branches through every layer.
+//!
+//! The proc-macros (`wasm_lite_macro`) use `syn`/`quote`, which are
+//! build-time-only and add zero bytes to the final `.wasm`.
 //!
 //! **Coming from wasm-bindgen?** See the
 //! [migration guide](https://github.com/drewcrawford/wasm_lite/blob/main/MIGRATION.md)
@@ -18,12 +29,26 @@
 //!
 //! ## Why wasm_lite?
 //!
-//! Use [`wasm_lite`](crate) when you want Rust/JavaScript bindings on
-//! `wasm32-unknown-unknown`, but want the runtime side to stay small and
-//! explicit: zero runtime dependencies in the core crate and codegen,
-//! descriptor-driven JS glue, and a browser runner that treats `cargo run`,
-//! `cargo test`, and doctests as real browser executions. This is the short
-//! version of the
+//! Use [`wasm_lite`](crate) when your main wasm target is a modern browser and
+//! you want the Rust side of that browser app to stay small, explicit, and
+//! testable: zero runtime dependencies in the core crate and codegen, binding
+//! descriptors in custom wasm sections, generated ES-module glue, and one runner
+//! that owns serving, WebDriver launch, tests, doctests, logs, panics, and worker
+//! bootstrap.
+//!
+//! That narrower target is the point. [`wasm_lite`](crate) is optimized for
+//! projects that:
+//!
+//! * ship to modern browsers rather than Node CommonJS, IE-era script loading,
+//!   legacy no-module scripts, or a matrix of bundler-specific outputs;
+//! * need shared-memory `+atomics` builds, Web Workers, or std-like browser
+//!   concurrency through [`wasm_lite_std`];
+//! * want `cargo test` and rustdoc doctests to run in a real browser, with
+//!   useful logs and panic messages in the CLI;
+//! * prefer a small, auditable binding model over a broad generated Web API
+//!   surface.
+//!
+//! This is the short version of the
 //! [migration guide](https://github.com/drewcrawford/wasm_lite/blob/main/MIGRATION.md),
 //! [roadmap](https://github.com/drewcrawford/wasm_lite/blob/main/docs/roadmap.md),
 //! and
@@ -38,24 +63,67 @@
 //! | [Component Model / WIT](https://component-model.bytecodealliance.org/) | language-neutral component interfaces, WASI, composition, and tooling such as `wit-bindgen` and `jco` |
 //! | raw `WebAssembly.instantiate` | tiny ABIs that only need numeric imports/exports and handwritten JavaScript |
 //!
-//! [`wasm_lite`](crate) is intentionally narrower than `wasm-bindgen`: it
-//! favors a small, auditable binding model and zero runtime deps over maximal
-//! Web API coverage. It is a good fit for libraries or applications that only
-//! need a focused binding surface, want browser tests without a JS test harness,
-//! or need the [`wasm_lite_std`] thread/async path over shared memory.
-//!
-//! The trade-off, called out in the migration guide and roadmap, is that
-//! [`wasm_lite`](crate) does **not** yet replace the broad `js-sys`/`web-sys`
-//! ecosystem, Promise interop (`JsFuture` / `wasm-bindgen-futures`), Rust
-//! closures passed into JS, TypeScript declaration generation, or rich
-//! serde-style marshalling. The `wasm-bindgen` feature supports incremental
-//! migration in the direction where `wasm-lite` is the final codegen step; the
-//! reverse direction, where a wasm-bindgen/wasm-pack app consumes a wasm_lite
-//! leaf without running `wasm-lite`, is still roadmap work.
+//! The trade-off is intentional. [`wasm_lite`](crate) does **not** yet replace
+//! the broad `js-sys`/`web-sys` ecosystem, Promise interop (`JsFuture` /
+//! `wasm-bindgen-futures`), Rust closures passed into JS, TypeScript declaration
+//! generation, or rich serde-style marshalling. The `wasm-bindgen` feature
+//! supports incremental migration in the direction where `wasm-lite` is the
+//! final codegen step; the reverse direction, where a wasm-bindgen/wasm-pack app
+//! consumes a wasm_lite leaf without running `wasm-lite`, is still roadmap work.
 //!
 //! Prefer `wasm-bindgen` when you need its mature ecosystem surface today.
-//! Prefer Component Model tooling when your primary goal is language-neutral
-//! component composition rather than a browser-first Rust/JS binding layer.
+//! Prefer [`wasm_lite`](crate) when the browser path itself is the product
+//! surface you want the tooling to own: atomics, workers, testing, doctests,
+//! logging, panics, and small bindings. Prefer Component Model tooling when your
+//! primary goal is language-neutral component composition rather than a
+//! browser-first Rust/JS binding layer.
+//!
+//! ## Project Goals
+//!
+//! [`wasm_lite`](crate) is opinionated about the target. It is not trying to
+//! generate every JavaScript packaging shape; the main backend is **modern
+//! browsers**.
+//!
+//! * **Modern browsers first.** The generated glue is an ES module, the runner
+//!   serves it over HTTP, and shared-memory pages get COOP/COEP headers. We do
+//!   not currently target Node CommonJS, IE-era script loading, legacy no-module
+//!   scripts, or every bundler mode. The upside is that browser behavior, module
+//!   workers, `SharedArrayBuffer`, cross-origin isolation, and WebDriver testing
+//!   can be handled directly.
+//! * **Atomics and threads first-class.** Shared-memory `+atomics` builds are
+//!   not an edge case: codegen creates shared `WebAssembly.Memory`, emits a
+//!   module-worker bootstrap, and the runner serves it with cross-origin
+//!   isolation.
+//! * **Std-like browser abstractions.** [`wasm_lite_std`] provides the
+//!   `std::thread`/`std::sync`/`std::time` slice that browser wasm is missing:
+//!   `spawn`, `JoinHandle`, `Mutex`, `RwLock`, `Condvar`, `mpsc`, `Instant`,
+//!   and `SystemTime`, with sync and async paths where the browser main thread
+//!   cannot block.
+//! * **First-class testing.** The same runner drives `cargo run`, `cargo test`,
+//!   and rustdoc doctests in a real browser. Harness tests run one page load per
+//!   test; async tests are fail-closed so a dropped task, panic, or hang cannot
+//!   accidentally pass.
+//! * **First-class logging and panic surfacing.** Panic hooks and generated
+//!   glue route logs through the browser console, bridge worker console output
+//!   back to the main realm, and print useful panic output in the CLI instead
+//!   of a bare `unreachable` trap.
+//! * **One server/runner path.** Local serving, generated glue, worker
+//!   bootstrap files, browser launch, test execution, console capture, and
+//!   failure reporting live in one runner instead of separate JS harnesses per
+//!   mode.
+//!
+//! These goals explain several choices that are deliberately different from
+//! wasm-bindgen. wasm-bindgen supports many output targets (`bundler`, `web`,
+//! `nodejs`, `no-modules`, Deno, and module variants), but that breadth creates
+//! target-specific caveats: JS snippets only work for some targets, threaded
+//! wasm needs particular target modes and hand-shaped worker shims, and
+//! `wasm-bindgen` tests default to Node unless the suite asks for a browser.
+//! [`wasm_lite`](crate) narrows the target so the browser runner, atomics,
+//! worker startup, doctests, and logging can be designed as one path. Giving up
+//! legacy/no-module/CJS targets means the glue can stay one ES-module loader,
+//! worker startup can use module workers, the runner can always serve the
+//! headers shared memory needs, and tests/log capture do not need a separate
+//! implementation for every JavaScript packaging format.
 //!
 //! ## Example
 //!
@@ -233,20 +301,21 @@
 //! | `examples/panic-demo` | worker panic surfaced on the CLI; nightly |
 //! | `examples/worker-spawn-local-demo` | a worker that itself `spawn_local`s async work; nightly |
 //!
-//! ## Design Goals
+//! ## Status
 //!
-//! * Runner for major web browsers: **done** (WebDriver: Firefox/Chrome/Safari).
-//! * Support with and without `+atomics`: **done**. Shared-memory `+atomics`
-//!   builds run, threads spawn onto Web Workers ([`thread::spawn`]), and the
-//!   `std::thread`-like layer [`wasm_lite_std`] (sync **and** async) sits on top.
-//! * Unit test support: **done** ([`wasm_lite_test`], `cargo test` via a custom runner).
-//! * Bind JS APIs to Rust and vice versa: **done** ([`import!`] / [`export`]).
-//! * Doctest support: **done** (runs rustdoc doctests in a browser).
+//! * Modern-browser runner: **done** (WebDriver: Firefox/Chrome/Safari).
+//! * `+atomics` / shared-memory builds: **done**; threads spawn onto Web Workers.
+//! * Std-like thread/sync/time veneer: **done** in [`wasm_lite_std`] (sync and async).
+//! * Unit tests and doctests in-browser: **done**.
+//! * Rust/JS imports and exports: **done** ([`import!`] / [`export`]).
+//! * Logging and panic surfacing to the CLI: **done** for main-thread failures,
+//!   joined workers, detached-worker warnings, and doctests with [`set_panic_hook`].
 //! * Simple, clean architecture: ongoing.
 //! * Avoid dependencies: **mostly held**. The core crate and codegen have zero
 //!   runtime dependencies. The proc-macro crate uses `syn`/`quote` at build time
 //!   for typed parsing and hygienic codegen.
-//! * Interop with wasm-bindgen crates: **done** behind the `wasm-bindgen` feature.
+//! * Interop with wasm-bindgen crates: **done** behind the `wasm-bindgen` feature,
+//!   with reverse interop still on the roadmap.
 //!
 //! [`wasm_lite_std`]: https://crates.io/crates/wasm_lite_std
 
