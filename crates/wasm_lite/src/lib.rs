@@ -16,6 +16,47 @@
 //! for a detailed pros/cons comparison, a side-by-side "rosetta stone" of how
 //! to do X in each, and the design trade-offs and gotchas to expect.
 //!
+//! ## Why wasm_lite?
+//!
+//! Use [`wasm_lite`](crate) when you want Rust/JavaScript bindings on
+//! `wasm32-unknown-unknown`, but want the runtime side to stay small and
+//! explicit: zero runtime dependencies in the core crate and codegen,
+//! descriptor-driven JS glue, and a browser runner that treats `cargo run`,
+//! `cargo test`, and doctests as real browser executions. This is the short
+//! version of the
+//! [migration guide](https://github.com/drewcrawford/wasm_lite/blob/main/MIGRATION.md),
+//! [roadmap](https://github.com/drewcrawford/wasm_lite/blob/main/docs/roadmap.md),
+//! and
+//! [interop notes](https://github.com/drewcrawford/wasm_lite/blob/main/docs/interop.md).
+//!
+//! The main alternatives are still good tools:
+//!
+//! | tool | best fit |
+//! |---|---|
+//! | [`wasm-bindgen`](https://wasm-bindgen.github.io/wasm-bindgen/) | the mature Rust/JS binding ecosystem: rich JS types, closures, classes, `js-sys`/`web-sys`, and TypeScript output |
+//! | [`wasm-pack`](https://wasm-bindgen.github.io/wasm-pack/) | packaging and publishing Rust-generated wasm into npm-oriented JavaScript workflows |
+//! | [Component Model / WIT](https://component-model.bytecodealliance.org/) | language-neutral component interfaces, WASI, composition, and tooling such as `wit-bindgen` and `jco` |
+//! | raw `WebAssembly.instantiate` | tiny ABIs that only need numeric imports/exports and handwritten JavaScript |
+//!
+//! [`wasm_lite`](crate) is intentionally narrower than `wasm-bindgen`: it
+//! favors a small, auditable binding model and zero runtime deps over maximal
+//! Web API coverage. It is a good fit for libraries or applications that only
+//! need a focused binding surface, want browser tests without a JS test harness,
+//! or need the [`wasm_lite_std`] thread/async path over shared memory.
+//!
+//! The trade-off, called out in the migration guide and roadmap, is that
+//! [`wasm_lite`](crate) does **not** yet replace the broad `js-sys`/`web-sys`
+//! ecosystem, Promise interop (`JsFuture` / `wasm-bindgen-futures`), Rust
+//! closures passed into JS, TypeScript declaration generation, or rich
+//! serde-style marshalling. The `wasm-bindgen` feature supports incremental
+//! migration in the direction where `wasm-lite` is the final codegen step; the
+//! reverse direction, where a wasm-bindgen/wasm-pack app consumes a wasm_lite
+//! leaf without running `wasm-lite`, is still roadmap work.
+//!
+//! Prefer `wasm-bindgen` when you need its mature ecosystem surface today.
+//! Prefer Component Model tooling when your primary goal is language-neutral
+//! component composition rather than a browser-first Rust/JS binding layer.
+//!
 //! ## Example
 //!
 //! Declare JavaScript imports with [`import!`], and export Rust functions with
