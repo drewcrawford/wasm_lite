@@ -273,6 +273,7 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         #func
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         #[unsafe(no_mangle)]
         pub extern "C" fn #export_ident( #(#flat_params),* ) #ret_decl {
             #(#pre)*
