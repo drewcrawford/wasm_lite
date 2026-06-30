@@ -1,6 +1,6 @@
 //! Rust functions exported to JavaScript via `#[wasm_lite::export]`.
 
-use wasm_lite::{export, JsValue};
+use wasm_lite::{JsValue, export};
 
 // Imports this crate uses to build/manipulate JS objects it then hands back.
 mod js {
@@ -77,7 +77,11 @@ pub fn first_word(s: &str) -> Option<String> {
 // `Result<T, E>` returns: `Ok(x)` is the value, `Err(e)` is thrown in JS.
 #[export]
 pub fn divide(a: f64, b: f64) -> Result<f64, String> {
-    if b == 0.0 { Err("division by zero".to_string()) } else { Ok(a / b) }
+    if b == 0.0 {
+        Err("division by zero".to_string())
+    } else {
+        Ok(a / b)
+    }
 }
 
 // `Option<T>` arguments: JS `null`/`undefined` arrives as `None`.

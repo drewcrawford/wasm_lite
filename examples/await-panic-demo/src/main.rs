@@ -13,7 +13,9 @@ fn main() {
         let r: Result<u32, Box<String>> = handle.join_async().await;
         match r {
             Ok(v) => wasm_lite::console::log(&format!("UNEXPECTED: got Ok({v})")),
-            Err(e) => wasm_lite::console::log(&format!("join_async propagated the panic as Err: {e}")),
+            Err(e) => {
+                wasm_lite::console::log(&format!("join_async propagated the panic as Err: {e}"))
+            }
         }
     });
     wasm_lite::console::log("main: returning; the awaited result arrives via the event loop");

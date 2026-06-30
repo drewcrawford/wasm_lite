@@ -37,7 +37,10 @@ fn main() {
     // Atomic read-modify-write.
     COUNTER.store(10, Ordering::SeqCst);
     let prev = COUNTER.fetch_add(5, Ordering::SeqCst);
-    wasm_lite::console::log(&format!("fetch_add(5) returned old value {prev}, now {}", COUNTER.load(Ordering::SeqCst)));
+    wasm_lite::console::log(&format!(
+        "fetch_add(5) returned old value {prev}, now {}",
+        COUNTER.load(Ordering::SeqCst)
+    ));
 
     // Atomic compare-and-swap.
     match COUNTER.compare_exchange(15, 100, Ordering::SeqCst, Ordering::SeqCst) {

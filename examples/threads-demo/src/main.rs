@@ -39,7 +39,10 @@ fn main() {
             let finished = DONE.fetch_add(1, Ordering::SeqCst) + 1;
             wasm_lite::console::log(&format!("worker {i} ran; {finished}/{N} done"));
             if finished == N {
-                wasm_lite::console::log(&format!("all workers done; sum = {}", SUM.load(Ordering::SeqCst)));
+                wasm_lite::console::log(&format!(
+                    "all workers done; sum = {}",
+                    SUM.load(Ordering::SeqCst)
+                ));
             }
         });
     }

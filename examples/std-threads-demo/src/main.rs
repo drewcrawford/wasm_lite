@@ -10,9 +10,13 @@ static SUM: AtomicU32 = AtomicU32::new(0);
 static DONE: AtomicU32 = AtomicU32::new(0);
 
 #[wasm_lite::export]
-pub fn done_count() -> u32 { DONE.load(Ordering::SeqCst) }
+pub fn done_count() -> u32 {
+    DONE.load(Ordering::SeqCst)
+}
 #[wasm_lite::export]
-pub fn sum() -> u32 { SUM.load(Ordering::SeqCst) }
+pub fn sum() -> u32 {
+    SUM.load(Ordering::SeqCst)
+}
 
 fn main() {
     wasm_lite::console::log("std-threads demo: spawning via wasm_lite_std::spawn");
@@ -23,7 +27,10 @@ fn main() {
             let d = DONE.fetch_add(1, Ordering::SeqCst) + 1;
             wasm_lite::console::log(&format!("std worker {i} ran ({d}/4 done)"));
             if d == 4 {
-                wasm_lite::console::log(&format!("all std workers done; sum = {}", SUM.load(Ordering::SeqCst)));
+                wasm_lite::console::log(&format!(
+                    "all std workers done; sum = {}",
+                    SUM.load(Ordering::SeqCst)
+                ));
             }
         });
     }

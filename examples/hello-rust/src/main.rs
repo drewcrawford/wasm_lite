@@ -137,25 +137,49 @@ fn main() {
 
     // An owned Vec<u8> received from JS (Uint8Array.of -> Rust takes ownership).
     let v: Vec<u8> = strings::of3(1, 2, 3);
-    wasm_lite::console::log(&format!("Uint8Array.of(1,2,3) -> Vec<u8> = {v:?} (len {})", v.len()));
+    wasm_lite::console::log(&format!(
+        "Uint8Array.of(1,2,3) -> Vec<u8> = {v:?} (len {})",
+        v.len()
+    ));
 
     // Typed JS object via js_class!: wrap an array handle, call typed methods.
     let a = JsArray::from_js(arr::of3(1.0, 2.0, 3.0));
     let len = a.push(4.0); // arr.push(4) -> new length
-    wasm_lite::console::log(&format!("JsArray::push(4) -> len {len}, join = {}", a.join("-")));
+    wasm_lite::console::log(&format!(
+        "JsArray::push(4) -> len {len}, join = {}",
+        a.join("-")
+    ));
     let b = JsArray::from_js(arr::of3(5.0, 6.0, 7.0));
     let c = a.concat(&b); // typed arg + typed return -> JsArray
     wasm_lite::console::log(&format!("a.concat(b).join(\",\") = {}", c.join(",")));
 
     // Option *arguments* on imports (None -> JS undefined -> JS default applies).
-    wasm_lite::console::log(&format!("parse_int(\"ff\", Some(16)) = {}", opt_in::parse_int("ff", Some(16.0))));
-    wasm_lite::console::log(&format!("parse_int(\"10\", None) = {}", opt_in::parse_int("10", None)));
-    wasm_lite::console::log(&format!("join_opt(Some(\"-\")) = {}", opt_in::join_opt(c.as_js(), Some("-"))));
-    wasm_lite::console::log(&format!("join_opt(None) = {}", opt_in::join_opt(c.as_js(), None)));
+    wasm_lite::console::log(&format!(
+        "parse_int(\"ff\", Some(16)) = {}",
+        opt_in::parse_int("ff", Some(16.0))
+    ));
+    wasm_lite::console::log(&format!(
+        "parse_int(\"10\", None) = {}",
+        opt_in::parse_int("10", None)
+    ));
+    wasm_lite::console::log(&format!(
+        "join_opt(Some(\"-\")) = {}",
+        opt_in::join_opt(c.as_js(), Some("-"))
+    ));
+    wasm_lite::console::log(&format!(
+        "join_opt(None) = {}",
+        opt_in::join_opt(c.as_js(), None)
+    ));
 
     // Option/Result imports (JS null -> None; JS throw -> Err).
-    wasm_lite::console::log(&format!("parse_num(\"3.14\") = {:?}", fallible::parse_num("3.14")));
-    wasm_lite::console::log(&format!("parse_num(\"null\") = {:?}", fallible::parse_num("null")));
+    wasm_lite::console::log(&format!(
+        "parse_num(\"3.14\") = {:?}",
+        fallible::parse_num("3.14")
+    ));
+    wasm_lite::console::log(&format!(
+        "parse_num(\"null\") = {:?}",
+        fallible::parse_num("null")
+    ));
     match fallible::try_parse("42") {
         Ok(n) => wasm_lite::console::log(&format!("try_parse(\"42\") = Ok({n})")),
         Err(_) => wasm_lite::console::log("try_parse(\"42\") = Err"),
