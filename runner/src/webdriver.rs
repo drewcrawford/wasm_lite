@@ -140,7 +140,12 @@ impl Browser {
     /// Navigate the session to `url`.
     pub fn goto(&self, url: &str) -> Result<(), String> {
         let body = format!("{{\"url\":{}}}", json_str(url));
-        http(self.port, "POST", &format!("/session/{}/url", self.session), Some(&body))?;
+        http(
+            self.port,
+            "POST",
+            &format!("/session/{}/url", self.session),
+            Some(&body),
+        )?;
         Ok(())
     }
 
@@ -156,7 +161,12 @@ impl Browser {
 
     fn execute(&self, script: &str) -> Result<String, String> {
         let body = format!("{{\"script\":{},\"args\":[]}}", json_str(script));
-        http(self.port, "POST", &format!("/session/{}/execute/sync", self.session), Some(&body))
+        http(
+            self.port,
+            "POST",
+            &format!("/session/{}/execute/sync", self.session),
+            Some(&body),
+        )
     }
 }
 
@@ -165,7 +175,12 @@ impl Drop for Browser {
         if self.keep_session {
             return; // persistent: leave the session + driver alive for reuse
         }
-        let _ = http(self.port, "DELETE", &format!("/session/{}", self.session), None);
+        let _ = http(
+            self.port,
+            "DELETE",
+            &format!("/session/{}", self.session),
+            None,
+        );
         if let Some(driver) = self.driver.as_mut() {
             let _ = driver.kill();
             let _ = driver.wait();
@@ -228,7 +243,9 @@ fn http(port: u16, method: &str, path: &str, body: Option<&str>) -> Result<Strin
          \r\n{body}",
         body.len(),
     );
-    stream.write_all(req.as_bytes()).map_err(|e| format!("write: {e}"))?;
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| format!("write: {e}"))?;
     read_http_body(&mut stream)
 }
 
@@ -241,7 +258,9 @@ fn read_http_body(stream: &mut TcpStream) -> Result<String, String> {
             let body_start = header_end + 4;
             match content_length(&buf[..header_end]) {
                 Some(len) if buf.len() >= body_start + len => {
-                    return Ok(String::from_utf8_lossy(&buf[body_start..body_start + len]).into_owned());
+                    return Ok(
+                        String::from_utf8_lossy(&buf[body_start..body_start + len]).into_owned()
+                    );
                 }
                 Some(_) => {}
                 None => return Ok(String::from_utf8_lossy(&buf[body_start..]).into_owned()),
@@ -353,7 +372,9 @@ fn json_escape(s: &str) -> String {
 
 fn value_is_true(resp: &str) -> bool {
     match resp.find("\"value\"") {
-        Some(idx) => resp[idx + 7..].trim_start_matches([':', ' ']).starts_with("true"),
+        Some(idx) => resp[idx + 7..]
+            .trim_start_matches([':', ' '])
+            .starts_with("true"),
         None => false,
     }
 }

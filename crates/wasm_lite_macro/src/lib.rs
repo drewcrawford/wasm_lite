@@ -231,7 +231,10 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
         } else {
             return Err(Error::new_spanned(
                 ty,
-                format!("#[wasm_lite::export]: unsupported argument type `{}`", type_string(ty)),
+                format!(
+                    "#[wasm_lite::export]: unsupported argument type `{}`",
+                    type_string(ty)
+                ),
             ));
         }
     }
@@ -247,7 +250,9 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
 
     // String/bytes marshalling needs the allocator exported even when the shim
     // doesn't call it directly; sret buffers are JS-allocated too. Force-keep it.
-    let needs_alloc = arg_tags.iter().any(|t| t.contains("str") || t.contains("bytes"))
+    let needs_alloc = arg_tags
+        .iter()
+        .any(|t| t.contains("str") || t.contains("bytes"))
         || ret_tag == "str"
         || ret_tag == "bytes"
         || is_sret;
@@ -335,13 +340,28 @@ fn build_return(
         return Ok((quote! { -> #ty }, scalar, call.clone(), false));
     }
     if is_ident(ty, "bool") {
-        return Ok((quote! { -> i32 }, "bool".into(), quote! { ((#call) as i32) }, false));
+        return Ok((
+            quote! { -> i32 },
+            "bool".into(),
+            quote! { ((#call) as i32) },
+            false,
+        ));
     }
     if is_ident(ty, "String") {
-        return Ok((quote! { -> i64 }, "str".into(), pack_buffer(call, quote! { ::std::string::String }), false));
+        return Ok((
+            quote! { -> i64 },
+            "str".into(),
+            pack_buffer(call, quote! { ::std::string::String }),
+            false,
+        ));
     }
     if vec_u8(ty) {
-        return Ok((quote! { -> i64 }, "bytes".into(), pack_buffer(call, quote! { ::std::vec::Vec<u8> }), false));
+        return Ok((
+            quote! { -> i64 },
+            "bytes".into(),
+            pack_buffer(call, quote! { ::std::vec::Vec<u8> }),
+            false,
+        ));
     }
     if is_ident(ty, "JsValue") {
         // Hand the table slot to JS: take the index, then forget so Drop doesn't
@@ -357,7 +377,10 @@ fn build_return(
 
     Err(Error::new_spanned(
         ty,
-        format!("#[wasm_lite::export]: unsupported return type `{}`", type_string(ty)),
+        format!(
+            "#[wasm_lite::export]: unsupported return type `{}`",
+            type_string(ty)
+        ),
     ))
 }
 
@@ -382,8 +405,12 @@ fn payload(ty: &Type, binding: &Ident) -> syn::Result<(String, TokenStream2)> {
 
     if let Some(scalar) = numeric(ty) {
         let write = match scalar.as_str() {
-            "i32" => quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut i32, #binding); } },
-            "u32" => quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut u32, #binding); } },
+            "i32" => {
+                quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut i32, #binding); } }
+            }
+            "u32" => {
+                quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut u32, #binding); } }
+            }
             _ => quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut f64, #binding); } },
         };
         return Ok((scalar, write));
@@ -425,7 +452,10 @@ fn payload(ty: &Type, binding: &Ident) -> syn::Result<(String, TokenStream2)> {
     }
     Err(Error::new_spanned(
         ty,
-        format!("#[wasm_lite::export]: unsupported Option/Result payload type `{}`", type_string(ty)),
+        format!(
+            "#[wasm_lite::export]: unsupported Option/Result payload type `{}`",
+            type_string(ty)
+        ),
     ))
 }
 
@@ -462,7 +492,11 @@ fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, Toke
     if is_str(inner) {
         let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
         return Ok((
-            vec![quote! { #some: i32 }, quote! { #p: *const u8 }, quote! { #l: usize }],
+            vec![
+                quote! { #some: i32 },
+                quote! { #p: *const u8 },
+                quote! { #l: usize },
+            ],
             quote! { let #pat = if #some != 0 { ::core::option::Option::Some(unsafe { ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts(#p, #l)) }) } else { ::core::option::Option::None }; },
             "str".into(),
         ));
@@ -470,14 +504,21 @@ fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, Toke
     if is_byte_slice(inner) {
         let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
         return Ok((
-            vec![quote! { #some: i32 }, quote! { #p: *const u8 }, quote! { #l: usize }],
+            vec![
+                quote! { #some: i32 },
+                quote! { #p: *const u8 },
+                quote! { #l: usize },
+            ],
             quote! { let #pat = if #some != 0 { ::core::option::Option::Some(unsafe { ::core::slice::from_raw_parts(#p, #l) }) } else { ::core::option::Option::None }; },
             "bytes".into(),
         ));
     }
     Err(Error::new_spanned(
         inner,
-        format!("#[wasm_lite::export]: unsupported Option argument type `Option<{}>`", type_string(inner)),
+        format!(
+            "#[wasm_lite::export]: unsupported Option argument type `Option<{}>`",
+            type_string(inner)
+        ),
     ))
 }
 
@@ -588,7 +629,12 @@ impl Parse for JsMethod {
         };
         input.parse::<Token![;]>()?;
 
-        Ok(JsMethod { name, params, ret, js })
+        Ok(JsMethod {
+            name,
+            params,
+            ret,
+            js,
+        })
     }
 }
 
@@ -632,9 +678,15 @@ fn build_js_class(class_def: &JsClass) -> syn::Result<TokenStream2> {
         let call = quote! { #module::#mname( #(#call_args),* ) };
         let (wrap_ret, imp_ret, body) = match &m.ret {
             None => (quote! {}, quote! {}, quote! { #call; }),
-            Some(ty) if is_builtin_ret(ty) => (quote! { -> #ty }, quote! { -> #ty }, quote! { #call }),
+            Some(ty) if is_builtin_ret(ty) => {
+                (quote! { -> #ty }, quote! { -> #ty }, quote! { #call })
+            }
             // A typed object return: the import yields a handle; wrap it.
-            Some(ty) => (quote! { -> #ty }, quote! { -> JsValue }, quote! { #ty::from_js(#call) }),
+            Some(ty) => (
+                quote! { -> #ty },
+                quote! { -> JsValue },
+                quote! { #ty::from_js(#call) },
+            ),
         };
 
         let recv = if wrap_params.is_empty() {
@@ -743,8 +795,14 @@ fn fn_arg(input: &FnArg) -> syn::Result<(Ident, &Type)> {
     match input {
         FnArg::Typed(pt) => match &*pt.pat {
             Pat::Ident(pi) => Ok((pi.ident.clone(), &pt.ty)),
-            other => Err(Error::new_spanned(other, "#[wasm_lite::export]: argument must be a simple name")),
+            other => Err(Error::new_spanned(
+                other,
+                "#[wasm_lite::export]: argument must be a simple name",
+            )),
         },
-        FnArg::Receiver(r) => Err(Error::new_spanned(r, "#[wasm_lite::export] cannot be used on methods")),
+        FnArg::Receiver(r) => Err(Error::new_spanned(
+            r,
+            "#[wasm_lite::export] cannot be used on methods",
+        )),
     }
 }

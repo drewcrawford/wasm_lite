@@ -203,7 +203,8 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
                 let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
                 let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
                 let memory = wasm_lite_codegen::imported_memory(&module)?;
-                let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
+                let glue =
+                    wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
                 // program.js is the glue ONLY (no auto-run), so a spawned worker
                 // can import it. A separate bootstrap module runs `main`.
                 routes.push(Route {
@@ -341,10 +342,13 @@ fn read_request_target(stream: &mut TcpStream) -> std::io::Result<Option<String>
     }
 
     // "GET /path?query HTTP/1.1" — match on the path, ignoring any query string.
-    let path = request_line
-        .split_whitespace()
-        .nth(1)
-        .map(|target| target.split(['?', '#']).next().unwrap_or(target).to_string());
+    let path = request_line.split_whitespace().nth(1).map(|target| {
+        target
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(target)
+            .to_string()
+    });
 
     // Drain headers up to the blank line so the client is satisfied.
     let mut header = String::new();

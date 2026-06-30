@@ -135,7 +135,9 @@ export function setInstance(instance) {
 fn instantiate_shared(mem: &MemoryImport) -> String {
     let module = js_string(&mem.module);
     let name = js_string(&mem.name);
-    let maximum = mem.maximum.map_or(String::new(), |m| format!(", maximum: {m}"));
+    let maximum = mem
+        .maximum
+        .map_or(String::new(), |m| format!(", maximum: {m}"));
     let shared = mem.shared;
     format!(
         "
@@ -324,13 +326,17 @@ fn emit_export(js: &mut String, export: &Export) {
                 lines.push(format!("const [__a{i}p, __a{i}l] = __wl_pass_str(p{i});"));
                 wasm_args.push(format!("__a{i}p"));
                 wasm_args.push(format!("__a{i}l"));
-                frees.push(format!("__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"));
+                frees.push(format!(
+                    "__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"
+                ));
             }
             ExportArg::Bytes => {
                 lines.push(format!("const [__a{i}p, __a{i}l] = __wl_pass_bytes(p{i});"));
                 wasm_args.push(format!("__a{i}p"));
                 wasm_args.push(format!("__a{i}l"));
-                frees.push(format!("__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"));
+                frees.push(format!(
+                    "__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"
+                ));
             }
             ExportArg::Handle => {
                 // Register the object; Rust owns the handle and frees the slot
@@ -340,7 +346,9 @@ fn emit_export(js: &mut String, export: &Export) {
             }
             ExportArg::Opt(p) => {
                 // A nullable arg: discriminant (null/undefined → 0) + payload.
-                lines.push(format!("const __s{i} = (p{i} === null || p{i} === undefined) ? 0 : 1;"));
+                lines.push(format!(
+                    "const __s{i} = (p{i} === null || p{i} === undefined) ? 0 : 1;"
+                ));
                 wasm_args.push(format!("__s{i}"));
                 match p {
                     Payload::I32 | Payload::U32 | Payload::F64 => {
@@ -352,13 +360,19 @@ fn emit_export(js: &mut String, export: &Export) {
                         wasm_args.push(format!("__a{i}h"));
                     }
                     Payload::Str | Payload::Bytes => {
-                        let pass = if matches!(p, Payload::Str) { "__wl_pass_str" } else { "__wl_pass_bytes" };
+                        let pass = if matches!(p, Payload::Str) {
+                            "__wl_pass_str"
+                        } else {
+                            "__wl_pass_bytes"
+                        };
                         // ptr/len default to 0 (a null pointer + zero length → None
                         // on the Rust side); __wl_free(0, 0) is a no-op.
                         lines.push(format!("let __a{i}p = 0, __a{i}l = 0; if (__s{i}) {{ [__a{i}p, __a{i}l] = {pass}(p{i}); }}"));
                         wasm_args.push(format!("__a{i}p"));
                         wasm_args.push(format!("__a{i}l"));
-                        frees.push(format!("__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"));
+                        frees.push(format!(
+                            "__wl_instance.exports.__wl_free(__a{i}p, __a{i}l);"
+                        ));
                     }
                 }
             }
@@ -391,7 +405,9 @@ fn emit_export(js: &mut String, export: &Export) {
             lines.extend(frees);
             // The shim returns a packed i64 (BigInt in JS): (ptr << 32) | len.
             lines.push("const __packed = BigInt.asUintN(64, __ret);".into());
-            lines.push("const __p = Number(__packed >> 32n), __l = Number(__packed & 0xffffffffn);".into());
+            lines.push(
+                "const __p = Number(__packed >> 32n), __l = Number(__packed & 0xffffffffn);".into(),
+            );
             lines.push("const __s = __wl_str(__p, __l);".into());
             lines.push("__wl_instance.exports.__wl_free(__p, __l);".into());
             lines.push("return __s;".into());
@@ -400,7 +416,9 @@ fn emit_export(js: &mut String, export: &Export) {
             lines.push(format!("const __ret = {call};"));
             lines.extend(frees);
             lines.push("const __packed = BigInt.asUintN(64, __ret);".into());
-            lines.push("const __p = Number(__packed >> 32n), __l = Number(__packed & 0xffffffffn);".into());
+            lines.push(
+                "const __p = Number(__packed >> 32n), __l = Number(__packed & 0xffffffffn);".into(),
+            );
             // Copy out of wasm memory before freeing (a view would dangle after free).
             lines.push("const __b = new Uint8Array(__wl_memory.buffer, __p, __l).slice();".into());
             lines.push("__wl_instance.exports.__wl_free(__p, __l);".into());
@@ -474,7 +492,10 @@ fn emit_export(js: &mut String, export: &Export) {
 fn sret_call(name: &str, wasm_args: &[String]) -> String {
     let mut args = vec!["__ret".to_string()];
     args.extend(wasm_args.iter().cloned());
-    format!("__wl_instance.exports.__wl_export_{name}({})", args.join(", "))
+    format!(
+        "__wl_instance.exports.__wl_export_{name}({})",
+        args.join(", ")
+    )
 }
 
 /// Read one sret payload from the buffer at JS offset `off`. Returns the
@@ -517,8 +538,14 @@ fn write_payload(p: Payload, off: &str, val: &str) -> (Vec<String>, Vec<String>)
     match p {
         Payload::I32 => (vec![], vec![format!("__dv.setInt32({off}, {val}, true);")]),
         Payload::U32 => (vec![], vec![format!("__dv.setUint32({off}, {val}, true);")]),
-        Payload::F64 => (vec![], vec![format!("__dv.setFloat64({off}, {val}, true);")]),
-        Payload::Bool => (vec![], vec![format!("__dv.setInt32({off}, ({val}) ? 1 : 0, true);")]),
+        Payload::F64 => (
+            vec![],
+            vec![format!("__dv.setFloat64({off}, {val}, true);")],
+        ),
+        Payload::Bool => (
+            vec![],
+            vec![format!("__dv.setInt32({off}, ({val}) ? 1 : 0, true);")],
+        ),
         Payload::Handle => (
             vec![format!("const __wh = __wl_add({val});")],
             vec![format!("__dv.setUint32({off}, __wh, true);")],
@@ -529,7 +556,9 @@ fn write_payload(p: Payload, off: &str, val: &str) -> (Vec<String>, Vec<String>)
                  const __wp = __wl_instance.exports.__wl_malloc(__wb.length); \
                  new Uint8Array(__wl_memory.buffer, __wp, __wb.length).set(__wb);"
             )],
-            vec![format!("__dv.setUint32({off}, __wp, true); __dv.setUint32(({off}) + 4, __wb.length, true);")],
+            vec![format!(
+                "__dv.setUint32({off}, __wp, true); __dv.setUint32(({off}) + 4, __wb.length, true);"
+            )],
         ),
         Payload::Bytes => (
             vec![format!(
@@ -537,7 +566,9 @@ fn write_payload(p: Payload, off: &str, val: &str) -> (Vec<String>, Vec<String>)
                  const __wp = __wl_instance.exports.__wl_malloc(__wb.length); \
                  new Uint8Array(__wl_memory.buffer, __wp, __wb.length).set(__wb);"
             )],
-            vec![format!("__dv.setUint32({off}, __wp, true); __dv.setUint32(({off}) + 4, __wb.length, true);")],
+            vec![format!(
+                "__dv.setUint32({off}, __wp, true); __dv.setUint32(({off}) + 4, __wb.length, true);"
+            )],
         ),
     }
 }
@@ -617,7 +648,10 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
     match &d.ret {
         // A handle return stores the result in the value table and yields its index.
         Ret::Handle => {
-            let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({params}) => __wl_add({call});");
+            let _ = writeln!(
+                js,
+                "    imports[{ns}][{import_name}] = ({params}) => __wl_add({call});"
+            );
         }
         // A string return is copied into wasm memory; Rust takes ownership and frees.
         Ret::Str => {
@@ -648,7 +682,11 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
         // sret returns: the shim writes a discriminant + payload into a leading
         // retptr buffer rather than returning a value.
         Ret::Opt(p) => {
-            let shim_params = if params.is_empty() { "__retp".to_string() } else { format!("__retp, {params}") };
+            let shim_params = if params.is_empty() {
+                "__retp".to_string()
+            } else {
+                format!("__retp, {params}")
+            };
             let (prep, set) = write_payload(*p, "__retp + 8", "__r");
             let body = format!(
                 "const __r = {call}; \
@@ -657,10 +695,17 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                 prep = prep.join(" "),
                 set = set.join(" "),
             );
-            let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({shim_params}) => {{ {body} }};");
+            let _ = writeln!(
+                js,
+                "    imports[{ns}][{import_name}] = ({shim_params}) => {{ {body} }};"
+            );
         }
         Ret::Res(ok, err) => {
-            let shim_params = if params.is_empty() { "__retp".to_string() } else { format!("__retp, {params}") };
+            let shim_params = if params.is_empty() {
+                "__retp".to_string()
+            } else {
+                format!("__retp, {params}")
+            };
             let (ok_prep, ok_set) = write_payload(*ok, "__retp + 8", "__r");
             let (err_prep, err_set) = write_payload(*err, "__retp + 8", "__e");
             let body = format!(
@@ -673,10 +718,16 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                 err_prep = err_prep.join(" "),
                 err_set = err_set.join(" "),
             );
-            let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({shim_params}) => {{ {body} }};");
+            let _ = writeln!(
+                js,
+                "    imports[{ns}][{import_name}] = ({shim_params}) => {{ {body} }};"
+            );
         }
         Ret::Void | Ret::Value(_) => {
-            let _ = writeln!(js, "    imports[{ns}][{import_name}] = ({params}) => {call};");
+            let _ = writeln!(
+                js,
+                "    imports[{ns}][{import_name}] = ({params}) => {call};"
+            );
         }
     }
 }
@@ -723,11 +774,19 @@ mod tests {
     fn generates_str_and_numeric_shims() {
         let descriptors = vec![
             func("console", "log", "log", vec![AbiArg::Str], Ret::Void),
-            func("performance", "now", "now", vec![], Ret::Value("f64".into())),
+            func(
+                "performance",
+                "now",
+                "now",
+                vec![],
+                Ret::Value("f64".into()),
+            ),
         ];
         let js = generate_glue(&descriptors, &[], None);
         assert!(js.contains("imports[\"console\"][\"log\"] = (p0, p1) => globalThis[\"console\"][\"log\"](__wl_str(p0, p1));"));
-        assert!(js.contains("imports[\"performance\"][\"now\"] = () => globalThis[\"performance\"][\"now\"]();"));
+        assert!(js.contains(
+            "imports[\"performance\"][\"now\"] = () => globalThis[\"performance\"][\"now\"]();"
+        ));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
         assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass };"));
@@ -774,22 +833,36 @@ mod tests {
             ret: Ret::Value("f64".into()),
         }];
         let js = generate_glue(&descriptors, &[], None);
-        assert!(js.contains(
-            "imports[\"Array\"][\"push\"] = (p0, p1) => __wl_obj(p0)[\"push\"](p1);"
-        ));
+        assert!(
+            js.contains("imports[\"Array\"][\"push\"] = (p0, p1) => __wl_obj(p0)[\"push\"](p1);")
+        );
     }
 
     #[test]
     fn generates_export_wrappers() {
         let exports = vec![
-            Export { name: "add".into(), args: vec![ExportArg::Num, ExportArg::Num], ret: ExportRet::Value },
-            Export { name: "is_even".into(), args: vec![ExportArg::Num], ret: ExportRet::Bool },
-            Export { name: "tick".into(), args: vec![], ret: ExportRet::Void },
+            Export {
+                name: "add".into(),
+                args: vec![ExportArg::Num, ExportArg::Num],
+                ret: ExportRet::Value,
+            },
+            Export {
+                name: "is_even".into(),
+                args: vec![ExportArg::Num],
+                ret: ExportRet::Bool,
+            },
+            Export {
+                name: "tick".into(),
+                args: vec![],
+                ret: ExportRet::Void,
+            },
         ];
         let js = generate_glue(&[], &exports, None);
         assert!(js.contains("export function add(p0, p1) { const __ret = __wl_instance.exports.__wl_export_add(p0, p1); return __ret; }"));
         assert!(js.contains("export function is_even(p0) { const __ret = __wl_instance.exports.__wl_export_is_even(p0); return Boolean(__ret); }"));
-        assert!(js.contains("export function tick() { __wl_instance.exports.__wl_export_tick(); }"));
+        assert!(
+            js.contains("export function tick() { __wl_instance.exports.__wl_export_tick(); }")
+        );
     }
 
     #[test]

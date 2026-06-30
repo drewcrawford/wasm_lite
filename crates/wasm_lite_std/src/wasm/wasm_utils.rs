@@ -49,7 +49,10 @@ pub fn park_wait_at_addr(ptr: u32) -> WaitResult {
     let token = unsafe { &*(ptr as *const AtomicI32) };
     loop {
         // Consume an existing unpark token (1 -> 0).
-        if token.compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+        if token
+            .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
             return WaitResult::Ok;
         }
         // Wait while the token is still 0. Returns: 0 = woken, 1 = not-equal,
@@ -71,7 +74,10 @@ pub fn park_wait_timeout_at_addr(ptr: u32, timeout_ms: f64) -> WaitResult {
     }
     let p = ptr as *mut i32;
     let token = unsafe { &*(ptr as *const AtomicI32) };
-    if token.compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+    if token
+        .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
         return WaitResult::Ok;
     }
     let timeout_ns = (timeout_ms * 1.0e6) as i64;

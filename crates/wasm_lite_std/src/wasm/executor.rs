@@ -118,10 +118,10 @@ pub extern "C" fn __wl_async_tick() {
 /// Build a `Waker` that bumps + notifies `atom` (cross-thread safe).
 fn make_waker(atom: *const AtomicI32) -> Waker {
     const VTABLE: RawWakerVTable = RawWakerVTable::new(
-        |p| RawWaker::new(p, &VTABLE),    // clone
-        |p| wake(p as *const AtomicI32),  // wake
-        |p| wake(p as *const AtomicI32),  // wake_by_ref
-        |_| {},                           // drop
+        |p| RawWaker::new(p, &VTABLE),   // clone
+        |p| wake(p as *const AtomicI32), // wake
+        |p| wake(p as *const AtomicI32), // wake_by_ref
+        |_| {},                          // drop
     );
     unsafe { Waker::from_raw(RawWaker::new(atom as *const (), &VTABLE)) }
 }

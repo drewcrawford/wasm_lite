@@ -149,7 +149,7 @@ async_test! {
 
 #[test]
 fn test_sleep() {
-        use crate::time::Instant;
+    use crate::time::Instant;
 
     let start = Instant::now();
     sleep(Duration::from_millis(50));

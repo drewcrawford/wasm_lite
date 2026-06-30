@@ -99,7 +99,13 @@ pub(crate) fn generic2<'a>(ty: &'a Type, name: &str) -> Option<(&'a Type, &'a Ty
         let types: Vec<&Type> = ab
             .args
             .iter()
-            .filter_map(|a| if let syn::GenericArgument::Type(t) = a { Some(t) } else { None })
+            .filter_map(|a| {
+                if let syn::GenericArgument::Type(t) = a {
+                    Some(t)
+                } else {
+                    None
+                }
+            })
             .collect();
         if types.len() == 2 {
             return Some((types[0], types[1]));

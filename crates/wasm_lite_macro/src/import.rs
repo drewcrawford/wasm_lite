@@ -64,7 +64,10 @@ impl Parse for Namespace {
 impl Parse for ImportFn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let attrs = input.call(Attribute::parse_outer)?;
-        let doc_attrs = attrs.into_iter().filter(|a| a.path().is_ident("doc")).collect();
+        let doc_attrs = attrs
+            .into_iter()
+            .filter(|a| a.path().is_ident("doc"))
+            .collect();
         input.parse::<Token![fn]>()?;
         let name: Ident = input.parse()?;
 
@@ -96,7 +99,13 @@ impl Parse for ImportFn {
         };
         input.parse::<Token![;]>()?;
 
-        Ok(ImportFn { doc_attrs, name, params, ret, js })
+        Ok(ImportFn {
+            doc_attrs,
+            name,
+            params,
+            ret,
+            js,
+        })
     }
 }
 
@@ -190,7 +199,13 @@ fn build_fn(ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream2, TokenStream
     let js_name = f.js.clone().unwrap_or_else(|| fname_str.clone());
     let ret = build_return(name, ns, &extern_params, &call_args, f.ret.as_ref())?;
 
-    let Return { wrapper_ret, extern_decl, body, ret_tag, needs_malloc } = ret;
+    let Return {
+        wrapper_ret,
+        extern_decl,
+        body,
+        ret_tag,
+        needs_malloc,
+    } = ret;
 
     let keep_malloc = if needs_malloc {
         quote! {
@@ -327,7 +342,13 @@ fn build_return(
 
     if let Some(inner) = generic1(ty, "Option") {
         let tag = payload_tag(inner).ok_or_else(|| {
-            Error::new_spanned(inner, format!("import!: unsupported Option payload type `{}`", type_string(inner)))
+            Error::new_spanned(
+                inner,
+                format!(
+                    "import!: unsupported Option payload type `{}`",
+                    type_string(inner)
+                ),
+            )
         })?;
         let body = quote! {
             let mut __buf = [0u8; 16];
@@ -348,10 +369,22 @@ fn build_return(
     }
     if let Some((ok_ty, err_ty)) = generic2(ty, "Result") {
         let ok_tag = payload_tag(ok_ty).ok_or_else(|| {
-            Error::new_spanned(ok_ty, format!("import!: unsupported Result Ok type `{}`", type_string(ok_ty)))
+            Error::new_spanned(
+                ok_ty,
+                format!(
+                    "import!: unsupported Result Ok type `{}`",
+                    type_string(ok_ty)
+                ),
+            )
         })?;
         let err_tag = payload_tag(err_ty).ok_or_else(|| {
-            Error::new_spanned(err_ty, format!("import!: unsupported Result Err type `{}`", type_string(err_ty)))
+            Error::new_spanned(
+                err_ty,
+                format!(
+                    "import!: unsupported Result Err type `{}`",
+                    type_string(err_ty)
+                ),
+            )
         })?;
         let body = quote! {
             let mut __buf = [0u8; 16];
@@ -398,7 +431,11 @@ fn option_arg(
 ) -> syn::Result<(Vec<TokenStream2>, Vec<TokenStream2>, String)> {
     if is_str(inner) {
         return Ok((
-            vec![quote! { _: i32 }, quote! { _: *const u8 }, quote! { _: usize }],
+            vec![
+                quote! { _: i32 },
+                quote! { _: *const u8 },
+                quote! { _: usize },
+            ],
             vec![
                 quote! { #pname.is_some() as i32 },
                 quote! { #pname.map_or(::core::ptr::null(), |__s| __s.as_ptr()) },
@@ -409,7 +446,11 @@ fn option_arg(
     }
     if is_byte_slice(inner) {
         return Ok((
-            vec![quote! { _: i32 }, quote! { _: *const u8 }, quote! { _: usize }],
+            vec![
+                quote! { _: i32 },
+                quote! { _: *const u8 },
+                quote! { _: usize },
+            ],
             vec![
                 quote! { #pname.is_some() as i32 },
                 quote! { #pname.map_or(::core::ptr::null(), |__s| __s.as_ptr()) },
@@ -450,6 +491,9 @@ fn option_arg(
     }
     Err(Error::new_spanned(
         inner,
-        format!("import!: unsupported Option argument type `Option<{}>`", type_string(inner)),
+        format!(
+            "import!: unsupported Option argument type `Option<{}>`",
+            type_string(inner)
+        ),
     ))
 }

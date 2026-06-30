@@ -86,7 +86,13 @@ fn parse_imports_for_memory(body: &[u8]) -> Result<Option<MemoryImport>, String>
             }
             0x02 => {
                 let (initial, maximum, shared) = r.read_limits()?;
-                return Ok(Some(MemoryImport { module, name, initial, maximum, shared }));
+                return Ok(Some(MemoryImport {
+                    module,
+                    name,
+                    initial,
+                    maximum,
+                    shared,
+                }));
             }
             0x03 => {
                 r.byte()?; // valtype
@@ -120,7 +126,10 @@ impl<'a> Reader<'a> {
 
     fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
         let end = self.pos.checked_add(n).ok_or("length overflow")?;
-        let slice = self.buf.get(self.pos..end).ok_or("unexpected end of wasm")?;
+        let slice = self
+            .buf
+            .get(self.pos..end)
+            .ok_or("unexpected end of wasm")?;
         self.pos = end;
         Ok(slice)
     }

@@ -104,7 +104,8 @@ impl AbiArg {
 
 /// Parse the descriptor section's bytes into a list of descriptors.
 pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
-    let text = std::str::from_utf8(bytes).map_err(|e| format!("descriptor section is not UTF-8: {e}"))?;
+    let text =
+        std::str::from_utf8(bytes).map_err(|e| format!("descriptor section is not UTF-8: {e}"))?;
 
     let mut descriptors = Vec::new();
     for line in text.lines() {
@@ -158,11 +159,14 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
 /// Parse a return tag: `opt:<P>` / `res:<P>:<P>` (sret) or a plain scalar tag.
 fn parse_ret(tag: &str) -> Result<Ret, String> {
     if let Some(inner) = tag.strip_prefix("opt:") {
-        let p = Payload::from_tag(inner).ok_or_else(|| format!("bad Option payload tag {tag:?}"))?;
+        let p =
+            Payload::from_tag(inner).ok_or_else(|| format!("bad Option payload tag {tag:?}"))?;
         return Ok(Ret::Opt(p));
     }
     if let Some(rest) = tag.strip_prefix("res:") {
-        let (ok, err) = rest.split_once(':').ok_or_else(|| format!("bad Result tag {tag:?}"))?;
+        let (ok, err) = rest
+            .split_once(':')
+            .ok_or_else(|| format!("bad Result tag {tag:?}"))?;
         let ok = Payload::from_tag(ok).ok_or_else(|| format!("bad Result Ok tag {tag:?}"))?;
         let err = Payload::from_tag(err).ok_or_else(|| format!("bad Result Err tag {tag:?}"))?;
         return Ok(Ret::Res(ok, err));

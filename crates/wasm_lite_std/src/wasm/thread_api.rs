@@ -352,7 +352,11 @@ fn install_panic_hook() {
                     })
                 })
                 .unwrap_or_else(|| {
-                    if is_main_thread() { "main".to_string() } else { "unknown thread".to_string() }
+                    if is_main_thread() {
+                        "main".to_string()
+                    } else {
+                        "unknown thread".to_string()
+                    }
                 });
             wasm_lite::console::error(&format!("[wasm_lite_std {who}] {msg}"));
 

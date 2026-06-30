@@ -97,7 +97,8 @@ pub fn exports_from_wasm(wasm: &[u8]) -> Result<Vec<Export>, String> {
 }
 
 fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
-    let text = std::str::from_utf8(bytes).map_err(|e| format!("exports section is not UTF-8: {e}"))?;
+    let text =
+        std::str::from_utf8(bytes).map_err(|e| format!("exports section is not UTF-8: {e}"))?;
 
     let mut exports = Vec::new();
     for line in text.lines() {
@@ -140,11 +141,14 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
 /// Parse a return tag: `opt:<P>` / `res:<P>:<P>` (sret) or a plain scalar tag.
 fn parse_ret(tag: &str) -> Result<ExportRet, String> {
     if let Some(inner) = tag.strip_prefix("opt:") {
-        let p = Payload::from_tag(inner).ok_or_else(|| format!("bad Option payload tag {tag:?}"))?;
+        let p =
+            Payload::from_tag(inner).ok_or_else(|| format!("bad Option payload tag {tag:?}"))?;
         return Ok(ExportRet::Opt(p));
     }
     if let Some(rest) = tag.strip_prefix("res:") {
-        let (ok, err) = rest.split_once(':').ok_or_else(|| format!("bad Result tag {tag:?}"))?;
+        let (ok, err) = rest
+            .split_once(':')
+            .ok_or_else(|| format!("bad Result tag {tag:?}"))?;
         let ok = Payload::from_tag(ok).ok_or_else(|| format!("bad Result Ok tag {tag:?}"))?;
         let err = Payload::from_tag(err).ok_or_else(|| format!("bad Result Err tag {tag:?}"))?;
         return Ok(ExportRet::Res(ok, err));
@@ -169,10 +173,26 @@ mod tests {
         assert_eq!(
             parse(section).unwrap(),
             vec![
-                Export { name: "add".into(), args: vec![ExportArg::Num, ExportArg::Num], ret: ExportRet::Value },
-                Export { name: "is_even".into(), args: vec![ExportArg::Num], ret: ExportRet::Bool },
-                Export { name: "greet".into(), args: vec![ExportArg::Str], ret: ExportRet::Str },
-                Export { name: "tick".into(), args: vec![], ret: ExportRet::Void },
+                Export {
+                    name: "add".into(),
+                    args: vec![ExportArg::Num, ExportArg::Num],
+                    ret: ExportRet::Value
+                },
+                Export {
+                    name: "is_even".into(),
+                    args: vec![ExportArg::Num],
+                    ret: ExportRet::Bool
+                },
+                Export {
+                    name: "greet".into(),
+                    args: vec![ExportArg::Str],
+                    ret: ExportRet::Str
+                },
+                Export {
+                    name: "tick".into(),
+                    args: vec![],
+                    ret: ExportRet::Void
+                },
             ]
         );
     }
@@ -183,20 +203,37 @@ mod tests {
         assert_eq!(
             parse(section).unwrap(),
             vec![
-                Export { name: "sum_bytes".into(), args: vec![ExportArg::Bytes], ret: ExportRet::Value },
-                Export { name: "make_bytes".into(), args: vec![ExportArg::Num], ret: ExportRet::Bytes },
+                Export {
+                    name: "sum_bytes".into(),
+                    args: vec![ExportArg::Bytes],
+                    ret: ExportRet::Value
+                },
+                Export {
+                    name: "make_bytes".into(),
+                    args: vec![ExportArg::Num],
+                    ret: ExportRet::Bytes
+                },
             ]
         );
     }
 
     #[test]
     fn parses_option_and_result_exports() {
-        let section = b"checked_sqrt|f64|opt:f64\nfirst_word|str|opt:str\ndivide|f64,f64|res:f64:str\n";
+        let section =
+            b"checked_sqrt|f64|opt:f64\nfirst_word|str|opt:str\ndivide|f64,f64|res:f64:str\n";
         assert_eq!(
             parse(section).unwrap(),
             vec![
-                Export { name: "checked_sqrt".into(), args: vec![ExportArg::Num], ret: ExportRet::Opt(Payload::F64) },
-                Export { name: "first_word".into(), args: vec![ExportArg::Str], ret: ExportRet::Opt(Payload::Str) },
+                Export {
+                    name: "checked_sqrt".into(),
+                    args: vec![ExportArg::Num],
+                    ret: ExportRet::Opt(Payload::F64)
+                },
+                Export {
+                    name: "first_word".into(),
+                    args: vec![ExportArg::Str],
+                    ret: ExportRet::Opt(Payload::Str)
+                },
                 Export {
                     name: "divide".into(),
                     args: vec![ExportArg::Num, ExportArg::Num],
@@ -212,8 +249,16 @@ mod tests {
         assert_eq!(
             parse(section).unwrap(),
             vec![
-                Export { name: "greet_opt".into(), args: vec![ExportArg::Opt(Payload::Str)], ret: ExportRet::Str },
-                Export { name: "bump".into(), args: vec![ExportArg::Opt(Payload::F64)], ret: ExportRet::Value },
+                Export {
+                    name: "greet_opt".into(),
+                    args: vec![ExportArg::Opt(Payload::Str)],
+                    ret: ExportRet::Str
+                },
+                Export {
+                    name: "bump".into(),
+                    args: vec![ExportArg::Opt(Payload::F64)],
+                    ret: ExportRet::Value
+                },
             ]
         );
     }
@@ -224,8 +269,16 @@ mod tests {
         assert_eq!(
             parse(section).unwrap(),
             vec![
-                Export { name: "make_array".into(), args: vec![ExportArg::Num, ExportArg::Num], ret: ExportRet::Handle },
-                Export { name: "push_to".into(), args: vec![ExportArg::Handle, ExportArg::Num], ret: ExportRet::Handle },
+                Export {
+                    name: "make_array".into(),
+                    args: vec![ExportArg::Num, ExportArg::Num],
+                    ret: ExportRet::Handle
+                },
+                Export {
+                    name: "push_to".into(),
+                    args: vec![ExportArg::Handle, ExportArg::Num],
+                    ret: ExportRet::Handle
+                },
             ]
         );
     }

@@ -32,7 +32,10 @@ pub fn run(program: &Path) -> i32 {
             return 2;
         }
     };
-    let port = listener.local_addr().expect("listener has an address").port();
+    let port = listener
+        .local_addr()
+        .expect("listener has an address")
+        .port();
     let names = module.test_names.clone();
     std::thread::spawn(move || serve(listener, &module.routes));
 
