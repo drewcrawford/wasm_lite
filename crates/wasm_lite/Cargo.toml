@@ -1,6 +1,6 @@
 [package]
 name = "wasm_lite"
-description = "Minimal JS bindings for Rust compiled to wasm, with no runtime dependencies."
+description = "Browser-first Rust/JavaScript bindings for wasm32-unknown-unknown, with real-browser tests/doctests, first-class threads, and zero runtime dependencies."
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -1,4 +1,4 @@
-# Census: thread ownership in the wasm-bindgen ecosystem
+# Census: thread ownership in the [wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/) ecosystem
 
 *(Supporting data for the [roadmap](./roadmap.md)'s interop items — specifically why
 the fake-wasm-bindgen `[patch]` shim can declare thread-owning crates out of scope

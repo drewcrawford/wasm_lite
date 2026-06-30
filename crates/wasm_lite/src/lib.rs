@@ -2,13 +2,13 @@
 //!
 //! ![logo](https://github.com/drewcrawford/wasm_lite/raw/main/art/logo.png)
 //!
-//! A browser-first Rust/JavaScript binding layer for `wasm32-unknown-unknown`:
-//! bind JavaScript and Rust to each other with zero *runtime* dependencies in
-//! the core crate and host codegen, generated ES-module glue, and a runner that
-//! treats modern browsers as the main backend.
+//! Browser-first Rust/JavaScript bindings for `wasm32-unknown-unknown`, with
+//! real-browser tests/doctests, first-class threads, and zero runtime
+//! dependencies.
 //!
-//! [`wasm_lite`](crate) is intentionally narrower than wasm-bindgen. It focuses
-//! on the path where one tool owns the browser loop end to end: codegen, local
+//! [`wasm_lite`](crate) is intentionally narrower than
+//! [wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/). It focuses on
+//! the path where one tool owns the browser loop end to end: codegen, local
 //! serving, WebDriver launch, `cargo run`, `cargo test`, rustdoc doctests,
 //! worker bootstrap, logs, and panics. Atomics, Web Workers, and std-like
 //! browser concurrency through [`wasm_lite_std`] are part of that target, not a

@@ -6,8 +6,9 @@
 
 ## Goals that shape the roadmap
 
-The roadmap is not "rebuild all of wasm-bindgen." It is guided by a smaller set
-of browser-first goals:
+The roadmap is not "rebuild all of
+[wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/)." It is guided by a
+smaller set of browser-first goals:
 
 * **Modern browsers are the primary backend.** wasm_lite intentionally emits a
   modern ES-module browser loader and serves it through the runner. It does not

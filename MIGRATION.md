@@ -1,7 +1,7 @@
-# Migrating from wasm-bindgen to wasm_lite
+# Migrating from [wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/) to wasm_lite
 
 This guide is for people who already ship Rust on `wasm32-unknown-unknown` with
-[`wasm-bindgen`](https://github.com/rustwasm/wasm-bindgen) and are evaluating
+`wasm-bindgen` and are evaluating
 `wasm_lite`. It assumes you know the wasm-bindgen flow (`#[wasm_bindgen]`,
 `wasm-pack`, `js-sys`/`web-sys`, `wasm-bindgen-futures`). The
 [README](./README.md) is the feature baseline; this document goes deeper on the

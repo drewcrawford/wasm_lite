@@ -1,4 +1,4 @@
-# Design notes: wasm-bindgen coexistence
+# Design notes: [wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/) coexistence
 
 *(Part of the [wasm_lite](../README.md) docs. See also: [roadmap](./roadmap.md),
 [interop](./interop.md), [thread-ownership census](./wasm-thread-ownership-census.md),

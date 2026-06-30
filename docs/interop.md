@@ -1,4 +1,4 @@
-# wasm-bindgen interop
+# [wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/) interop
 
 *(Part of the [wasm_lite](../README.md) docs. See also: [binding model](./binding-model.md),
 [testing](./testing.md), [threads & async](./threads-and-async.md),

@@ -38,10 +38,11 @@ users assemble later.
   captured panic messages rather than leaving users with a bare wasm trap.
 
 This is informed by the [`wasm_ffi`](https://github.com/drewcrawford/wasm_ffi)
-work on wasm-bindgen: that fork exists largely because real applications exposed
-gaps in doctests, worker log capture, realtime headless output, Node/thread
-behavior, and logging performance. wasm_lite bakes those lessons into the
-runner instead of treating them as after-the-fact patches.
+work on [wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/): that fork
+exists largely because real applications exposed gaps in doctests, worker log
+capture, realtime headless output, Node/thread behavior, and logging
+performance. wasm_lite bakes those lessons into the runner instead of treating
+them as after-the-fact patches.
 
 ## Point `cargo test` at the runner
 

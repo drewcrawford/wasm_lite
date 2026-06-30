@@ -81,7 +81,8 @@ payload at offset 8. `None` ↔ JS `null`; `Err(e)` ↔ a **thrown** JS exceptio
 flattens to a discriminant `i32` plus T's normal parameters. On exports JS
 `null`/`undefined` → `None`; on imports `None` → JS `undefined` (so a JS default
 parameter applies). `Result` arguments are *not* supported — JS has no `Result`
-type, so there is no natural value to pass (this matches wasm-bindgen).
+type, so there is no natural value to pass (this matches
+[wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/)).
 
 ```rust
 #[wasm_lite::export]
