@@ -15,3 +15,7 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
+
+[dev-dependencies]
+wasm_lite = { path = "../wasm_lite" }
+wasm_lite_std = { path = "../wasm_lite_std" }

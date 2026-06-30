@@ -30,13 +30,14 @@ use crate::ty::*;
 /// body on a dedicated Web Worker instead — there blocking primitives
 /// (`lock_block`, `recv_block`, `park`, …) work:
 ///
-/// ```ignore
+/// ```
 /// #[wasm_lite::wasm_lite_test(worker)]
 /// fn blocking_recv() {
 ///     let (tx, rx) = wasm_lite_std::mpsc::channel();
 ///     tx.send_block(1).unwrap();
 ///     assert_eq!(rx.recv_block(), Ok(1));
 /// }
+/// # fn main() {}
 /// ```
 ///
 /// The `(worker)` form expands to a fail-closed async harness (spawn the body on
@@ -52,17 +53,32 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Worker tests defer the verdict: mark pending, run the body on a worker, and
     // pass only once its join resolves (an awaited worker panic propagates through
     // `.unwrap()` and fails the test). Main-thread tests just call the body.
+    //
+    // The wasm32 arms carry the browser-runner integration (`set_panic_hook`, the
+    // `__rt` pending/pass verdict hooks). Those symbols only exist on wasm32, so on
+    // other targets we emit a plain host-runnable fallback instead: a worker test
+    // spawns the body on a real thread and blocks on the join; a main-thread test
+    // just calls it. This keeps the generated entry compilable/linkable on the host
+    // (e.g. as a doctest) without changing the wasm32 expansion at all.
     let entry_body = if args.worker {
         quote! {
-            ::wasm_lite::set_panic_hook();
-            ::wasm_lite_std::__rt::test_pending();
-            ::wasm_lite_std::spawn_local(async {
-                ::wasm_lite_std::spawn(#name).join_async().await.unwrap();
-                ::wasm_lite_std::__rt::test_pass();
-            });
+            #[cfg(target_arch = "wasm32")]
+            {
+                ::wasm_lite::set_panic_hook();
+                ::wasm_lite_std::__rt::test_pending();
+                ::wasm_lite_std::spawn_local(async {
+                    ::wasm_lite_std::spawn(#name).join_async().await.unwrap();
+                    ::wasm_lite_std::__rt::test_pass();
+                });
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ::wasm_lite_std::spawn(#name).join().unwrap();
+            }
         }
     } else {
         quote! {
+            #[cfg(target_arch = "wasm32")]
             ::wasm_lite::set_panic_hook();
             #name();
         }
@@ -116,9 +132,10 @@ impl Parse for TestArgs {
 
 /// Export a Rust function to JavaScript callers.
 ///
-/// ```ignore
+/// ```
 /// #[wasm_lite::export]
 /// pub fn add(a: i32, b: i32) -> i32 { a + b }
+/// # fn main() {}
 /// ```
 ///
 /// Generates a wasm export (`__wl_export_add`) with a flattened ABI and records
@@ -139,12 +156,14 @@ pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Declare imported JavaScript functions grouped by JS namespace.
 ///
-/// ```ignore
+/// ```
+/// use wasm_lite::JsValue;
 /// wasm_lite::import! {
 ///     "console" { fn log(msg: &str); }
 ///     "Math" { fn max2(a: f64, b: f64) -> f64 as "max"; }   // `as` for overloads
 ///     "Array" { fn push(this: &JsValue, value: f64) -> f64; } // method on a handle
 /// }
+/// # fn main() {}
 /// ```
 ///
 /// For each function, emits a safe Rust wrapper, a function-local wasm import
@@ -468,7 +487,7 @@ fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, Toke
 
 /// Declare a typed handle wrapper over a JS object.
 ///
-/// ```ignore
+/// ```
 /// wasm_lite::js_class! {
 ///     type JsArray;
 ///     impl JsArray {
@@ -477,6 +496,7 @@ fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, Toke
 ///         fn concat(&self, other: &JsArray) -> JsArray; // typed arg + typed return
 ///     }
 /// }
+/// # fn main() {}
 /// ```
 ///
 /// Generates a newtype `struct JsArray(JsValue)` with `from_js`/`as_js`/`into_js`

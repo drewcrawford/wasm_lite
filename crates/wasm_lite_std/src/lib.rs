@@ -179,16 +179,25 @@
 //!
 //! ## Joining threads
 //!
-//! ```no_run
-//! # if cfg!(target_arch="wasm32") { return; } //join() not reliable here
+//! The portable way to wait for a thread's result is `join_async().await` — it
+//! behaves identically on native, on wasm workers, and on the wasm main thread,
+//! and returns the same `Result<T, Box<String>>` everywhere. (The `async_doctest!`
+//! wrapper just drives the future to completion on whichever platform is running.)
+//!
+//! ```
+//! # #[cfg(target_arch = "wasm32")] wasm_lite::set_panic_hook();
 //! use wasm_lite_std::spawn;
 //!
-//! // Synchronous join (works on native and some browser context - but not reliably!)
-//! let handle = spawn(|| 42);
-//! let result = handle.join().unwrap();
-//! assert_eq!(result, 42);
+//! wasm_lite_std::async_doctest!(async {
+//!     let result = spawn(|| 42).join_async().await.unwrap();
+//!     assert_eq!(result, 42);
+//! });
+//! ```
 //!
-//! // Non-blocking check
+//! For a non-blocking completion check, use `is_finished`:
+//!
+//! ```
+//! use wasm_lite_std::spawn;
 //! let handle = spawn(|| 42);
 //! if handle.is_finished() {
 //!     // Thread completed
@@ -196,12 +205,29 @@
 //! # drop(handle);
 //! ```
 //!
-//! For async contexts, use `join_async`:
+//! A synchronous `join()` also exists. It blocks the calling thread, so the only
+//! place it can't be used is the browser main thread (which must never block) —
+//! there it returns an error instead. Off the main thread it's fully portable:
+//! inside a worker, `Atomics.wait` is available and blocking is fine, exactly as
+//! on a native thread. So the joining just has to happen on a worker:
 //!
-//! ```compile_only
-//! // In an async context (e.g., a future running on wasm_lite_std::spawn_local)
-//! let result = handle.join_async().await.unwrap();
 //! ```
+//! # #[cfg(target_arch = "wasm32")] wasm_lite::set_panic_hook();
+//! use wasm_lite_std::spawn;
+//!
+//! wasm_lite_std::async_doctest!(async {
+//!     // Do the blocking join on a worker, never on the main thread:
+//!     spawn(|| {
+//!         let result = spawn(|| 42).join().unwrap();
+//!         assert_eq!(result, 42);
+//!     })
+//!     .join_async()
+//!     .await
+//!     .unwrap();
+//! });
+//! ```
+//!
+//! Still, prefer `join_async` on the main thread, where blocking isn't an option.
 //!
 //! ## Thread operations
 //!
@@ -536,8 +562,8 @@ pub fn install_println_eprintln_console_hook() {
 /// default. On native it simply blocks on the future, so a panic propagates to
 /// the normal harness.
 ///
-/// ```ignore
-/// wasm_lite::set_panic_hook();
+/// ```
+/// # #[cfg(target_arch = "wasm32")] wasm_lite::set_panic_hook();
 /// wasm_lite_std::async_doctest!(async {
 ///     let v = wasm_lite_std::spawn(|| 2 + 2).join_async().await.unwrap();
 ///     assert_eq!(v, 4);
