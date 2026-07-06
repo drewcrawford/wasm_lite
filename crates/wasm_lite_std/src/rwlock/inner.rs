@@ -128,7 +128,10 @@ impl<T> From<T> for RwLock<T> {
 }
 
 unsafe impl<T: Send> Send for RwLock<T> {}
-unsafe impl<T: Send> Sync for RwLock<T> {}
+// `T: Sync` is required because multiple ReadGuards hand out `&T` to several
+// threads at once; `T: Send` because a write guard can move a `T` out from a
+// different thread than the one that created it. Matches std's RwLock bounds.
+unsafe impl<T: Send + Sync> Sync for RwLock<T> {}
 
 impl<T> RwLock<T> {
     /// Creates a new read-write lock with the given initial value.
