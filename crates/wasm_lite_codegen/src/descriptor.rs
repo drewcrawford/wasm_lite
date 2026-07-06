@@ -92,8 +92,11 @@ impl AbiArg {
         }
     }
 
-    fn from_tag(tag: &str) -> Self {
-        match tag {
+    // Unknown tags are a hard error: the macro ABI and this parser must stay in
+    // lockstep, and a silent fallback would give the shim the wrong wasm-level
+    // arity, shifting every subsequent argument.
+    fn from_tag(tag: &str) -> Option<Self> {
+        Some(match tag {
             "str" => AbiArg::Str,
             "bytes" => AbiArg::Bytes,
             "bool" => AbiArg::Bool,
@@ -137,8 +140,10 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
         let args: Vec<AbiArg> = arg_tags
             .split(',')
             .filter(|t| !t.is_empty())
-            .map(AbiArg::from_tag)
-            .collect();
+            .map(|t| {
+                AbiArg::from_tag(t).ok_or_else(|| format!("unknown argument tag {t:?} in {line:?}"))
+            })
+            .collect::<Result<_, _>>()?;
 
         if kind == Kind::Method && args.first() != Some(&AbiArg::Handle) {
             return Err(format!("method {import_name:?} needs a handle receiver"));
@@ -179,7 +184,8 @@ fn parse_ret(tag: &str) -> Result<Ret, String> {
         "handle" => Ret::Handle,
         "str" => Ret::Str,
         "bytes" => Ret::Bytes,
-        other => Ret::Value(other.to_string()),
+        scalar @ ("i32" | "u32" | "f64" | "bool") => Ret::Value(scalar.to_string()),
+        other => return Err(format!("unknown return tag {other:?}")),
     })
 }
 

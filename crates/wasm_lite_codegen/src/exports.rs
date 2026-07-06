@@ -118,19 +118,25 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
             return Err(format!("malformed export line: {line:?}"));
         }
 
+        // Unknown tags are a hard error: the macro ABI and this parser must
+        // stay in lockstep, and a silent fallback would give the wrapper the
+        // wrong wasm-level arity, shifting every subsequent argument.
         let args = arg_tags
             .split(',')
             .filter(|t| !t.is_empty())
             .map(|t| match t {
-                "str" => ExportArg::Str,
-                "bytes" => ExportArg::Bytes,
-                "handle" => ExportArg::Handle,
+                "str" => Ok(ExportArg::Str),
+                "bytes" => Ok(ExportArg::Bytes),
+                "handle" => Ok(ExportArg::Handle),
+                // JS→wasm numbers coerce bit-exactly (ToInt32), so u32 needs
+                // no special casing in this direction.
+                "i32" | "u32" | "f64" | "bool" => Ok(ExportArg::Num),
                 _ => match t.strip_prefix("opt:").and_then(Payload::from_tag) {
-                    Some(p) => ExportArg::Opt(p),
-                    None => ExportArg::Num,
+                    Some(p) => Ok(ExportArg::Opt(p)),
+                    None => Err(format!("unknown argument tag {t:?} in {line:?}")),
                 },
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         let ret = parse_ret(ret_tag)?;
 
         exports.push(Export {
