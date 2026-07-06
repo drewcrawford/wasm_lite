@@ -396,6 +396,12 @@ fn emit_export(js: &mut String, export: &Export) {
             lines.extend(frees);
             lines.push("return __ret;".into());
         }
+        ExportRet::U32 => {
+            // The wasm i32 result surfaces as a signed Number; reinterpret.
+            lines.push(format!("const __ret = {call};"));
+            lines.extend(frees);
+            lines.push("return __ret >>> 0;".into());
+        }
         ExportRet::Bool => {
             lines.push(format!("const __ret = {call};"));
             lines.extend(frees);
@@ -604,12 +610,16 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
             }
             AbiArg::Bool => format!("Boolean({})", next_param(&mut params)),
             AbiArg::Num => next_param(&mut params),
+            // The wasm i32 param surfaces as a signed Number; reinterpret.
+            AbiArg::U32 => format!("({} >>> 0)", next_param(&mut params)),
             AbiArg::Handle => format!("__wl_obj({})", next_param(&mut params)),
             AbiArg::Opt(p) => {
                 // Leading discriminant param, then the inner payload's params.
                 let pres = next_param(&mut params);
                 let payload = match p {
-                    Payload::I32 | Payload::U32 | Payload::F64 => next_param(&mut params),
+                    Payload::I32 | Payload::F64 => next_param(&mut params),
+                    // The wasm i32 param surfaces as a signed Number; reinterpret.
+                    Payload::U32 => format!("({} >>> 0)", next_param(&mut params)),
                     Payload::Bool => format!("Boolean({})", next_param(&mut params)),
                     Payload::Handle => format!("__wl_obj({})", next_param(&mut params)),
                     Payload::Str => {
@@ -791,6 +801,31 @@ mod tests {
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
         assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass };"));
+    }
+
+    #[test]
+    fn u32_args_and_returns_are_reinterpreted_unsigned() {
+        // Wasm i32 params/results surface in JS as signed Numbers; u32 values
+        // above 2^31 must be normalized with `>>> 0` on their way to JS.
+        let descriptors = vec![
+            func("ns", "set_id", "set_id", vec![AbiArg::U32], Ret::Void),
+            func(
+                "ns",
+                "pick",
+                "pick",
+                vec![AbiArg::Opt(Payload::U32)],
+                Ret::Void,
+            ),
+        ];
+        let exports = vec![Export {
+            name: "next_id".into(),
+            args: vec![],
+            ret: ExportRet::U32,
+        }];
+        let js = generate_glue(&descriptors, &exports, None);
+        assert!(js.contains("imports[\"ns\"][\"set_id\"] = (p0) => globalThis[\"ns\"][\"set_id\"]((p0 >>> 0));"));
+        assert!(js.contains("imports[\"ns\"][\"pick\"] = (p0, p1) => globalThis[\"ns\"][\"pick\"]((p0 ? (p1 >>> 0) : undefined));"));
+        assert!(js.contains("export function next_id() { __wl_check_live(); const __ret = __wl_instance.exports.__wl_export_next_id(); return __ret >>> 0; }"));
     }
 
     #[test]

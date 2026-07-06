@@ -71,8 +71,11 @@ pub enum AbiArg {
     Bytes,
     /// A `bool`: arrives as one `i32`; present to JS as a real boolean.
     Bool,
-    /// A numeric type (`i32`, `u32`, `f64`, ...): one param, passed through.
+    /// A signed/float numeric type (`i32`, `f64`): one param, passed through.
     Num,
+    /// A `u32`: one param; wasm i32 params surface in JS as *signed* Numbers,
+    /// so the shim must reinterpret with `>>> 0` before handing it to JS.
+    U32,
     /// A `&JsValue`: arrives as one `u32` index; look up in the value table.
     Handle,
     /// `Option<T>`: a discriminant `i32` (0 = `None`) plus T's params.
@@ -84,7 +87,7 @@ impl AbiArg {
     pub fn param_count(self) -> usize {
         match self {
             AbiArg::Str | AbiArg::Bytes => 2,
-            AbiArg::Bool | AbiArg::Num | AbiArg::Handle => 1,
+            AbiArg::Bool | AbiArg::Num | AbiArg::U32 | AbiArg::Handle => 1,
             AbiArg::Opt(p) => 1 + p.param_count(),
         }
     }
@@ -95,11 +98,10 @@ impl AbiArg {
             "bytes" => AbiArg::Bytes,
             "bool" => AbiArg::Bool,
             "handle" => AbiArg::Handle,
-            _ => match tag.strip_prefix("opt:").and_then(Payload::from_tag) {
-                Some(p) => AbiArg::Opt(p),
-                None => AbiArg::Num,
-            },
-        }
+            "i32" | "f64" => AbiArg::Num,
+            "u32" => AbiArg::U32,
+            _ => return tag.strip_prefix("opt:").and_then(Payload::from_tag).map(AbiArg::Opt),
+        })
     }
 }
 

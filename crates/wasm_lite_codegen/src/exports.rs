@@ -77,6 +77,9 @@ pub enum ExportRet {
     Bool,
     /// A number, returned directly.
     Value,
+    /// A `u32`: wasm i32 results surface in JS as *signed* Numbers, so the
+    /// wrapper must reinterpret with `>>> 0` before returning.
+    U32,
     /// A `String`: returned as a packed `(ptr, len)` to decode and free.
     Str,
     /// A `Vec<u8>`: returned as a packed `(ptr, len)` to copy out and free.
@@ -160,7 +163,9 @@ fn parse_ret(tag: &str) -> Result<ExportRet, String> {
         "str" => ExportRet::Str,
         "bytes" => ExportRet::Bytes,
         "handle" => ExportRet::Handle,
-        _ => ExportRet::Value,
+        "u32" => ExportRet::U32,
+        "i32" | "f64" => ExportRet::Value,
+        other => return Err(format!("unknown return tag {other:?}")),
     })
 }
 
@@ -207,7 +212,7 @@ mod tests {
                 Export {
                     name: "sum_bytes".into(),
                     args: vec![ExportArg::Bytes],
-                    ret: ExportRet::Value
+                    ret: ExportRet::U32
                 },
                 Export {
                     name: "make_bytes".into(),
