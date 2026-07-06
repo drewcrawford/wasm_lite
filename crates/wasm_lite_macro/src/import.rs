@@ -49,9 +49,28 @@ impl Parse for Import {
     }
 }
 
+/// Reject strings that would corrupt the descriptor section's line/pipe format.
+/// The descriptor is `kind|ns|name|js_name|args|ret\n`, emitted without any
+/// escaping, so `|` or a control character in a user string silently shifts
+/// every following field and generates wrong glue.
+fn check_descriptor_str(lit: &LitStr, what: &str) -> syn::Result<()> {
+    let v = lit.value();
+    if v.is_empty() {
+        return Err(Error::new_spanned(lit, format!("{what} must not be empty")));
+    }
+    if let Some(bad) = v.chars().find(|c| *c == '|' || c.is_control()) {
+        return Err(Error::new_spanned(
+            lit,
+            format!("{what} must not contain {bad:?}: it is embedded verbatim in the binding descriptor, which uses `|`-separated fields and newline-separated entries"),
+        ));
+    }
+    Ok(())
+}
+
 impl Parse for Namespace {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ns: LitStr = input.parse()?;
+        check_descriptor_str(&ns, "import! namespace")?;
         let body;
         braced!(body in input);
         let mut fns = Vec::new();
@@ -94,7 +113,9 @@ impl Parse for ImportFn {
         };
         let js = if input.peek(Token![as]) {
             input.parse::<Token![as]>()?;
-            Some(input.parse::<LitStr>()?.value())
+            let lit: LitStr = input.parse()?;
+            check_descriptor_str(&lit, "`as` JS name")?;
+            Some(lit.value())
         } else {
             None
         };
