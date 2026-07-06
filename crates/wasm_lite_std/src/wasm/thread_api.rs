@@ -421,7 +421,9 @@ pub fn current() -> Thread {
 
 /// Puts the current thread to sleep for at least the specified duration.
 pub fn sleep(dur: Duration) {
-    sleep_sync_ms(dur.as_millis() as f64);
+    // as_secs_f64, not as_millis: integer millis would truncate a
+    // sub-millisecond duration to a zero-length (no-op) sleep.
+    sleep_sync_ms(dur.as_secs_f64() * 1000.0);
 }
 
 /// Cooperatively gives up a timeslice to the OS scheduler.
@@ -467,7 +469,7 @@ pub fn park() {
 pub fn park_timeout(dur: Duration) {
     let thread = current();
     let ptr = thread.inner.parking_state.as_ref() as *const AtomicU32 as u32;
-    if park_wait_timeout_at_addr(ptr, dur.as_millis() as f64) == WaitResult::Unsupported {
+    if park_wait_timeout_at_addr(ptr, dur.as_secs_f64() * 1000.0) == WaitResult::Unsupported {
         panic!("atomic.wait is not available in this context (likely main thread)");
     }
 }
