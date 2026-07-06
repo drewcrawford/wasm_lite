@@ -140,5 +140,7 @@ mod tests;
 
 pub use inner::RwLock;
 
-pub(crate) const UNLOCKED: u8 = 0;
-pub(crate) const LOCKED_WRITE: u8 = 0b10000000;
+pub(crate) const UNLOCKED: u32 = 0;
+// High bit = writer; low 31 bits = reader count (u8 previously capped the lock at
+// 127 concurrent readers, which real fan-out code can exceed).
+pub(crate) const LOCKED_WRITE: u32 = 1 << 31;

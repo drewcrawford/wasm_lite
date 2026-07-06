@@ -2,7 +2,7 @@
 use crate::spinlock::Spinlock;
 use std::cell::UnsafeCell;
 use std::fmt::Display;
-use std::sync::atomic::AtomicU8;
+use std::sync::atomic::AtomicU32;
 
 #[cfg(target_arch = "wasm32")]
 use crate as thread;
@@ -42,6 +42,14 @@ use super::UNLOCKED;
 /// - Reads and writes are equally common
 /// - Operations are very quick
 /// - You want simpler semantics
+///
+/// ## Fairness
+///
+/// This lock is read-preferring: new readers are admitted whenever no writer
+/// *holds* the lock, even while writers wait. Under sustained read load a
+/// writer can be starved indefinitely (std makes no fairness promise either,
+/// but many platform implementations are write-preferring). If writers must
+/// make progress under heavy read traffic, use [`Mutex`](crate::Mutex).
 ///
 /// # Examples
 ///
@@ -105,7 +113,7 @@ use super::UNLOCKED;
 #[derive(Debug, Default)]
 pub struct RwLock<T> {
     pub(crate) inner: UnsafeCell<T>,
-    pub(crate) data_lock: AtomicU8,
+    pub(crate) data_lock: AtomicU32,
     pub(crate) waiting_sync_read_threads: Spinlock<Vec<thread::Thread>>,
     pub(crate) waiting_sync_write_threads: Spinlock<Vec<thread::Thread>>,
     pub(crate) waiting_async_read_threads: Spinlock<Vec<crate::async_wait::AsyncWake>>,
@@ -147,7 +155,7 @@ impl<T> RwLock<T> {
     pub const fn new(value: T) -> RwLock<T> {
         RwLock {
             inner: UnsafeCell::new(value),
-            data_lock: AtomicU8::new(UNLOCKED),
+            data_lock: AtomicU32::new(UNLOCKED),
             waiting_sync_read_threads: Spinlock::new(vec![]),
             waiting_async_read_threads: Spinlock::new(vec![]),
             waiting_sync_write_threads: Spinlock::new(vec![]),
