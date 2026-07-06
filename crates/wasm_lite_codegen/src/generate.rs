@@ -108,6 +108,23 @@ function __wl_sink_log(level, text) {
     }
 }
 
+// A JS exception escaping a non-Result import unwinds the wasm frames without
+// running Rust destructors or restoring the shadow stack pointer — the
+// instance's state is as suspect as after a panic. Record the failure
+// (fail-closed for tests), log it loudly, and rethrow; every further export
+// call is refused via __wl_check_live. (Result-returning imports catch the
+// exception and hand it to Rust instead — bind throwy JS as `Result<_, JsValue>`.)
+let __wl_dead = null;
+function __wl_fatal(e, name) {
+    __wl_dead = \"imported JS function \" + name + \" threw: \" + String((e && e.stack) || e);
+    __wl_sink_log(\"error\", \"wasm_lite: \" + __wl_dead + \" — the wasm instance is now unusable; bind the import as Result<_, JsValue> to handle JS exceptions instead\");
+    if (!globalThis.__wl_done) globalThis.__wl_done = { ok: false, error: __wl_dead };
+    throw e;
+}
+function __wl_check_live() {
+    if (__wl_dead) throw new Error(\"wasm_lite: instance is unusable: \" + __wl_dead);
+}
+
 ";
 
 /// The `instantiate`/`setInstance` exports for a module with its own (exported)
@@ -300,6 +317,22 @@ pub fn generate_glue(
         emit_shim(&mut js, d);
     }
 
+    // Fail closed: wrap every import shim so an escaping JS exception is routed
+    // through __wl_fatal instead of silently unwinding the wasm frames.
+    // Result-returning shims already catch and never reach the wrapper's catch;
+    // runtime entries (__wl_spawn in particular — a throwing `new Worker()`
+    // would otherwise leak the closure and its stack/TLS blocks) are covered too.
+    js.push_str(
+        "    for (const __ns in imports) {\n\
+         \x20       for (const __key in imports[__ns]) {\n\
+         \x20           const __f = imports[__ns][__key];\n\
+         \x20           if (typeof __f !== \"function\") continue;\n\
+         \x20           imports[__ns][__key] = (...__a) => {\n\
+         \x20               try { return __f(...__a); } catch (__e) { __wl_fatal(__e, __ns + \".\" + __key); }\n\
+         \x20           };\n\
+         \x20       }\n\
+         \x20   }\n",
+    );
     js.push_str("    return imports;\n}\n");
     match memory {
         Some(mem) => js.push_str(&instantiate_shared(mem)),
@@ -318,6 +351,9 @@ fn emit_export(js: &mut String, export: &Export) {
     let params: Vec<String> = (0..export.args.len()).map(|i| format!("p{i}")).collect();
 
     let mut lines = Vec::new();
+    // Refuse re-entry after an escaped import exception: the shadow stack
+    // pointer was not restored, so running more wasm would be silent UB.
+    lines.push("__wl_check_live();".to_string());
     let mut wasm_args = Vec::new();
     let mut frees = Vec::new();
     for (i, arg) in export.args.iter().enumerate() {
@@ -894,10 +930,10 @@ mod tests {
             },
         ];
         let js = generate_glue(&[], &exports, None);
-        assert!(js.contains("export function add(p0, p1) { const __ret = __wl_instance.exports.__wl_export_add(p0, p1); return __ret; }"));
-        assert!(js.contains("export function is_even(p0) { const __ret = __wl_instance.exports.__wl_export_is_even(p0); return Boolean(__ret); }"));
+        assert!(js.contains("export function add(p0, p1) { __wl_check_live(); const __ret = __wl_instance.exports.__wl_export_add(p0, p1); return __ret; }"));
+        assert!(js.contains("export function is_even(p0) { __wl_check_live(); const __ret = __wl_instance.exports.__wl_export_is_even(p0); return Boolean(__ret); }"));
         assert!(
-            js.contains("export function tick() { __wl_instance.exports.__wl_export_tick(); }")
+            js.contains("export function tick() { __wl_check_live(); __wl_instance.exports.__wl_export_tick(); }")
         );
     }
 
