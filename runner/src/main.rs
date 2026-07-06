@@ -81,8 +81,18 @@ fn is_test_run(args: &Args) -> bool {
         return true;
     }
 
-    let path = args.program.to_string_lossy();
-    if path.contains("/deps/") || path.contains("rustdoctest") {
+    // Cargo puts test artifacts directly in `target/…/deps/`, while `cargo run`
+    // bins live in `target/…/debug/`. Check the immediate parent (not a
+    // substring): a project checked out under a directory literally named
+    // `deps` must not force headless mode, and `Path` components also handle
+    // Windows separators, which `contains("/deps/")` did not.
+    if args
+        .program
+        .parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|n| n == "deps")
+        || args.program.to_string_lossy().contains("rustdoctest")
+    {
         return true;
     }
 
