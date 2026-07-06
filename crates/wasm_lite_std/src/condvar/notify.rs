@@ -39,7 +39,6 @@ impl Condvar {
 
         let thread = self.waiting_spin_threads.with_mut(|threads| threads.pop());
         if let Some(thread) = thread {
-            eprintln!("Popped a waiting_spin_thread");
             thread.store(true, Ordering::Release);
             return;
         }

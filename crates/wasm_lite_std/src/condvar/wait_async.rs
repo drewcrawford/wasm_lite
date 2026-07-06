@@ -214,13 +214,15 @@ impl Condvar {
             });
         });
 
+        // Compute the remaining time on the calling thread: `Instant`s are not
+        // comparable across threads on wasm (each worker's clock starts at its
+        // own time origin), so the spawned thread must receive a `Duration`,
+        // never the deadline itself.
+        let timeout = deadline - Instant::now();
+
         // Spawn a thread to handle the timeout
         thread::spawn(move || {
-            let now = Instant::now();
-            if deadline > now {
-                let duration = deadline - now;
-                thread::sleep(duration);
-            }
+            thread::sleep(timeout);
             // Send timeout signal
             timeout_sender.wake();
         });
@@ -278,13 +280,22 @@ impl Condvar {
         }
         .await;
 
-        // If we timed out, remove ourselves from the list
+        // If we timed out, remove ourselves from the list. If our entry is
+        // already gone, a notify consumed it concurrently with the deadline
+        // elapsing; replay it so the notification reaches another waiter
+        // instead of being silently dropped.
         if timed_out {
-            self.waiting_async_threads.with_mut(|waiters| {
+            let consumed_notify = self.waiting_async_threads.with_mut(|waiters| {
                 if let Some(pos) = waiters.iter().position(|w| w.id == waiter_id) {
                     drop(waiters.remove(pos));
+                    false
+                } else {
+                    true
                 }
             });
+            if consumed_notify {
+                self.notify_one();
+            }
         }
 
         // Re-acquire the mutex
