@@ -289,7 +289,11 @@ fn read_http_body(stream: &mut TcpStream) -> Result<String, String> {
                     );
                 }
                 Some(_) => {}
-                None => return Ok(String::from_utf8_lossy(&buf[body_start..]).into_owned()),
+                // No Content-Length: the request sent `Connection: close`, so
+                // keep reading to EOF (the n == 0 arm below) rather than
+                // returning whatever happens to be buffered — the body may
+                // arrive in later packets.
+                None => {}
             }
         }
         let n = stream.read(&mut chunk).map_err(|e| format!("read: {e}"))?;
