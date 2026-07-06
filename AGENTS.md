@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+(The real file is `AGENTS.md`; `CLAUDE.md` is a symlink to it. Edit either — they are one file.)
+
 ## What this is
 
 `wasm_lite` is a dependency-light rewrite of wasm-bindgen for `wasm32-unknown-unknown`:
@@ -63,6 +65,14 @@ ask the user, and prefer crates by `drewcrawford`.
 
 ## Building and testing
 
+**The full gate is `scripts/check_all`** — fmt, check, clippy, tests, and docs across *both*
+worlds (native and wasm32, including every example crate). Run it before considering a change
+done. Each stage is also runnable alone (`scripts/fmt`, `scripts/check`, `scripts/clippy`,
+`scripts/tests`, `scripts/docs`), and each splits into `scripts/native/*` and `scripts/wasm32/*`
+halves. Everything runs with `-D warnings`; pass `--relaxed` to allow warnings. Note
+`cargo fmt` at the root does **not** cover the examples — `scripts/fmt` iterates their
+manifests explicitly.
+
 Two distinct worlds:
 
 **Host-side crates** (`wasm_lite_codegen`, `runner`, `wasm_lite_macro`) build and test natively:
@@ -89,6 +99,11 @@ cargo test    # drives #[wasm_lite_test]s headless and exits
 
 `cargo run` vs `cargo test` is distinguished by the runner *by path*. A WebDriver-capable
 browser must be installed (Firefox + `geckodriver`, or Chrome + `chromedriver`).
+
+Runner knobs (env vars): `WASM_LITE_BROWSER=chrome|safari` picks a non-default browser
+(default Firefox); `WASM_LITE_REUSE_BROWSER=1` keeps one browser session alive across test
+invocations (stop it with `runner --stop-browser`); `WASM_LITE_NO_OPEN=1` serves a bin
+without launching a browser (attach a debugger/browser manually).
 
 **Atomics / threads / async examples need nightly + `-Z build-std`** because enabling the
 `atomics` target feature forces recompiling `std`. These examples ship a `.cargo/config.toml`
