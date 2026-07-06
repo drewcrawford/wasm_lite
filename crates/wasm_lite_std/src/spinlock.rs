@@ -131,14 +131,19 @@ impl<T> Spinlock<T> {
             std::hint::spin_loop();
         }
 
+        // Release on drop, so a panicking closure doesn't wedge the lock (the
+        // docs promise release-on-panic; wasm is panic=abort, but native builds
+        // unwind — and this lock guards every Mutex/RwLock/Condvar wait list).
+        struct Release<'a>(&'a std::sync::atomic::AtomicBool);
+        impl Drop for Release<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, std::sync::atomic::Ordering::Release);
+            }
+        }
+        let _release = Release(&self.locked);
+
         // SAFETY: We have exclusive access to the data now
-        let result = unsafe { f(&mut *self.data.get()) };
-
-        // Release the lock
-        self.locked
-            .store(false, std::sync::atomic::Ordering::Release);
-
-        result
+        unsafe { f(&mut *self.data.get()) }
     }
 }
 
