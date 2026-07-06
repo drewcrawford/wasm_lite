@@ -207,6 +207,61 @@ pub fn import(input: TokenStream) -> TokenStream {
     }
 }
 
+/// JS reserved words (module/strict-mode context, where the glue runs). Legal
+/// as Rust fn names — some only via `r#` — but a top-level
+/// `export function <word>` is a SyntaxError that kills the whole glue module.
+fn is_js_reserved_word(name: &str) -> bool {
+    matches!(
+        name,
+        "await"
+            | "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "implements"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "interface"
+            | "let"
+            | "new"
+            | "null"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "return"
+            | "static"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+            | "yield"
+    )
+}
+
 /// Reject `&'static str` / `&'static [u8]` export parameters. The JS glue frees
 /// the argument buffer immediately after the call returns, and the shim's
 /// `from_raw_parts` has an unbounded lifetime that would happily coerce to
@@ -239,6 +294,36 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
     }
 
     let name = &func.sig.ident;
+    // The descriptor (and thus the generated JS `export function <name>`) uses
+    // the unraw'd name, matching `format_ident!`'s `r#`-stripped shim symbol.
+    let name_str = unraw(name);
+
+    // The wrapper is emitted as a top-level `export function <name>` in the
+    // glue module, so a JS reserved word (or a name the glue itself defines)
+    // would make the entire generated module a SyntaxError at load time.
+    if is_js_reserved_word(&name_str) {
+        return Err(Error::new_spanned(
+            name,
+            format!(
+                "#[wasm_lite::export]: `{name_str}` is a reserved word in JavaScript, so the \
+                 generated `export function {name_str}` would be invalid JS. Rename the function."
+            ),
+        ));
+    }
+    if matches!(
+        name_str.as_str(),
+        "instantiate" | "setInstance" | "makeImports" | "makeMemory"
+    ) || name_str.starts_with("__wl_")
+    {
+        return Err(Error::new_spanned(
+            name,
+            format!(
+                "#[wasm_lite::export]: `{name_str}` collides with a function the generated JS \
+                 glue defines. Rename the function."
+            ),
+        ));
+    }
+
     let export_ident = format_ident!("__wl_export_{}", name);
 
     let mut flat_params: Vec<TokenStream2> = Vec::new(); // shim parameter declarations
@@ -328,7 +413,7 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
         quote! {}
     };
 
-    let descriptor = format!("{name}|{}|{ret_tag}", arg_tags.join(","));
+    let descriptor = format!("{name_str}|{}|{ret_tag}", arg_tags.join(","));
     let section = section_literal(&descriptor);
     let len = descriptor.len() + 1;
 

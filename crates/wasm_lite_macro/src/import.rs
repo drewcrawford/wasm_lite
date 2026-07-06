@@ -227,7 +227,11 @@ fn build_fn(ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream2, TokenStream
         _ => "f",
     };
 
-    let js_name = f.js.clone().unwrap_or_else(|| fname_str.clone());
+    // Default JS name: the Rust name minus any `r#` (the raw prefix is
+    // Rust-only; `fn r#type(...)` must call the JS property `type`). The wasm
+    // import symbol keeps the raw string — it only has to match the descriptor,
+    // which uses the same `fname_str`.
+    let js_name = f.js.clone().unwrap_or_else(|| unraw(name));
     let ret = build_return(name, ns, &extern_params, &call_args, f.ret.as_ref())?;
 
     let Return {

@@ -10,6 +10,16 @@ use proc_macro2::Span;
 use quote::ToTokens;
 use syn::{Ident, LitByteStr, Type};
 
+/// An ident's name with any raw-identifier prefix stripped (`r#type` → `type`).
+///
+/// Descriptor strings and JS names must never carry the Rust-only `r#` prefix:
+/// `Display` for a raw ident includes it, which would generate glue referring
+/// to a name that doesn't exist on the JS side.
+pub(crate) fn unraw(ident: &Ident) -> String {
+    let s = ident.to_string();
+    s.strip_prefix("r#").map(str::to_string).unwrap_or(s)
+}
+
 /// The ident of a bare path type with no generics (e.g. `JsValue`, `bool`).
 pub(crate) fn simple_ident(ty: &Type) -> Option<&Ident> {
     if let Type::Path(tp) = ty
