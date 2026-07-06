@@ -37,15 +37,17 @@ pub fn uses_wasm_bindgen(wasm: &[u8]) -> bool {
 /// Rust paths of the tests declared via `#[wasm_lite_test]`, in order.
 ///
 /// Empty if the module has no test section (i.e. it isn't a test harness).
-pub fn test_names(wasm: &[u8]) -> Vec<String> {
-    match wasm::custom_section(wasm, "__wasm_lite_tests") {
-        Ok(Some(bytes)) => std::str::from_utf8(bytes)
-            .unwrap_or("")
+/// A malformed module or non-UTF-8 section is an error, not "no tests" —
+/// silently reporting an empty suite would let a corrupted harness pass.
+pub fn test_names(wasm: &[u8]) -> Result<Vec<String>, String> {
+    match wasm::custom_section(wasm, "__wasm_lite_tests")? {
+        Some(bytes) => Ok(std::str::from_utf8(bytes)
+            .map_err(|e| format!("test-name section is not UTF-8: {e}"))?
             .lines()
             .filter(|line| !line.is_empty())
             .map(str::to_string)
-            .collect(),
-        _ => Vec::new(),
+            .collect()),
+        None => Ok(Vec::new()),
     }
 }
 
