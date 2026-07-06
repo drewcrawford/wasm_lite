@@ -54,7 +54,15 @@ impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         let old_count = self.shared.sender_count.fetch_sub(1, Ordering::SeqCst);
         if old_count == 1 {
-            // Last sender dropped, notify receiver
+            // Last sender dropped, notify receiver.
+            //
+            // Take (and release) the queue lock before notifying: the receiver
+            // checks `sender_count` while holding the lock and only then
+            // registers on the condvar (inside `wait_*`, before the lock is
+            // released). Notifying without the lock can land in the window
+            // between that check and the registration, leaving the receiver
+            // parked forever on a disconnected channel.
+            drop(self.shared.queue.lock_sync());
             self.shared.condvar.notify_all();
         }
     }
