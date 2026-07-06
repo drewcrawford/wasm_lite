@@ -328,8 +328,17 @@ fn free_port() -> Result<u16, String> {
 
 // --- shared-browser state + lock --------------------------------------------
 
+/// A per-user filename component: the temp dir may be world-writable and
+/// shared (`/tmp` on Linux), so fixed names would let unrelated users collide
+/// with — or squat on — each other's state and lock files.
+fn user_suffix() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "shared".to_string())
+}
+
 fn state_path() -> PathBuf {
-    std::env::temp_dir().join("wasm_lite_browser.state")
+    std::env::temp_dir().join(format!("wasm_lite_browser_{}.state", user_suffix()))
 }
 
 /// `(driver port, session id, driver pid)`.
@@ -350,20 +359,35 @@ fn clear_state() {
     let _ = fs::remove_file(state_path());
 }
 
-/// A cross-process lock (an exclusively-created file) serializing use of the
-/// shared browser session. Released on drop; a stale lock is stolen after 2 min.
+/// A cross-process lock (an exclusively-created file holding the owner's PID)
+/// serializing use of the shared browser session. Released on drop; a lock
+/// whose *file* is old enough is presumed leaked by a crashed holder and stolen.
 struct Lock(PathBuf);
+
+/// How old a lock file must be before a waiter may steal it. Generous: a
+/// legitimate holder can be a whole browser test suite, and stealing a live
+/// lock means two processes driving one browser session.
+const LOCK_STALE_AFTER: Duration = Duration::from_secs(600);
 
 impl Lock {
     fn acquire() -> Lock {
-        let path = std::env::temp_dir().join("wasm_lite_browser.lock");
-        let deadline = Instant::now() + Duration::from_secs(120);
+        let path = std::env::temp_dir().join(format!("wasm_lite_browser_{}.lock", user_suffix()));
         loop {
             match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(_) => return Lock(path),
+                Ok(mut file) => {
+                    let _ = file.write_all(std::process::id().to_string().as_bytes());
+                    return Lock(path);
+                }
                 Err(_) => {
-                    if Instant::now() > deadline {
-                        let _ = fs::remove_file(&path); // steal a stale lock
+                    // Steal only a genuinely stale lock, judged by the lock
+                    // file's age — not by how long *this* waiter has been
+                    // waiting, which would let it delete a lock some third
+                    // process had only just acquired.
+                    if let Ok(meta) = fs::metadata(&path)
+                        && let Ok(modified) = meta.modified()
+                        && modified.elapsed().is_ok_and(|age| age > LOCK_STALE_AFTER)
+                    {
+                        let _ = fs::remove_file(&path);
                     }
                     std::thread::sleep(Duration::from_millis(50));
                 }
@@ -374,7 +398,12 @@ impl Lock {
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
+        // Remove only a lock we still own: if ours was stolen as stale and
+        // another process re-acquired, blindly deleting would cascade the
+        // theft to a third process.
+        if fs::read_to_string(&self.0).is_ok_and(|pid| pid == std::process::id().to_string()) {
+            let _ = fs::remove_file(&self.0);
+        }
     }
 }
 
