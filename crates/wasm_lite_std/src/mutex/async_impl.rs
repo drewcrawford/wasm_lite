@@ -68,15 +68,17 @@ pub(crate) async fn lock_async_timeout<T>(
                 // Create a channel for timeout
                 let (timeout_sender, timeout_receiver) = waiter();
 
+                // Compute the remaining time on the calling thread: `Instant`s
+                // are not comparable across threads on wasm (each worker's
+                // clock starts at its own time origin), so the spawned thread
+                // must receive a `Duration`, never the deadline itself.
+                let timeout = deadline - Instant::now();
+
                 // Spawn a thread to handle the timeout
                 thread::Builder::new()
                     .name("lock_async_timeout".to_string())
                     .spawn(move || {
-                        let now = Instant::now();
-                        if deadline > now {
-                            let duration = deadline - now;
-                            thread::sleep(duration);
-                        }
+                        thread::sleep(timeout);
                         // Send timeout signal
                         timeout_sender.wake();
                     })
@@ -132,7 +134,12 @@ pub(crate) async fn lock_async_timeout<T>(
                 .await;
 
                 if timed_out {
-                    return None;
+                    // Our wake may have been consumed concurrently with the
+                    // deadline elapsing (the unlocker chose us as the waiter to
+                    // wake). Try once more so a free lock is taken rather than
+                    // stranded; if another thread won it instead, its unlock
+                    // passes the wake along to the next waiter.
+                    return mutex.try_lock().ok();
                 }
                 // If not timed out, we loop and try to lock again
             }
