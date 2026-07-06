@@ -288,10 +288,12 @@ impl<T> Sender<T> {
 impl<T> Receiver<T> {
     /// Attempts to return a pending value on this receiver without blocking.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        let mut queue = match self.shared.queue.try_lock() {
-            Ok(guard) => guard,
-            Err(_) => return Err(TryRecvError::Empty),
-        };
+        // lock_spin, not try_lock: the queue lock is only ever held for a
+        // push/pop, so spinning is bounded — whereas bailing out with `Empty`
+        // on contention would misreport a non-empty (or disconnected) channel,
+        // and a poll loop built on "Disconnected terminates" could spin past
+        // the disconnect.
+        let mut queue = self.shared.queue.lock_spin();
         match queue.pop_front() {
             Some(t) => Ok(t),
             None => {
