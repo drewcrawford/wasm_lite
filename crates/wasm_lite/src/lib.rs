@@ -363,6 +363,11 @@ pub fn set_panic_hook() {
 
 /// Allocate `len` bytes (align 1) for string/byte marshalling across the JS
 /// boundary. Exported for the generated glue; freed with [`__wl_free`].
+///
+/// Aborts (traps) on allocation failure rather than returning null: no caller —
+/// neither the JS glue nor the generated Rust shims — checks the result, and a
+/// null return would otherwise be written through as address 0, silently
+/// corrupting low linear memory.
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __wl_malloc(len: usize) -> *mut u8 {
@@ -370,8 +375,14 @@ pub extern "C" fn __wl_malloc(len: usize) -> *mut u8 {
         return core::ptr::NonNull::<u8>::dangling().as_ptr();
     }
     match std::alloc::Layout::from_size_align(len, 1) {
-        Ok(layout) => unsafe { std::alloc::alloc(layout) },
-        Err(_) => core::ptr::null_mut(),
+        Ok(layout) => {
+            let ptr = unsafe { std::alloc::alloc(layout) };
+            if ptr.is_null() {
+                std::alloc::handle_alloc_error(layout);
+            }
+            ptr
+        }
+        Err(_) => std::process::abort(),
     }
 }
 
