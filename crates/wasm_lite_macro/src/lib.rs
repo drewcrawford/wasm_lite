@@ -48,6 +48,34 @@ use crate::ty::*;
 pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as TestArgs);
     let func = parse_macro_input!(item as ItemFn);
+
+    // Fail closed: an `async fn` body would be constructed and dropped unpolled
+    // by the generated entry (`#name()`), so a failing async test would silently
+    // pass. Likewise a returned value (e.g. `Result`) would be discarded, hiding
+    // an `Err`. Reject both instead of generating a test that can't fail.
+    if let Some(asyncness) = &func.sig.asyncness {
+        return Error::new_spanned(
+            asyncness,
+            "#[wasm_lite_test] does not support `async fn`: the future would be \
+             dropped without being polled and the test would always pass. Use a \
+             sync body that drives the future to completion instead.",
+        )
+        .to_compile_error()
+        .into();
+    }
+    if let ReturnType::Type(_, ty) = &func.sig.output
+        && !matches!(ty.as_ref(), Type::Tuple(t) if t.elems.is_empty())
+    {
+        return Error::new_spanned(
+            ty,
+            "#[wasm_lite_test] functions must not return a value: the return \
+             value (e.g. a `Result`) would be discarded, so an `Err` would \
+             silently pass. Return `()` and assert/unwrap inside the test.",
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let name = &func.sig.ident;
     let entry = format_ident!("__wl_test_{}", name);
 
@@ -179,7 +207,37 @@ pub fn import(input: TokenStream) -> TokenStream {
     }
 }
 
+/// Reject `&'static str` / `&'static [u8]` export parameters. The JS glue frees
+/// the argument buffer immediately after the call returns, and the shim's
+/// `from_raw_parts` has an unbounded lifetime that would happily coerce to
+/// `'static` — letting safe code stash a reference that dangles.
+fn reject_static_ref(ty: &Type) -> syn::Result<()> {
+    if let Type::Reference(r) = ty
+        && let Some(lt) = &r.lifetime
+        && lt.ident == "static"
+    {
+        return Err(Error::new_spanned(
+            ty,
+            "#[wasm_lite::export]: `&'static` arguments are unsound — the \
+             argument buffer is freed right after the call returns, so a \
+             'static reference would dangle. Use `&str`/`&[u8]` instead.",
+        ));
+    }
+    Ok(())
+}
+
 fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
+    // An `async fn` export would have its future constructed and dropped
+    // unpolled by the shim — a silent no-op from the JS caller's perspective.
+    if let Some(asyncness) = &func.sig.asyncness {
+        return Err(Error::new_spanned(
+            asyncness,
+            "#[wasm_lite::export] does not support `async fn`: the shim would \
+             drop the future without polling it, so the export would do nothing. \
+             Export a sync fn that spawns the async work instead.",
+        ));
+    }
+
     let name = &func.sig.ident;
     let export_ident = format_ident!("__wl_export_{}", name);
 
@@ -202,6 +260,7 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
         }
 
         if is_str(ty) {
+            reject_static_ref(ty)?;
             let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
             flat_params.push(quote! { #p: *const u8 });
             flat_params.push(quote! { #l: usize });
@@ -209,6 +268,7 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
             call_args.push(quote! { #pat });
             arg_tags.push("str".into());
         } else if is_byte_slice(ty) {
+            reject_static_ref(ty)?;
             let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
             flat_params.push(quote! { #p: *const u8 });
             flat_params.push(quote! { #l: usize });
