@@ -47,7 +47,7 @@ impl<T> RwLock<T> {
     /// assert!(matches!(rwlock.try_lock_read(), Err(NotAvailable)));
     /// ```
     pub fn try_lock_read(&self) -> Result<ReadGuard<'_, T>, NotAvailable> {
-        let r = self.data_lock.fetch_update(Acquire, Relaxed, |f| {
+        let r = self.data_lock.try_update(Acquire, Relaxed, |f| {
             if f & LOCKED_WRITE != 0 {
                 None
             } else if f == LOCKED_WRITE - 1 {
