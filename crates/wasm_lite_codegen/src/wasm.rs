@@ -172,9 +172,14 @@ impl<'a> Reader<'a> {
         let mut shift = 0;
         loop {
             let byte = self.byte()?;
-            result |= u32::from(byte & 0x7f)
-                .checked_shl(shift)
-                .ok_or("LEB128 overflow")?;
+            let bits = u32::from(byte & 0x7f);
+            // In the 5th byte (shift 28) only the low 4 bits fit in a u32.
+            // `checked_shl` wouldn't catch this — it only rejects shift >= 32,
+            // silently dropping the shifted-out bits.
+            if shift == 28 && bits > 0x0f {
+                return Err("LEB128 overflow".to_string());
+            }
+            result |= bits << shift;
             if byte & 0x80 == 0 {
                 return Ok(result);
             }
