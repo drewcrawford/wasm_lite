@@ -51,7 +51,9 @@ __wbg_finalize_init(instance, module);
 /// Requires `wasm-bindgen` on `PATH`, version-matched to the crate's
 /// `wasm-bindgen` dependency.
 pub fn build_interop(input: &Path) -> Result<InteropBundle, String> {
-    let out_dir = std::env::temp_dir().join("wasm_lite_bindgen_out");
+    // Per-process dir: a fixed name would let two concurrent builds (parallel
+    // cargo runners) delete each other's in-progress output.
+    let out_dir = std::env::temp_dir().join(format!("wasm_lite_bindgen_out_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out_dir);
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("creating temp dir: {e}"))?;
 
