@@ -859,7 +859,9 @@ mod tests {
             ret: ExportRet::U32,
         }];
         let js = generate_glue(&descriptors, &exports, None);
-        assert!(js.contains("imports[\"ns\"][\"set_id\"] = (p0) => globalThis[\"ns\"][\"set_id\"]((p0 >>> 0));"));
+        assert!(js.contains(
+            "imports[\"ns\"][\"set_id\"] = (p0) => globalThis[\"ns\"][\"set_id\"]((p0 >>> 0));"
+        ));
         assert!(js.contains("imports[\"ns\"][\"pick\"] = (p0, p1) => globalThis[\"ns\"][\"pick\"]((p0 ? (p1 >>> 0) : undefined));"));
         assert!(js.contains("export function next_id() { __wl_check_live(); const __ret = __wl_instance.exports.__wl_export_next_id(); return __ret >>> 0; }"));
     }

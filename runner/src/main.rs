@@ -99,9 +99,7 @@ fn is_test_run(args: &Args) -> bool {
     // A parse error here just means "not conclusively a test harness"; the
     // headless path re-reads the module and reports the real error.
     std::fs::read(&args.program)
-        .map(|module| {
-            wasm_lite_codegen::test_names(&module).is_ok_and(|names| !names.is_empty())
-        })
+        .map(|module| wasm_lite_codegen::test_names(&module).is_ok_and(|names| !names.is_empty()))
         .unwrap_or(false)
 }
 

@@ -61,7 +61,9 @@ fn check_descriptor_str(lit: &LitStr, what: &str) -> syn::Result<()> {
     if let Some(bad) = v.chars().find(|c| *c == '|' || c.is_control()) {
         return Err(Error::new_spanned(
             lit,
-            format!("{what} must not contain {bad:?}: it is embedded verbatim in the binding descriptor, which uses `|`-separated fields and newline-separated entries"),
+            format!(
+                "{what} must not contain {bad:?}: it is embedded verbatim in the binding descriptor, which uses `|`-separated fields and newline-separated entries"
+            ),
         ));
     }
     Ok(())

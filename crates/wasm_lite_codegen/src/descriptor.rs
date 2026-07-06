@@ -103,7 +103,12 @@ impl AbiArg {
             "handle" => AbiArg::Handle,
             "i32" | "f64" => AbiArg::Num,
             "u32" => AbiArg::U32,
-            _ => return tag.strip_prefix("opt:").and_then(Payload::from_tag).map(AbiArg::Opt),
+            _ => {
+                return tag
+                    .strip_prefix("opt:")
+                    .and_then(Payload::from_tag)
+                    .map(AbiArg::Opt);
+            }
         })
     }
 }
