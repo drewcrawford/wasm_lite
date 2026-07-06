@@ -67,6 +67,19 @@ impl Condvar {
         // Park this thread while waiting to be notified
         thread::park();
 
+        // `park` may return spuriously (including via a stale unpark token from
+        // an earlier timed wait). If our entry is still in the wait list, remove
+        // it before returning: a leaked entry would later be popped by
+        // `notify_one`, consuming a real notification that no thread receives.
+        // If a notifier already popped us, this is a no-op. Either way the
+        // caller's condition loop handles the (allowed) spurious return.
+        self.waiting_sync_threads.with_mut(|threads| {
+            let current = thread::current();
+            if let Some(pos) = threads.iter().position(|x| x.id() == current.id()) {
+                threads.remove(pos);
+            }
+        });
+
         // Re-acquire the mutex before returning
         mutex.lock_sync()
     }
