@@ -124,7 +124,9 @@ pub fn task_finished() {
 }
 
 /// Number of pending async tasks on this thread.
-#[allow(dead_code)]
+///
+/// Consulted by `__wl_executor_idle`: a nonzero count keeps the worker's
+/// stack/TLS alive until the bracketed work calls [`task_finished`].
 pub fn pending_tasks() -> u32 {
     PENDING_TASKS.with(|c| c.get())
 }

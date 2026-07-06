@@ -131,11 +131,16 @@ fn make_waker(atom: *const AtomicI32) -> Waker {
 /// Called by the worker bootstrap to decide when it may free this thread's
 /// stack/TLS and `close()` — it must not tear down while `spawn_local` tasks are
 /// still pending (their queue lives in this thread's TLS). `RUNNING` stays true
-/// from the first `spawn_local` until the last task completes.
+/// from the first `spawn_local` until the last task completes. External async
+/// work bracketed with `task_begin`/`task_finished` also holds the thread open.
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __wl_executor_idle() -> i32 {
-    if RUNNING.with(|r| r.get()) { 0 } else { 1 }
+    if RUNNING.with(|r| r.get()) || super::pending_tasks() > 0 {
+        0
+    } else {
+        1
+    }
 }
 
 /// Force the linker to keep the JS-called executor exports.
