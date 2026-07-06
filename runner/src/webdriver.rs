@@ -176,12 +176,23 @@ impl Browser {
 
     fn execute(&self, script: &str) -> Result<String, String> {
         let body = format!("{{\"script\":{},\"args\":[]}}", json_str(script));
-        http(
+        let resp = http(
             self.port,
             "POST",
             &format!("/session/{}/execute/sync", self.session),
             Some(&body),
-        )
+        )?;
+        // Surface WebDriver-level failures (dead session, JS exception, …):
+        // otherwise the error payload reads as `false`/empty to the eval_*
+        // helpers and the caller polls to a misleading timeout instead of
+        // reporting the real cause. Both geckodriver and chromedriver emit
+        // errors as compact `{"value":{"error":...}}`.
+        if resp.contains("{\"value\":{\"error\":") {
+            let err = json_string_after_key(&resp, "error").unwrap_or_default();
+            let msg = json_string_after_key(&resp, "message").unwrap_or_default();
+            return Err(format!("WebDriver error: {err}: {msg}"));
+        }
+        Ok(resp)
     }
 }
 
