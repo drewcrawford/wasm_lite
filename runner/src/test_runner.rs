@@ -95,7 +95,7 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
     let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
     let memory = wasm_lite_codegen::imported_memory(&module)?;
     let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
-    let test_names = wasm_lite_codegen::test_names(&module);
+    let test_names = wasm_lite_codegen::test_names(&module)?;
     let body = if test_names.is_empty() {
         MAIN_BOOTSTRAP
     } else {
@@ -214,7 +214,15 @@ fn run_suite(
     for name in names {
         let encoded_name = encode_query_component(name);
         browser.goto(&format!("http://127.0.0.1:{port}/?test={encoded_name}"))?;
-        wait_done(browser)?;
+        // A hung test is that test's failure, not the suite's: report it and
+        // move on so the remaining tests still run and get a summary. (Errors
+        // from goto/eval still abort — those mean the browser session is gone.)
+        if let Err(err) = wait_done(browser) {
+            failed += 1;
+            println!("test {name} ... FAILED");
+            println!("    {err}");
+            continue;
+        }
 
         if browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
             surface_worker_panics(browser)?;
