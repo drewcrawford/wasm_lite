@@ -60,7 +60,7 @@ fn main() {
     // serve + open a browser for `cargo run` and direct/interactive use. The two
     // are told apart by how Cargo invokes us (see `is_test_run`).
     if is_test_run(&args) {
-        std::process::exit(test_runner::run(&args.program));
+        std::process::exit(test_runner::run(&args));
     }
 
     serve_interactive(&args.program);
@@ -77,7 +77,7 @@ fn is_test_run(args: &Args) -> bool {
     if args.serve {
         return false;
     }
-    if args.test {
+    if args.test || args.list {
         return true;
     }
 
@@ -124,35 +124,69 @@ struct Args {
     program: PathBuf,
     serve: bool,
     test: bool,
+    /// libtest-style name filters (positional args after the program).
+    filters: Vec<String>,
+    /// `--exact`: filters match whole names rather than substrings.
+    exact: bool,
+    /// `--list`: print the (filtered) test names and exit, like libtest.
+    list: bool,
+}
+
+impl Args {
+    /// Does a test name pass the libtest-style filters?
+    fn selects(&self, name: &str) -> bool {
+        self.filters.is_empty()
+            || self.filters.iter().any(|f| {
+                if self.exact {
+                    name == f
+                } else {
+                    name.contains(f.as_str())
+                }
+            })
+    }
 }
 
 /// Parse command-line arguments.
 ///
-/// The first non-flag argument is the program (`.js` or `.wasm`). `--serve`
-/// forces the interactive server; `--test` forces headless test mode. Other
-/// flags (e.g. test-harness args Cargo appends) are ignored, so the runner
-/// works directly as a Cargo runner (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`),
-/// invoked as `runner <artifact.wasm> [harness args…]`.
+/// The first non-flag argument is the program (`.js` or `.wasm`); later
+/// positional arguments are libtest-style test-name filters (`cargo test foo`
+/// invokes us as `runner <artifact.wasm> foo`). `--serve` forces the
+/// interactive server; `--test` forces headless test mode; `--exact` and
+/// `--list` follow libtest. Other flags (e.g. `--nocapture`) are ignored, so
+/// the runner works directly as a Cargo runner
+/// (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`).
 fn parse_args() -> Result<Args, String> {
     let mut program = None;
+    let mut filters = Vec::new();
     let mut serve = false;
     let mut test = false;
+    let mut exact = false;
+    let mut list = false;
     for arg in std::env::args_os().skip(1) {
         let text = arg.to_string_lossy();
         if text == "--serve" {
             serve = true;
         } else if text == "--test" {
             test = true;
+        } else if text == "--exact" {
+            exact = true;
+        } else if text == "--list" {
+            list = true;
         } else if text.starts_with('-') {
             // Ignore other flags (e.g. test-harness arguments).
         } else if program.is_none() {
             program = Some(PathBuf::from(arg));
+        } else {
+            filters.push(text.into_owned());
         }
     }
     Ok(Args {
         program: program.ok_or_else(|| "error: missing program path".to_string())?,
         serve,
         test,
+        filters,
+        exact,
+        list,
     })
 }
 
@@ -307,17 +341,35 @@ for (const level of ["log", "error", "warn", "info"]) {
 "#;
 
 /// Accept connections forever, serving the route table.
+///
+/// Each connection is handled on its own thread: browsers open speculative
+/// connections they never send a request on (and `Connection: close` forces a
+/// new connection per subresource), so serving sequentially can wedge the whole
+/// server behind an idle socket until the browser tears it down — surfacing as
+/// a spurious test-runner timeout. A read timeout bounds how long an idle
+/// connection can hold its thread.
 fn serve(listener: TcpListener, routes: &[Route]) -> ! {
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                if let Err(err) = handle(stream, routes) {
-                    eprintln!("warning: request failed: {err}");
+    std::thread::scope(|scope| {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    scope.spawn(move || {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+                        if let Err(err) = handle(stream, routes) {
+                            // Idle speculative connections time out here; not worth a warning.
+                            if !matches!(
+                                err.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) {
+                                eprintln!("warning: request failed: {err}");
+                            }
+                        }
+                    });
                 }
+                Err(err) => eprintln!("warning: connection failed: {err}"),
             }
-            Err(err) => eprintln!("warning: connection failed: {err}"),
         }
-    }
+    });
     unreachable!("incoming() yields forever")
 }
 

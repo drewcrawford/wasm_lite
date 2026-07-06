@@ -9,22 +9,37 @@
 //!   * a plain `bin`: run `main` once (pass = ran to completion).
 
 use crate::webdriver::Browser;
-use crate::{BOOTSTRAP_JS, PROGRAM_JS, PROGRAM_WASM, Route, WL_WORKER_JS, bind, read, serve};
+use crate::{Args, BOOTSTRAP_JS, PROGRAM_JS, PROGRAM_WASM, Route, WL_WORKER_JS, bind, read, serve};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 /// Run a wasm program headless in a browser and return a process exit code.
 ///
-/// A `tests!`-harness wasm runs each test; a plain `bin` (including a rustdoc
-/// doctest) runs `main` once (pass = ran to completion, trap = failure).
-pub fn run(program: &Path) -> i32 {
-    let module = match prepare(program) {
+/// A `tests!`-harness wasm runs each test matching the libtest-style filters;
+/// a plain `bin` (including a rustdoc doctest) runs `main` once (pass = ran to
+/// completion, trap = failure).
+pub fn run(args: &Args) -> i32 {
+    let module = match prepare(&args.program) {
         Ok(m) => m,
         Err(err) => {
             eprintln!("error: {err}");
             return 2;
         }
     };
+
+    let all = module.test_names.clone();
+    let names: Vec<String> = all.iter().filter(|n| args.selects(n)).cloned().collect();
+    let filtered_out = all.len() - names.len();
+
+    // `cargo test -- --list` / IDE test discovery: report names, don't run.
+    if args.list {
+        for name in &names {
+            println!("{name}: test");
+        }
+        println!();
+        println!("{} tests, 0 benchmarks", names.len());
+        return 0;
+    }
 
     let listener = match bind() {
         Ok(l) => l,
@@ -37,7 +52,6 @@ pub fn run(program: &Path) -> i32 {
         .local_addr()
         .expect("listener has an address")
         .port();
-    let names = module.test_names.clone();
     std::thread::spawn(move || serve(listener, &module.routes));
 
     let browser = match Browser::open() {
@@ -48,10 +62,10 @@ pub fn run(program: &Path) -> i32 {
         }
     };
 
-    let result = if names.is_empty() {
+    let result = if all.is_empty() {
         run_main(&browser, port)
     } else {
-        run_suite(&browser, port, &names)
+        run_suite(&browser, port, &names, filtered_out)
     };
     match result {
         Ok(code) => code,
@@ -188,7 +202,12 @@ fn surface_worker_panics(browser: &Browser) -> Result<(), String> {
 }
 
 /// Run a `tests!` harness: each test in a fresh page load, libtest-style output.
-fn run_suite(browser: &Browser, port: u16, names: &[String]) -> Result<i32, String> {
+fn run_suite(
+    browser: &Browser,
+    port: u16,
+    names: &[String],
+    filtered_out: usize,
+) -> Result<i32, String> {
     println!("\nrunning {} test{}", names.len(), plural(names.len()));
     let mut failed = 0;
 
@@ -214,10 +233,12 @@ fn run_suite(browser: &Browser, port: u16, names: &[String]) -> Result<i32, Stri
     let passed = names.len() - failed;
     println!();
     if failed == 0 {
-        println!("test result: ok. {passed} passed; 0 failed");
+        println!("test result: ok. {passed} passed; 0 failed; {filtered_out} filtered out");
         Ok(0)
     } else {
-        println!("test result: FAILED. {passed} passed; {failed} failed");
+        println!(
+            "test result: FAILED. {passed} passed; {failed} failed; {filtered_out} filtered out"
+        );
         Ok(1)
     }
 }

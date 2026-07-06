@@ -81,9 +81,16 @@ impl Browser {
     pub fn launch() -> Result<Browser, String> {
         let kind = Kind::from_env();
         let port = free_port()?;
-        let driver = spawn_driver(&kind, port)?;
-        wait_ready(port)?;
-        let session = new_session(port, kind.capabilities())?;
+        let mut driver = spawn_driver(&kind, port)?;
+        // Kill the driver if session setup fails: dropping a Child does not
+        // terminate it, so bailing here would leak a driver process (holding
+        // its port) on every failed attempt.
+        let session = wait_ready(port)
+            .and_then(|()| new_session(port, kind.capabilities()))
+            .inspect_err(|_| {
+                let _ = driver.kill();
+                let _ = driver.wait();
+            })?;
         Ok(Browser {
             driver: Some(driver),
             port,
@@ -112,13 +119,20 @@ impl Browser {
         }
 
         let port = free_port()?;
-        let driver = spawn_driver(&kind, port)?;
+        let mut driver = spawn_driver(&kind, port)?;
         let pid = driver.id();
+        // On setup failure, kill the driver rather than detaching it: no state
+        // file is written on this path, so `--stop-browser` could never find
+        // the orphan.
+        let session = wait_ready(port)
+            .and_then(|()| new_session(port, kind.capabilities()))
+            .inspect_err(|_| {
+                let _ = driver.kill();
+                let _ = driver.wait();
+            })?;
         // Detach: dropping the Child does not kill it, so the driver outlives
         // this runner process and can be reused by the next one.
         drop(driver);
-        wait_ready(port)?;
-        let session = new_session(port, kind.capabilities())?;
         write_state(port, &session, pid);
         Ok(Browser {
             driver: None,
