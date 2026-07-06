@@ -8,12 +8,26 @@
 use std::path::PathBuf;
 use std::process::exit;
 
+const USAGE: &str = "usage: wasm-lite <input.wasm> [-o <output.js>]\n\
+                     \n\
+                     Generates the JavaScript glue for a compiled wasm_lite module.\n\
+                     With -o, a shared-memory (threaded) module also writes wl_worker.js\n\
+                     beside the output.\n\
+                     \n\
+                     options:\n\
+                     \x20   -o, --output <path>   write the glue to <path> instead of stdout\n\
+                     \x20   -h, --help            show this help";
+
 fn main() {
     let args = match parse_args() {
-        Ok(args) => args,
+        Ok(Some(args)) => args,
+        Ok(None) => {
+            println!("{USAGE}");
+            return;
+        }
         Err(msg) => {
             eprintln!("{msg}");
-            eprintln!("usage: wasm-lite <input.wasm> [-o <output.js>]");
+            eprintln!("{USAGE}");
             exit(2);
         }
     };
@@ -29,7 +43,8 @@ struct Args {
     output: Option<PathBuf>,
 }
 
-fn parse_args() -> Result<Args, String> {
+/// `Ok(None)` means help was requested.
+fn parse_args() -> Result<Option<Args>, String> {
     let mut input = None;
     let mut output = None;
     let mut args = std::env::args_os().skip(1);
@@ -38,6 +53,12 @@ fn parse_args() -> Result<Args, String> {
         if arg == "-o" || arg == "--output" {
             let path = args.next().ok_or("missing path after -o")?;
             output = Some(PathBuf::from(path));
+        } else if arg == "-h" || arg == "--help" {
+            return Ok(None);
+        } else if arg.to_string_lossy().starts_with('-') {
+            // An unknown flag must not be mistaken for the input path —
+            // `wasm-lite --helpp` should error, not "failed to read --helpp".
+            return Err(format!("unknown option {:?}", arg.to_string_lossy()));
         } else if input.is_none() {
             input = Some(PathBuf::from(arg));
         } else {
@@ -45,10 +66,10 @@ fn parse_args() -> Result<Args, String> {
         }
     }
 
-    Ok(Args {
+    Ok(Some(Args {
         input: input.ok_or("missing input wasm path")?,
         output,
-    })
+    }))
 }
 
 fn run(args: Args) -> Result<(), String> {
