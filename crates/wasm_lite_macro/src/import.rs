@@ -84,10 +84,19 @@ impl Parse for Namespace {
 impl Parse for ImportFn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let attrs = input.call(Attribute::parse_outer)?;
-        let doc_attrs = attrs
-            .into_iter()
-            .filter(|a| a.path().is_ident("doc"))
-            .collect();
+        // Only doc comments are honored. Anything else — `#[cfg(...)]` in
+        // particular — would be silently discarded while the binding, the wasm
+        // import, and the descriptor line were still emitted unconditionally;
+        // reject it rather than pretend the attribute took effect.
+        if let Some(bad) = attrs.iter().find(|a| !a.path().is_ident("doc")) {
+            return Err(Error::new_spanned(
+                bad,
+                "import!: only doc comments are supported on imported functions; other \
+                 attributes (including #[cfg]) are not honored here — apply them to the \
+                 surrounding import! invocation or module instead",
+            ));
+        }
+        let doc_attrs = attrs;
         input.parse::<Token![fn]>()?;
         let name: Ident = input.parse()?;
 
