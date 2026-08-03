@@ -66,8 +66,9 @@
 //!
 //! The trade-off is intentional. [`wasm_lite`](crate) does **not** yet replace
 //! the broad `js-sys`/`web-sys` ecosystem, Promise interop (`JsFuture` /
-//! `wasm-bindgen-futures`), Rust closures passed into JS, TypeScript declaration
-//! generation, or rich serde-style marshalling. The `wasm-bindgen` feature
+//! `wasm-bindgen-futures`), TypeScript declaration generation, or rich
+//! serde-style marshalling. Rust closures passed into JS *are* supported, for
+//! zero- and one-argument signatures — see [`Closure`]. The `wasm-bindgen` feature
 //! supports incremental migration in the direction where `wasm-lite` is the
 //! final codegen step; the reverse direction, where a wasm-bindgen/wasm-pack app
 //! consumes a wasm_lite leaf without running `wasm-lite`, is still roadmap work.
@@ -325,6 +326,7 @@
 // those paths resolve when the macros are used *inside* this crate too.
 extern crate self as wasm_lite;
 
+mod closure;
 mod macros;
 mod value;
 
@@ -337,6 +339,7 @@ pub mod thread;
 #[cfg(feature = "wasm-bindgen")]
 pub mod interop;
 
+pub use closure::Closure;
 pub use value::JsValue;
 pub use wasm_lite_macro::{export, import, js_class, wasm_lite_test};
 

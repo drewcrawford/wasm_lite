@@ -125,6 +125,18 @@ function __wl_check_live() {
     if (__wl_dead) throw new Error(\"wasm_lite: instance is unusable: \" + __wl_dead);
 }
 
+// Wrap a Rust closure as a JS function. `id` indexes a *Rust-side* registry,
+// not a pointer: dropping the Closure removes the entry, so a JS reference that
+// outlives it (an unregistered listener, say) calls a no-op instead of reading
+// freed memory. Arity picks the trampoline; a one-argument closure takes
+// ownership of its argument's table slot, matching the export convention.
+function __wl_closure_new(id, arity) {
+    const f = arity === 0
+        ? () => { __wl_check_live(); __wl_instance.exports.__wl_closure_call_0(id); }
+        : (a) => { __wl_check_live(); __wl_instance.exports.__wl_closure_call_1(id, __wl_add(a)); };
+    return __wl_add(f);
+}
+
 ";
 
 /// The `instantiate`/`setInstance` exports for a module with its own (exported)
@@ -300,7 +312,7 @@ pub fn generate_glue(
     // to drive the async executor; shared-memory builds also get __wl_spawn for
     // thread spawning. (Unused entries are harmless — the wasm only imports what
     // it references.)
-    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass";
+    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new";
     if memory.is_some() {
         let _ = writeln!(
             js,
@@ -880,7 +892,7 @@ mod tests {
         ));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
-        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass };"));
+        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new };"));
     }
 
     #[test]

@@ -19,4 +19,8 @@ harness = false
 name = "bindings"
 harness = false
 
+[[test]]
+name = "closures"
+harness = false
+
 [workspace]

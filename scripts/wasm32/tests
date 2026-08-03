@@ -22,6 +22,9 @@ echo "testing examples/tests-demo passing suite"
 echo "testing examples/tests-demo binding kinds"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test bindings)
 
+echo "testing examples/tests-demo closures"
+(cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test closures)
+
 echo "testing examples/doctest-demo doctests"
 (cd examples/doctest-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --doc)
 

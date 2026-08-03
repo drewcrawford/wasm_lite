@@ -57,8 +57,9 @@ The main alternatives are still good tools:
 
 The trade-off is intentional. `wasm_lite` does **not** yet replace the broad
 `js-sys`/`web-sys` ecosystem, Promise interop (`JsFuture` /
-`wasm-bindgen-futures`), Rust closures passed into JS, TypeScript declaration
-generation, or rich serde-style marshalling. The `wasm-bindgen` feature supports
+`wasm-bindgen-futures`), TypeScript declaration generation, or rich serde-style
+marshalling. Rust closures passed into JS *are* supported, for zero- and
+one-argument signatures. The `wasm-bindgen` feature supports
 incremental migration in the direction where `wasm-lite` is the final codegen
 step; the reverse direction, where a wasm-bindgen/wasm-pack app consumes a
 wasm_lite leaf without running `wasm-lite`, is still roadmap work.

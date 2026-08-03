@@ -87,6 +87,26 @@ wasm_lite::js_class! {
 `!Sync` (a handle is only meaningful in the realm that created it) and frees its
 table slot on `Drop`.
 
+**Rust closures into JS** — `Closure` is the dynamic counterpart of `#[export]`:
+it wraps a closure, captured state and all, as a real JS function value, which
+is what an event listener or a callback argument needs.
+
+```rust
+let mut count = 0;
+let cb = wasm_lite::Closure::new(move || { count += 1; });
+some_import(cb.as_js_value());
+cb.forget();   // hand it to JS for the life of the realm
+```
+
+JS receives an **id** into a thread-local registry, not a pointer. Dropping the
+`Closure` removes the entry, so a JS reference that outlives it — a listener
+nobody unregistered — calls a no-op instead of reading freed memory. Calling a
+closure takes it out of the registry for the duration, so re-entrant calls
+no-op rather than aliasing `&mut` to the captured state.
+
+Zero- and one-argument (`Closure::new` / `Closure::new_with_arg`) signatures
+today.
+
 ## Type marshalling
 
 Symmetric across imports and exports:
