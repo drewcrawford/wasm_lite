@@ -75,6 +75,18 @@ wasm_lite::import! {
         fn of_isize(v: isize) -> JsValue as "of";
     }
 
+    "globalThis" {
+        /// `String(v)` — the global `String` function, reached as a member of
+        /// `globalThis` (which is its own property, so `globalThis.globalThis`
+        /// is the global object). Rendering to text is the only way to read a
+        /// 64-bit value back without an f64 losing the low bits on the way.
+        fn text_of_i64(v: i64) -> String as "String";
+        fn text_of_u64(v: u64) -> String as "String";
+        /// `BigInt(text)` — back the other way, so the round trip is closed.
+        fn parse_i64(text: &str) -> i64 as "BigInt";
+        fn parse_u64(text: &str) -> u64 as "BigInt";
+    }
+
     "URLTest" {
         /// `x instanceof URL`
         #[instanceof]
@@ -200,6 +212,33 @@ fn narrow_scalars_keep_their_value() {
 fn usize_survives_the_top_bit() {
     assert_eq!(at(&of_usize(7), 0), 7.0);
     assert_eq!(at(&of_usize(4_000_000_000), 0), 4_000_000_000.0);
+}
+
+/// 64-bit integers cross as wasm `i64`, which the WebAssembly JS API surfaces
+/// as a `BigInt`. The values here are chosen to fail if anything on the path
+/// were a Number: 2^53+1 is the first integer an f64 cannot represent, and
+/// `i64::MIN`/`u64::MAX` sit at the ends of the range.
+#[wasm_lite_test]
+fn sixty_four_bit_integers_cross_as_bigint() {
+    assert_eq!(text_of_i64(9_007_199_254_740_993), "9007199254740993");
+    assert_eq!(text_of_i64(i64::MIN), "-9223372036854775808");
+    assert_eq!(text_of_i64(-1), "-1");
+}
+
+/// `u64` shares the signed wasm `i64` param, so the top half of the range is
+/// where a missing reinterpretation shows up — `u64::MAX` reads as `-1`.
+#[wasm_lite_test]
+fn u64_is_read_unsigned() {
+    assert_eq!(text_of_u64(u64::MAX), "18446744073709551615");
+    assert_eq!(text_of_u64(1 << 63), "9223372036854775808");
+    assert_eq!(text_of_u64(7), "7");
+}
+
+#[wasm_lite_test]
+fn sixty_four_bit_integers_come_back() {
+    assert_eq!(parse_i64("-9223372036854775808"), i64::MIN);
+    assert_eq!(parse_i64("9007199254740993"), 9_007_199_254_740_993);
+    assert_eq!(parse_u64("18446744073709551615"), u64::MAX);
 }
 
 wasm_lite::test_main!();

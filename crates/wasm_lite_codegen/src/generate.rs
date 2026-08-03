@@ -673,6 +673,11 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                 let len = next_param(&mut params);
                 format!("new {}(__wl_memory.buffer, {ptr}, {len})", elem.js_array())
             }
+            // A wasm i64 param arrives as a signed BigInt, which is already the
+            // value Rust had.
+            AbiArg::I64 => next_param(&mut params),
+            // ...and for u64 the same bits need reading unsigned.
+            AbiArg::U64 => format!("BigInt.asUintN(64, {})", next_param(&mut params)),
             AbiArg::Bool => format!("Boolean({})", next_param(&mut params)),
             AbiArg::Num => next_param(&mut params),
             // The wasm i32 param surfaces as a signed Number; reinterpret.
@@ -822,6 +827,17 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
             let _ = writeln!(
                 js,
                 "    imports[{ns}][{import_name}] = ({shim_params}) => {{ {body} }};"
+            );
+        }
+        // A wasm i64 result must be a BigInt in range. `BigInt(..)` is a no-op
+        // on a value that already is one and rescues a JS API that hands back a
+        // Number, which would otherwise be a TypeError at the boundary;
+        // `asIntN` wraps a u64 above 2^63 into the signed representation Rust
+        // reinterprets.
+        Ret::Value(tag) if tag == "i64" || tag == "u64" => {
+            let _ = writeln!(
+                js,
+                "    imports[{ns}][{import_name}] = ({params}) => BigInt.asIntN(64, BigInt({call}));"
             );
         }
         Ret::Void | Ret::Value(_) => {

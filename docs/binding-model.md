@@ -133,8 +133,8 @@ Symmetric across imports and exports:
 | numeric slices | `&[f32]`, `&[u32]`, … | — | — | — |
 | JS objects | `&JsValue` | `JsValue` | `JsValue` | `JsValue` |
 
-Numeric slices (`i8`/`i16`/`u16`/`i32`/`u32`/`f32`/`f64`; `&[u8]` keeps its own
-`bytes` spelling) become a typed-array view over wasm memory — `&[f32]` arrives
+Numeric slices (`i8`/`i16`/`u16`/`i32`/`u32`/`i64`/`u64`/`f32`/`f64`; `&[u8]`
+keeps its own `bytes` spelling) become a typed-array view over wasm memory — `&[f32]` arrives
 as a `Float32Array`. The length crosses in *elements*, so the typed array's
 constructor does the scaling. Like `&[u8]`, the view is only valid for the
 duration of the call.
@@ -149,6 +149,12 @@ and handing over a packed `(ptr<<32 | len)` `i64`; ownership transfers to
 whichever side allocated last. Objects cross as `u32` value-table indices.
 The import/export asymmetry for objects is deliberate: an import *lends* Rust's
 handle (`&JsValue`), an export *takes* ownership from JS (`JsValue` by value).
+
+Integers up to 32 bits cross as wasm `i32`/`f32`/`f64` and reach JS as Numbers.
+`i64`/`u64` cross as wasm `i64`, which the WebAssembly JS API surfaces as a
+**`BigInt`** — the only faithful mapping, since a Number cannot hold the range.
+`u32`/`usize`/`u64` need reinterpreting on the JS side, because the wasm
+parameter is signed.
 
 `Option<T>` and `Result<T, E>` are supported as **return** types (imports and
 exports), where the scalar return ABI can't carry a discriminant. They use a

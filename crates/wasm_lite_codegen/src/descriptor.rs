@@ -127,6 +127,12 @@ pub enum AbiArg {
     Handle,
     /// `Option<T>`: a discriminant `i32` (0 = `None`) plus T's params.
     Opt(Payload),
+    /// An `i64`: one wasm `i64` param, which the JS API surfaces as a signed
+    /// `BigInt` — already the right value.
+    I64,
+    /// A `u64`: one wasm `i64` param; JS sees it *signed*, so the shim must
+    /// reinterpret with `BigInt.asUintN(64, ..)`.
+    U64,
     /// `&[T]` for a numeric `T` other than `u8`: two wasm params
     /// `(ptr, len_in_elements)`, presented to JS as a typed-array view over
     /// wasm memory. Borrowed for the duration of the call, like [`AbiArg::Bytes`].
@@ -142,6 +148,8 @@ pub enum SliceElem {
     U16,
     I32,
     U32,
+    I64,
+    U64,
     F32,
     F64,
 }
@@ -155,6 +163,8 @@ impl SliceElem {
             SliceElem::U16 => "Uint16Array",
             SliceElem::I32 => "Int32Array",
             SliceElem::U32 => "Uint32Array",
+            SliceElem::I64 => "BigInt64Array",
+            SliceElem::U64 => "BigUint64Array",
             SliceElem::F32 => "Float32Array",
             SliceElem::F64 => "Float64Array",
         }
@@ -167,6 +177,8 @@ impl SliceElem {
             "u16" => SliceElem::U16,
             "i32" => SliceElem::I32,
             "u32" => SliceElem::U32,
+            "i64" => SliceElem::I64,
+            "u64" => SliceElem::U64,
             "f32" => SliceElem::F32,
             "f64" => SliceElem::F64,
             _ => return None,
@@ -179,7 +191,12 @@ impl AbiArg {
     pub fn param_count(self) -> usize {
         match self {
             AbiArg::Str | AbiArg::Bytes | AbiArg::Slice(_) => 2,
-            AbiArg::Bool | AbiArg::Num | AbiArg::U32 | AbiArg::Handle => 1,
+            AbiArg::Bool
+            | AbiArg::Num
+            | AbiArg::U32
+            | AbiArg::I64
+            | AbiArg::U64
+            | AbiArg::Handle => 1,
             AbiArg::Opt(p) => 1 + p.param_count(),
         }
     }
@@ -200,6 +217,9 @@ impl AbiArg {
             // 32-bit unsigned is the one case that needs reinterpreting: a
             // wasm i32 param surfaces in JS as a *signed* Number.
             "u32" | "usize" => AbiArg::U32,
+            // 64-bit integers cross as wasm i64, which JS sees as a BigInt.
+            "i64" => AbiArg::I64,
+            "u64" => AbiArg::U64,
             _ => {
                 if let Some(elem) = tag.strip_prefix("slice:") {
                     return SliceElem::from_tag(elem).map(AbiArg::Slice);
@@ -358,8 +378,8 @@ fn parse_ret(tag: &str) -> Result<Ret, String> {
         "handle" => Ret::Handle,
         "str" => Ret::Str,
         "bytes" => Ret::Bytes,
-        scalar @ ("i8" | "i16" | "i32" | "isize" | "u8" | "u16" | "u32" | "usize" | "f32"
-        | "f64" | "bool") => Ret::Value(scalar.to_string()),
+        scalar @ ("i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64"
+        | "usize" | "f32" | "f64" | "bool") => Ret::Value(scalar.to_string()),
         other => return Err(format!("unknown return tag {other:?}")),
     })
 }

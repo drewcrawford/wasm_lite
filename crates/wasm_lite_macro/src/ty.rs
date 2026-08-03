@@ -83,22 +83,32 @@ pub(crate) fn numeric_slice(ty: &Type) -> Option<String> {
     let id = simple_ident(&s.elem)?.to_string();
     matches!(
         id.as_str(),
-        "i8" | "i16" | "u16" | "i32" | "u32" | "f32" | "f64"
+        "i8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32" | "f64"
     )
     .then_some(id)
 }
 
 /// A Rust numeric type → its descriptor tag; otherwise `None`.
 ///
-/// Everything here fits a wasm `i32`, `f32` or `f64` parameter. `i64`/`u64` are
-/// deliberately absent: they cross as wasm `i64`, which surfaces in JS as a
-/// `BigInt` rather than a Number, so they need their own marshalling decision
-/// rather than being folded in with the rest.
+/// Everything up to 32 bits fits a wasm `i32`/`f32`/`f64` parameter and reaches
+/// JS as a Number. `i64`/`u64` cross as wasm `i64`, which the WebAssembly JS
+/// API surfaces as a **`BigInt`** — the only faithful mapping, since a Number
+/// cannot hold the range.
 pub(crate) fn numeric(ty: &Type) -> Option<String> {
     let id = simple_ident(ty)?.to_string();
     matches!(
         id.as_str(),
-        "i8" | "i16" | "i32" | "isize" | "u8" | "u16" | "u32" | "usize" | "f32" | "f64"
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "usize"
+            | "f32"
+            | "f64"
     )
     .then_some(id)
 }
