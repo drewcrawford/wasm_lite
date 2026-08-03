@@ -12,6 +12,34 @@ All notable changes to this project will be documented in this file.
   measuring. Timing is batch-calibrated because `performance.now()` is coarsened
   to 5 µs even under cross-origin isolation — see
   [docs/testing.md](docs/testing.md#benchmark-in-a-browser).
+- Runner environment variables, now documented in
+  [docs/testing.md](docs/testing.md#configure-the-runner): `WASM_LITE_GPU` (a
+  real WebGPU adapter in headless Chrome), `WASM_LITE_BROWSER_ARGS`,
+  `WASM_LITE_SERVE_DIR` (serve a directory alongside the program),
+  `WASM_LITE_TIMEOUT_SECS`, and `WASM_LITE_RUN_SECONDS` (watch a long-running
+  `bin`).
+- The `wasm_lite_std` browser suite now runs in **Chrome as well as Firefox**
+  (`scripts/wasm32/tests`), with `a_worker_can_spawn_a_worker` and
+  `nesting_composes_to_a_third_level` covering nested worker spawn.
+
+### Fixed
+
+- **A Web Worker could not spawn a Web Worker in Chrome.** The spawn returned a
+  handle, nothing reported an error, and the thread never ran; joining it blocked
+  forever. Chrome fetches a nested worker's module script through its parent, and
+  a parent in `Atomics.wait` — which is every blocking primitive — never services
+  it. Worker *creation* is now delegated to the main thread. Firefox was
+  unaffected, which is why a Firefox-only CI stayed green.
+- A spawned worker that fails to start now reports through `onerror` /
+  `onmessageerror` instead of failing silently, and a worker bootstrap that
+  throws before the closure runs reports through `error` / `unhandledrejection`
+  rather than becoming an invisible unhandled rejection.
+- A timeout now prints the console the program captured before it hung, on all
+  three run shapes (`bin`, test suite, bench suite). Previously it printed only
+  "timed out".
+- Three held-lock timeout tests raced: a holder that kept the lock for a fixed
+  duration while the other side asserted a short attempt failed. They now hold
+  until told to release.
 
 ## 0.1.0 - 2026-06-30
 
