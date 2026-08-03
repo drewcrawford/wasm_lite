@@ -550,6 +550,152 @@ fn raise_ret(ty: &Type, value: TokenStream2) -> TokenStream2 {
 }
 
 // ---------------------------------------------------------------------------
+// callback arguments
+// ---------------------------------------------------------------------------
+
+/// `&mut dyn FnMut(A, B) -> R` (or `&dyn Fn(..)`) → its inputs and output.
+///
+/// js-sys passes callbacks this way — borrowed, for the duration of the call —
+/// rather than as an owned `Closure`.
+fn callback_signature(ty: &Type) -> Option<Callback> {
+    let Type::Reference(r) = ty else { return None };
+    let Type::TraitObject(obj) = &*r.elem else {
+        return None;
+    };
+    for b in &obj.bounds {
+        let syn::TypeParamBound::Trait(tb) = b else {
+            continue;
+        };
+        let seg = tb.path.segments.last()?;
+        if !matches!(seg.ident.to_string().as_str(), "FnMut" | "Fn" | "FnOnce") {
+            continue;
+        }
+        let syn::PathArguments::Parenthesized(p) = &seg.arguments else {
+            continue;
+        };
+        let inputs = p.inputs.iter().cloned().collect();
+        let output = match &p.output {
+            ReturnType::Default => None,
+            ReturnType::Type(_, t) => Some((**t).clone()),
+        };
+        return Some(Callback {
+            trait_name: seg.ident.clone(),
+            mutable: r.mutability.is_some(),
+            inputs,
+            output,
+        });
+    }
+    None
+}
+
+/// A callback parameter, decomposed.
+struct Callback {
+    /// `Fn`, `FnMut` or `FnOnce` — kept so the `'static` retype below spells
+    /// the same trait the caller declared.
+    trait_name: Ident,
+    mutable: bool,
+    inputs: Vec<Type>,
+    output: Option<Type>,
+}
+
+impl Callback {
+    /// The declared type with an explicit `'static`, which is what the
+    /// transmute has to name — inference cannot supply it.
+    fn static_ty(&self) -> TokenStream2 {
+        let tr = &self.trait_name;
+        let inputs = &self.inputs;
+        let arrow = self
+            .output
+            .as_ref()
+            .map(|o| quote! { -> #o })
+            .unwrap_or_default();
+        let obj = quote! { (dyn #tr( #(#inputs),* ) #arrow + 'static) };
+        if self.mutable {
+            quote! { &'static mut #obj }
+        } else {
+            quote! { &'static #obj }
+        }
+    }
+}
+
+/// Unpack `args[i]` into the callback's declared parameter type.
+fn unpack_arg(ty: &Type, i: usize) -> TokenStream2 {
+    let idx = syn::Index::from(i);
+    let slot = quote! { __args[#idx] };
+    if let Type::Path(p) = ty
+        && let Some(seg) = p.path.segments.last()
+    {
+        match seg.ident.to_string().as_str() {
+            "bool" => return quote! { #slot.as_bool().unwrap_or_default() },
+            "String" => return quote! { #slot.as_string().unwrap_or_default() },
+            n if matches!(
+                n,
+                "f32" | "f64" | "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "usize" | "isize"
+            ) =>
+            {
+                // JS numbers are all doubles; the cast back is the same one
+                // wasm-bindgen performs.
+                return quote! { (#slot.as_f64().unwrap_or_default() as #ty) };
+            }
+            _ => {}
+        }
+    }
+    // A handle. Cloned rather than moved: the slice owns the arguments and
+    // frees them when the call returns.
+    quote! { <#ty as ::wasm_bindgen::JsObject>::from_js(#slot.clone()) }
+}
+
+/// Convert the callback's result into what the trampoline returns.
+fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<TokenStream2> {
+    let Some(ty) = ret else {
+        return Ok(quote! { { #call; ::core::option::Option::None } });
+    };
+    if matches!(ty, Type::Tuple(t) if t.elems.is_empty()) {
+        return Ok(quote! { { #call; ::core::option::Option::None } });
+    }
+    if generic_pair(ty, "Result").is_some() {
+        // A Rust closure cannot throw a JS exception, so there is nowhere for
+        // the `Err` to go. Refusing is better than silently unwrapping it into
+        // a panic that surfaces as a dead instance.
+        return Err(Error::new_spanned(
+            ty,
+            "#[wasm_bindgen]: a callback returning `Result` is not supported by the \
+             wasm_lite shim — the error would have to become a thrown JS exception, \
+             and a Rust closure cannot throw",
+        ));
+    }
+    if let Type::Path(p) = ty
+        && let Some(seg) = p.path.segments.last()
+    {
+        let n = seg.ident.to_string();
+        if matches!(
+            n.as_str(),
+            "bool"
+                | "f32"
+                | "f64"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "usize"
+                | "isize"
+        ) {
+            return Ok(
+                quote! { ::core::option::Option::Some(::wasm_bindgen::JsValue::from(#call)) },
+            );
+        }
+        if n == "String" {
+            return Ok(
+                quote! { ::core::option::Option::Some(::wasm_bindgen::JsValue::from_str(&#call)) },
+            );
+        }
+    }
+    Ok(quote! { ::core::option::Option::Some(::wasm_bindgen::JsObject::into_js(#call)) })
+}
+
+// ---------------------------------------------------------------------------
 // imported functions
 // ---------------------------------------------------------------------------
 
@@ -605,6 +751,8 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
     let mut wrapper_params = Vec::new();
     let mut shim_params = Vec::new();
     let mut call_args = Vec::new();
+    // Statements that must run before the call (callback adapters).
+    let mut prelude: Vec<TokenStream2> = Vec::new();
     let mut receiver_ty: Option<Type> = None;
 
     for (i, arg) in f.sig.inputs.iter().enumerate() {
@@ -633,6 +781,30 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
         }
 
         wrapper_params.push(quote! { #orig_ident: #ty });
+
+        // A borrowed callback becomes a variadic Closure for the duration of
+        // the call.
+        if let Some(cb) = callback_signature(ty) {
+            let unpacked = cb.inputs.iter().enumerate().map(|(i, t)| unpack_arg(t, i));
+            let body = pack_result(cb.output.as_ref(), quote! { __f( #(#unpacked),* ) })?;
+            let closure_ident = format_ident!("__cb_{}", orig_ident);
+            let static_ty = cb.static_ty();
+            prelude.push(quote! {
+                let #closure_ident = {
+                    // SAFETY: the Closure is dropped at the end of this
+                    // function, before the caller's borrow ends, so the
+                    // 'static bound it requires is never actually observed.
+                    let __f: #static_ty = unsafe { ::core::mem::transmute(#orig_ident) };
+                    ::wasm_bindgen::__rt::Closure::new_variadic(
+                        move |__args: &[::wasm_bindgen::__rt::JsValue]| #body,
+                    )
+                };
+            });
+            shim_params.push(quote! { #orig_ident: &JsValue });
+            call_args.push(quote! { #closure_ident.as_js_value() });
+            continue;
+        }
+
         match classify(deref_ty(ty)) {
             Cross::Direct => {
                 shim_params.push(quote! { #orig_ident: #ty });
@@ -721,7 +893,10 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
     let wrapper = quote! {
         #(#attrs)*
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        #vis fn #name #generics ( #(#wrapper_params),* ) #wrapper_ret #where_clause { #body }
+        #vis fn #name #generics ( #(#wrapper_params),* ) #wrapper_ret #where_clause {
+            #(#prelude)*
+            #body
+        }
     };
 
     Ok(match impl_target {

@@ -74,6 +74,16 @@ extern "C" {
     /// `arr[i] = v`
     #[wasm_bindgen(method, indexing_setter, js_class = "Array")]
     pub fn set(this: &JsArray, index: u32, value: f64);
+
+    /// `arr.sort(cmp)` — a *borrowed* callback, which is how js-sys passes
+    /// them. The shim turns it into a variadic closure for the call.
+    #[wasm_bindgen(method, js_class = "Array", js_name = "sort")]
+    pub fn sort_by(this: &JsArray, cmp: &mut dyn FnMut(JsValue, JsValue) -> f64) -> JsArray;
+
+    /// `arr.map(f)` — the callback gets (element, index, array); taking only
+    /// the first two is fine, since JS ignores extra parameters.
+    #[wasm_bindgen(method, js_class = "Array", js_name = "map")]
+    pub fn map_each(this: &JsArray, f: &mut dyn FnMut(JsValue, u32) -> f64) -> JsArray;
 }
 
 #[wasm_bindgen]

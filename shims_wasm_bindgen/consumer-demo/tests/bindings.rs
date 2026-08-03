@@ -148,6 +148,38 @@ mod websys_grammar {
         assert_eq!(same.length(), 2.0);
         assert_eq!(arr.length(), 2.0);
     }
+
+    /// The callback adapter: js-sys passes `&mut dyn FnMut(..)`, borrowed for
+    /// the call, and the shim has to turn that into a JS function.
+    #[wasm_lite_test]
+    fn a_borrowed_callback_drives_a_javascript_method() {
+        let arr = JsArray::of2(1.0, 3.0);
+
+        // Descending: the comparator's return value has to reach JS, or the
+        // order is whatever `sort` does by default.
+        let mut cmp = |a: JsValue, b: JsValue| {
+            b.as_f64().unwrap_or_default() - a.as_f64().unwrap_or_default()
+        };
+        let sorted = arr.sort_by(&mut cmp);
+        assert_eq!(stringify_array(&sorted), "[3,1]");
+    }
+
+    /// The callback's *arguments* have to arrive right too — including the
+    /// index, which crosses as a JS number and comes back as a `u32`.
+    #[wasm_lite_test]
+    fn a_callback_receives_element_and_index() {
+        let arr = JsArray::of2(10.0, 20.0);
+        let seen = std::cell::RefCell::new(Vec::new());
+
+        let mut f = |v: JsValue, i: u32| {
+            seen.borrow_mut().push((v.as_f64().unwrap_or_default(), i));
+            v.as_f64().unwrap_or_default() * 2.0
+        };
+        let doubled = arr.map_each(&mut f);
+
+        assert_eq!(stringify_array(&doubled), "[20,40]");
+        assert_eq!(*seen.borrow(), vec![(10.0, 0), (20.0, 1)]);
+    }
 }
 
 wasm_lite::test_main!();
