@@ -190,28 +190,32 @@ fn string_enum(e: syn::ItemEnum) -> syn::Result<TokenStream2> {
     })
 }
 
-/// Reject the block-level options that change where bindings are looked up.
+/// Reject *any* argument on the block's own `#[wasm_bindgen(..)]`.
 ///
-/// `inline_js`, `module` and `raw_module` all mean "these live in a JS module".
-/// wasm_lite's codegen resolves every import against `globalThis`, so honouring
-/// them needs a codegen feature, not a macro change — and pretending otherwise
-/// produces glue that throws on first use.
+/// Block-level options change how every item inside is resolved —
+/// `inline_js`/`module`/`raw_module` put the bindings in a JS module,
+/// `js_namespace` moves them under a namespace. None are supported, and the
+/// failure mode for ignoring one is not a missing feature but *wrong glue*
+/// that throws on first call. `wasm_safe_thread` demonstrated exactly that.
+///
+/// So the rule is a whitelist of one: no arguments. `#[wasm_bindgen]` bare on
+/// an extern block is the normal spelling, and anything else stops the build
+/// with a message instead of shipping something broken.
 fn check_block_attr(attr: &TokenStream2) -> syn::Result<()> {
-    let text = attr.to_string();
-    for opt in ["inline_js", "raw_module", "module"] {
-        if text.contains(opt) {
-            return Err(Error::new_spanned(
-                attr,
-                format!(
-                    "#[wasm_bindgen({opt} = ..)] is not supported by the wasm_lite shim: it \
-                     says these bindings live in a JS module, and wasm_lite's codegen \
-                     resolves imports against `globalThis`. Supporting it needs a codegen \
-                     feature; ignoring it would generate glue that throws on first call."
-                ),
-            ));
-        }
+    if attr.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    Err(Error::new_spanned(
+        attr,
+        format!(
+            "#[wasm_bindgen({attr})] on an `extern` block is not supported by the wasm_lite \
+             shim. Block-level options change where every binding inside is resolved — \
+             `inline_js`/`module`/`raw_module` place them in a JS module, `js_namespace` \
+             moves them under a namespace — and wasm_lite's codegen resolves imports \
+             against `globalThis`. Honouring them needs a codegen feature; ignoring them \
+             would generate glue that throws on first call."
+        ),
+    ))
 }
 
 // ---------------------------------------------------------------------------
