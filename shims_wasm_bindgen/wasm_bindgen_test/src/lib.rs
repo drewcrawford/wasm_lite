@@ -20,6 +20,16 @@
 //! from a custom wasm section and needs to own `main`. The harness setting
 //! lives in the manifest, and no macro can reach it.
 //!
+//! # `async fn` tests
+//!
+//! Enable the `async` feature. It pulls in `wasm_lite_std` for an executor,
+//! which requires nightly and an `+atomics` build — a real cost, so it is off
+//! by default and a suite with no async tests pays nothing.
+//!
+//! ```toml
+//! wasm-bindgen-test = { version = "0.3", features = ["async"] }
+//! ```
+//!
 //! `wasm_bindgen_test_configure!` emits that `main`, so a suite that already
 //! calls it at the crate root (most do, for `run_in_browser`) needs nothing
 //! else.
@@ -36,6 +46,21 @@ pub use wasm_bindgen_test_macro_wl::wasm_bindgen_test;
 #[doc(hidden)]
 pub mod __rt {
     pub use wasm_lite::{set_panic_hook, test_main, wasm_lite_test};
+
+    /// Drive an `async fn` test to completion and report the verdict.
+    ///
+    /// Fail-closed: the test is marked pending before the future is spawned,
+    /// so returning from `main` does not count as success, and only the future
+    /// actually completing signals a pass. A panic in between fails through
+    /// the executor's own trap handling.
+    #[cfg(all(feature = "async", target_arch = "wasm32"))]
+    pub fn run_async<F: ::core::future::Future<Output = ()> + 'static>(fut: F) {
+        wasm_lite_std::__rt::test_pending();
+        wasm_lite_std::spawn_local(async move {
+            fut.await;
+            wasm_lite_std::__rt::test_pass();
+        });
+    }
 }
 
 /// The test entry point, for a suite whose `wasm_bindgen_test_configure!` is

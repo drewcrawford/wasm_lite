@@ -31,6 +31,9 @@ echo "testing shims_wasm_bindgen/consumer-demo (depends only on the shim)"
 echo "testing shims_wasm_bindgen/consumer-demo wasm-bindgen-test harness"
 (cd shims_wasm_bindgen/consumer-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test wbt_harness)
 
+echo "testing shims_wasm_bindgen/consumer-async (async tests, atomics)"
+(cd shims_wasm_bindgen/consumer-async && RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" cargo +nightly test --target wasm32-unknown-unknown -Z build-std=std,panic_abort --test async_harness)
+
 echo "testing examples/doctest-demo doctests"
 (cd examples/doctest-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --doc)
 

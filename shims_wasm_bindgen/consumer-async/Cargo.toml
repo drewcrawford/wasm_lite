@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Separate from `consumer-demo` because the test shim's `async` feature pulls
+# in `wasm_lite_std`, which needs nightly and an `+atomics` build. Keeping them
+# apart lets the main consumer suite stay on stable.
+[package]
+name = "consumer-async"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+wasm-bindgen = { path = "../wasm_bindgen" }
+
+[dev-dependencies]
+wasm-bindgen-test = { path = "../wasm_bindgen_test", features = ["async"] }
+wasm_lite = { path = "../../crates/wasm_lite" }
+
+[[test]]
+name = "async_harness"
+harness = false

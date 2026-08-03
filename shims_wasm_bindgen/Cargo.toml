@@ -17,6 +17,7 @@ members = [
     "wasm_bindgen_test",
     "wasm_bindgen_test_macro_wl",
     "consumer-demo",
+    "consumer-async",
 ]
 
 [workspace.package]

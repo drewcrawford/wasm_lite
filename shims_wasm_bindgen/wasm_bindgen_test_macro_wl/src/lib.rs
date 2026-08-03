@@ -3,7 +3,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Error, ItemFn};
+use syn::ItemFn;
 
 /// Mark a function as a browser test.
 ///
@@ -18,19 +18,23 @@ pub fn wasm_bindgen_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error().into(),
     };
 
-    // Refused rather than silently mistranslated: wasm_lite's harness would
-    // drop the future unpolled, so the test would always pass. Saying so here
-    // is much clearer than the same error arriving from a macro the author did
-    // not write.
-    if let Some(asyncness) = &func.sig.asyncness {
-        return Error::new_spanned(
-            asyncness,
-            "#[wasm_bindgen_test]: the wasm_lite shim does not support `async fn` tests — \
-             wasm_lite's harness would drop the future unpolled and the test would always \
-             pass. Drive the future to completion in a sync body \
-             (`wasm_lite_std::async_doctest!`) instead.",
-        )
-        .to_compile_error()
+    // An `async fn` cannot be handed to wasm_lite's harness directly — it would
+    // drop the future unpolled and the test would always pass — so the body is
+    // moved into a sync wrapper that drives it through an executor.
+    if func.sig.asyncness.is_some() {
+        let mut inner = func.clone();
+        let name = func.sig.ident.clone();
+        inner.sig.ident = syn::Ident::new("__wbt_body", name.span());
+        inner.vis = syn::Visibility::Inherited;
+        let attrs = &func.attrs;
+        return quote! {
+            #(#attrs)*
+            #[::wasm_bindgen_test::__rt::wasm_lite_test(crate = ::wasm_bindgen_test::__rt)]
+            fn #name() {
+                #inner
+                ::wasm_bindgen_test::__rt::run_async(__wbt_body());
+            }
+        }
         .into();
     }
 
