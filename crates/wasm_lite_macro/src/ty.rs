@@ -88,10 +88,19 @@ pub(crate) fn numeric_slice(ty: &Type) -> Option<String> {
     .then_some(id)
 }
 
-/// `i32`/`u32`/`f64` → its tag; otherwise `None`.
+/// A Rust numeric type → its descriptor tag; otherwise `None`.
+///
+/// Everything here fits a wasm `i32`, `f32` or `f64` parameter. `i64`/`u64` are
+/// deliberately absent: they cross as wasm `i64`, which surfaces in JS as a
+/// `BigInt` rather than a Number, so they need their own marshalling decision
+/// rather than being folded in with the rest.
 pub(crate) fn numeric(ty: &Type) -> Option<String> {
     let id = simple_ident(ty)?.to_string();
-    matches!(id.as_str(), "i32" | "u32" | "f64").then_some(id)
+    matches!(
+        id.as_str(),
+        "i8" | "i16" | "i32" | "isize" | "u8" | "u16" | "u32" | "usize" | "f32" | "f64"
+    )
+    .then_some(id)
 }
 
 /// Descriptor tag for a scalar payload / `Option`/`Result` inner type:

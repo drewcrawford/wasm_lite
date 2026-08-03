@@ -63,6 +63,16 @@ wasm_lite::import! {
         fn from_f32(v: &[f32]) -> JsValue as "from";
         fn from_u32(v: &[u32]) -> JsValue as "from";
         fn from_i32(v: &[i32]) -> JsValue as "from";
+
+        /// `Array.of(v)`, once per narrow scalar type, to check each reaches JS
+        /// as the value Rust had.
+        fn of_i8(v: i8) -> JsValue as "of";
+        fn of_u8(v: u8) -> JsValue as "of";
+        fn of_i16(v: i16) -> JsValue as "of";
+        fn of_u16(v: u16) -> JsValue as "of";
+        fn of_f32(v: f32) -> JsValue as "of";
+        fn of_usize(v: usize) -> JsValue as "of";
+        fn of_isize(v: isize) -> JsValue as "of";
     }
 
     "URLTest" {
@@ -169,6 +179,27 @@ fn a_heap_slice_views_at_a_nonzero_offset() {
     assert_eq!(length(&arr), 64.0);
     assert_eq!(at(&arr, 0), 0.0);
     assert_eq!(at(&arr, 63), 31.5);
+}
+
+/// Narrow scalars all share a wasm `i32` parameter, so each one's edge value is
+/// where a missing sign-extension or reinterpretation shows up — and nowhere
+/// else, since mid-range values look identical either way.
+#[wasm_lite_test]
+fn narrow_scalars_keep_their_value() {
+    assert_eq!(at(&of_i8(-128), 0), -128.0, "i8 arrives sign-extended");
+    assert_eq!(at(&of_u8(255), 0), 255.0, "u8 255 must not read as -1");
+    assert_eq!(at(&of_i16(-32768), 0), -32768.0);
+    assert_eq!(at(&of_u16(65535), 0), 65535.0, "u16 must not read as -1");
+    assert_eq!(at(&of_f32(1.5), 0), 1.5);
+    assert_eq!(at(&of_isize(-5), 0), -5.0);
+}
+
+/// `usize` is 32-bit unsigned on wasm32, so it needs the same reinterpretation
+/// as `u32`: the wasm param is an i32 and surfaces in JS as a *signed* Number.
+#[wasm_lite_test]
+fn usize_survives_the_top_bit() {
+    assert_eq!(at(&of_usize(7), 0), 7.0);
+    assert_eq!(at(&of_usize(4_000_000_000), 0), 4_000_000_000.0);
 }
 
 wasm_lite::test_main!();

@@ -232,14 +232,35 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
     let opts = Opts::parse(&t.attrs)?;
     let name = &t.ident;
     let vis = &t.vis;
-    let docs = doc_attrs(&t.attrs);
+    let attrs = passthrough_attrs(&t.attrs);
+
+    // js-sys declares generic extern types (`pub type Generator<T>;`), so the
+    // parameters have to reach the struct. They are phantom — the handle is
+    // untyped at the ABI — but `PhantomData` is a ZST, so `repr(transparent)`
+    // still holds over the one real field.
+    let generics = &t.generics;
+    let (impl_g, ty_g, where_g) = t.generics.split_for_impl();
+    let phantom = t.generics.type_params().map(|p| {
+        let id = &p.ident;
+        quote! { ::core::marker::PhantomData<#id> }
+    });
+    let phantom_field = if t.generics.type_params().next().is_some() {
+        quote! { _params: (#(#phantom,)*), }
+    } else {
+        quote! {}
+    };
+    let phantom_init = if t.generics.type_params().next().is_some() {
+        quote! { _params: ::core::default::Default::default(), }
+    } else {
+        quote! {}
+    };
 
     // `extends = Base` gives the inherited API. One `Deref` target is possible
     // in Rust, so the first `extends` becomes `Deref` (which chains, so the
     // whole ancestry is reachable) and the rest become `AsRef`.
     let deref = opts.extends.first().map(|base| {
         quote! {
-            impl ::core::ops::Deref for #name {
+            impl #impl_g ::core::ops::Deref for #name #ty_g #where_g {
                 type Target = #base;
                 fn deref(&self) -> &#base {
                     // SAFETY: every type this macro generates is
@@ -254,7 +275,7 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
     });
     let as_refs = opts.extends.iter().map(|base| {
         quote! {
-            impl ::core::convert::AsRef<#base> for #name {
+            impl #impl_g ::core::convert::AsRef<#base> for #name #ty_g #where_g {
                 fn as_ref(&self) -> &#base {
                     // SAFETY: as above.
                     unsafe { &*(self as *const #name as *const #base) }
@@ -270,16 +291,18 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
     let cast_mod = format_ident!("__wb_instanceof_{}", name);
 
     Ok(quote! {
-        #(#docs)*
+        #(#attrs)*
         #[repr(transparent)]
-        #[derive(Debug)]
-        #vis struct #name {
+        #vis struct #name #generics {
             obj: ::wasm_bindgen::__rt::JsValue,
+            #phantom_field
         }
 
-        impl ::wasm_bindgen::JsObject for #name {
+        impl #impl_g ::wasm_bindgen::JsObject for #name #ty_g #where_g {
             fn as_js(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
-            fn from_js(obj: ::wasm_bindgen::__rt::JsValue) -> Self { #name { obj } }
+            fn from_js(obj: ::wasm_bindgen::__rt::JsValue) -> Self {
+                #name { obj, #phantom_init }
+            }
             fn into_js(self) -> ::wasm_bindgen::__rt::JsValue { self.obj }
         }
 
@@ -295,11 +318,13 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
             }
         }
 
-        impl ::wasm_bindgen::JsCast for #name {
+        impl #impl_g ::wasm_bindgen::JsCast for #name #ty_g #where_g {
             fn instanceof(val: &::wasm_bindgen::__rt::JsValue) -> bool {
                 #cast_mod::shim(val)
             }
-            fn unchecked_from_js(obj: ::wasm_bindgen::__rt::JsValue) -> Self { #name { obj } }
+            fn unchecked_from_js(obj: ::wasm_bindgen::__rt::JsValue) -> Self {
+                #name { obj, #phantom_init }
+            }
         }
 
         #deref
@@ -365,8 +390,28 @@ fn deref_ty(ty: &Type) -> &Type {
     }
 }
 
-fn doc_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
-    attrs.iter().filter(|a| a.path().is_ident("doc")).collect()
+/// Just the `#[cfg]`s, for items that must be gated but take no other
+/// attributes — the per-binding shim module in particular. Without this the
+/// wrapper is gated and its module is not, so paired declarations still
+/// collide.
+fn cfg_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
+    attrs
+        .iter()
+        .filter(|a| a.path().is_ident("cfg") || a.path().is_ident("cfg_attr"))
+        .collect()
+}
+
+/// Every attribute except our own.
+///
+/// `#[cfg]` in particular has to survive: js-sys declares the same function
+/// twice under complementary `cfg`s, so dropping them makes both expand and
+/// collide. User `#[derive]`s pass through for the same reason — they are the
+/// author's, not ours to discard.
+fn passthrough_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
+    attrs
+        .iter()
+        .filter(|a| !a.path().is_ident("wasm_bindgen"))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -430,7 +475,7 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
     let opts = Opts::parse(&f.attrs)?;
     let name = &f.sig.ident;
     let vis = &f.vis;
-    let docs = doc_attrs(&f.attrs);
+    let attrs = passthrough_attrs(&f.attrs);
 
     // A constructor's JS name is the *class*, not the Rust function — every
     // web-sys constructor is spelled `fn new()`, and `new globalThis["new"]`
@@ -566,7 +611,9 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
         ),
     };
 
+    let cfgs = cfg_attrs(&f.attrs);
     let shim_mod = quote! {
+        #(#cfgs)*
         #[allow(non_snake_case, unused_imports)]
         mod #module {
             use ::wasm_bindgen::__rt::JsValue;
@@ -580,10 +627,11 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
         }
     };
 
+    let (generics, where_clause) = wrapper_generics(&f.sig.generics);
     let wrapper = quote! {
-        #(#docs)*
+        #(#attrs)*
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        #vis fn #name( #(#wrapper_params),* ) #wrapper_ret { #body }
+        #vis fn #name #generics ( #(#wrapper_params),* ) #wrapper_ret #where_clause { #body }
     };
 
     Ok(match impl_target {
@@ -596,6 +644,29 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
             #wrapper
         },
     })
+}
+
+/// A function's generics with any type-parameter *defaults* stripped.
+///
+/// `fn add<T: TypedArray = Int32Array>(..)` is accepted inside an `extern`
+/// block but not on a real function, so the default has to go. Every generic
+/// parameter here ends up bound by `JsObject` in practice, since the only
+/// reason a binding is generic is to accept a family of handle types.
+fn wrapper_generics(g: &syn::Generics) -> (TokenStream2, TokenStream2) {
+    if g.params.is_empty() {
+        return (quote! {}, quote! {});
+    }
+    let params = g.params.iter().map(|p| match p {
+        syn::GenericParam::Type(t) => {
+            let mut t = t.clone();
+            t.eq_token = None;
+            t.default = None;
+            quote! { #t }
+        }
+        other => quote! { #other },
+    });
+    let where_clause = &g.where_clause;
+    (quote! { <#(#params),*> }, quote! { #where_clause })
 }
 
 /// The type a constructor yields, looking through `Option`/`Result`.

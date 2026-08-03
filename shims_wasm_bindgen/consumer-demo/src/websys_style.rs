@@ -21,11 +21,13 @@ extern "C" {
     /// `JsCast` tests against, so omitting it makes every `instanceof` look up
     /// a global that does not exist and answer `false`.
     #[wasm_bindgen(js_name = Object)]
+    #[derive(Debug)]
     pub type JsObjectBase;
 
     /// `URL`, deriving from [`JsObjectBase`] — the `extends` chain web-sys
     /// builds for every Web IDL interface.
     #[wasm_bindgen(extends = JsObjectBase, js_name = URL)]
+    #[derive(Debug)]
     pub type Url;
 
     /// `new URL(spec)`
@@ -53,6 +55,7 @@ extern "C" {
 extern "C" {
     /// `Array`.
     #[wasm_bindgen(extends = JsObjectBase, js_name = Array)]
+    #[derive(Debug)]
     pub type JsArray;
 
     /// `Array.of(a, b)` — a static method, i.e. hung off the class rather than

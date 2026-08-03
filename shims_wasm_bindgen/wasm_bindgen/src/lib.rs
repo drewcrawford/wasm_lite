@@ -42,6 +42,9 @@
 pub use wasm_bindgen_macro_wl::wasm_bindgen;
 pub use wasm_lite::JsValue;
 
+pub mod closure;
+pub use closure::Closure;
+
 /// The handle behind a generated extern-type newtype.
 ///
 /// `#[wasm_bindgen] extern "C" { pub type Element; }` produces a

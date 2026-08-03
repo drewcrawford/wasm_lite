@@ -33,3 +33,17 @@ path = "src/lib.rs"
 [dependencies]
 wasm_lite = { path = "../../crates/wasm_lite" }
 wasm-bindgen-macro-wl = { path = "../wasm_bindgen_macro_wl" }
+
+# The features the real wasm-bindgen declares. They are all no-ops here — the
+# shim has no serde bridge, no string interning and no separate no_std path —
+# but they must *exist*, because dependants select them by name and cargo
+# refuses to resolve a patch that is missing one.
+[features]
+default = ["std"]
+std = []
+enable-interning = []
+serde-serialize = []
+spans = []
+strict-macro = []
+gg-alloc = []
+msrv = []

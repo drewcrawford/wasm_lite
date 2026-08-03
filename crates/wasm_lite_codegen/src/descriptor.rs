@@ -115,10 +115,13 @@ pub enum AbiArg {
     Bytes,
     /// A `bool`: arrives as one `i32`; present to JS as a real boolean.
     Bool,
-    /// A signed/float numeric type (`i32`, `f64`): one param, passed through.
+    /// A numeric type that reaches JS as a Number with the right value
+    /// already — `i8`/`i16`/`i32`/`isize`/`u8`/`u16`/`f32`/`f64`. One param,
+    /// passed through.
     Num,
-    /// A `u32`: one param; wasm i32 params surface in JS as *signed* Numbers,
-    /// so the shim must reinterpret with `>>> 0` before handing it to JS.
+    /// A 32-bit unsigned (`u32`, `usize`): one param; wasm i32 params surface
+    /// in JS as *signed* Numbers, so the shim must reinterpret with `>>> 0`
+    /// before handing it to JS.
     U32,
     /// A `&JsValue`: arrives as one `u32` index; look up in the value table.
     Handle,
@@ -190,8 +193,13 @@ impl AbiArg {
             "bytes" => AbiArg::Bytes,
             "bool" => AbiArg::Bool,
             "handle" => AbiArg::Handle,
-            "i32" | "f64" => AbiArg::Num,
-            "u32" => AbiArg::U32,
+            // Everything that fits a wasm i32/f32/f64 parameter and reaches JS
+            // as a Number with the right value already. Signed types arrive
+            // sign-extended; u8/u16 can only hold positive values in an i32.
+            "i8" | "i16" | "i32" | "isize" | "u8" | "u16" | "f32" | "f64" => AbiArg::Num,
+            // 32-bit unsigned is the one case that needs reinterpreting: a
+            // wasm i32 param surfaces in JS as a *signed* Number.
+            "u32" | "usize" => AbiArg::U32,
             _ => {
                 if let Some(elem) = tag.strip_prefix("slice:") {
                     return SliceElem::from_tag(elem).map(AbiArg::Slice);
@@ -350,7 +358,8 @@ fn parse_ret(tag: &str) -> Result<Ret, String> {
         "handle" => Ret::Handle,
         "str" => Ret::Str,
         "bytes" => Ret::Bytes,
-        scalar @ ("i32" | "u32" | "f64" | "bool") => Ret::Value(scalar.to_string()),
+        scalar @ ("i8" | "i16" | "i32" | "isize" | "u8" | "u16" | "u32" | "usize" | "f32"
+        | "f64" | "bool") => Ret::Value(scalar.to_string()),
         other => return Err(format!("unknown return tag {other:?}")),
     })
 }
