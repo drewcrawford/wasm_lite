@@ -7,6 +7,8 @@
 //! shim is only useful if code here compiles *unmodified*. Every path the
 //! expansion below produces resolves through `::wasm_bindgen::__rt`.
 
+pub mod websys_style;
+
 use wasm_bindgen::JsValue;
 
 wasm_bindgen::__rt::import! {

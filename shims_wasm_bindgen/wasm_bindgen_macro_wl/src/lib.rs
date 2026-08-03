@@ -1,0 +1,619 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! The `#[wasm_bindgen]` attribute, lowered onto wasm_lite.
+//!
+//! Reproduces the *grammar* `js-sys`/`web-sys`/`wgpu` are written in, and
+//! translates it to `wasm_lite::import!`. Not a general-purpose crate: it is
+//! only meant to be reached through the `wasm-bindgen` shim, which re-exports
+//! it under the name upstream code expects.
+//!
+//! # Shape of the translation
+//!
+//! An extern type becomes a `#[repr(transparent)]` newtype over `JsValue`, and
+//! each binding becomes a private module containing one `import!` plus a public
+//! wrapper that converts newtypes to and from handles:
+//!
+//! ```ignore
+//! #[wasm_bindgen]
+//! extern "C" {
+//!     pub type Element;
+//!     #[wasm_bindgen(method, getter, js_class = "Element")]
+//!     pub fn tag_name(this: &Element) -> String;
+//! }
+//! ```
+//!
+//! becomes (roughly)
+//!
+//! ```ignore
+//! #[repr(transparent)] pub struct Element { obj: JsValue }
+//! mod __wb_tag_name {
+//!     import! { crate = ::wasm_bindgen::__rt;
+//!         "Element" { #[getter] fn shim(this: &JsValue) -> String as "tagName"; } }
+//! }
+//! pub fn tag_name(this: &Element) -> String { __wb_tag_name::shim(this.as_js()) }
+//! ```
+//!
+//! One module per binding keeps the wasm import symbol
+//! (`module_path!() + "::shim"`) unique without having to group by namespace.
+//!
+//! # Unknown types are handles
+//!
+//! A parameter whose type is not a scalar, string, slice, `JsValue`, `Option`
+//! or `Result` is assumed to be an extern-type newtype and crosses as a handle.
+//! That is the right default for this ecosystem — 51.6% of web-sys's type
+//! surface is extern types — and a type that is none of those would not have
+//! had a wasm-bindgen lowering either.
+
+use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
+use quote::{format_ident, quote};
+use syn::{
+    Error, FnArg, ForeignItem, ForeignItemFn, ForeignItemType, Ident, Item, LitStr, Pat, PatType,
+    Path, ReturnType, Type,
+};
+
+/// `#[wasm_bindgen]` — see the [module docs](self).
+#[proc_macro_attribute]
+pub fn wasm_bindgen(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr = TokenStream2::from(attr);
+    match expand(attr, item.into()) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
+    let parsed: Item = syn::parse2(item)?;
+    match parsed {
+        Item::ForeignMod(fm) => extern_block(fm),
+        Item::Fn(f) => {
+            // `#[wasm_bindgen]` on a Rust fn exports it to JS, which is exactly
+            // what wasm_lite's `#[export]` does.
+            let _ = attr;
+            Ok(quote! { #[::wasm_bindgen::__rt::export] #f })
+        }
+        other => Err(Error::new_spanned(
+            other,
+            "#[wasm_bindgen] supports `extern \"C\"` blocks and free functions here",
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// attribute options
+// ---------------------------------------------------------------------------
+
+/// The `#[wasm_bindgen(...)]` arguments this shim understands.
+#[derive(Default)]
+struct Opts {
+    method: bool,
+    getter: bool,
+    setter: bool,
+    constructor: bool,
+    catch: bool,
+    indexing_getter: bool,
+    indexing_setter: bool,
+    js_name: Option<String>,
+    js_class: Option<String>,
+    js_namespace: Option<String>,
+    static_method_of: Option<Ident>,
+    extends: Vec<Path>,
+}
+
+impl Opts {
+    /// Parse every `#[wasm_bindgen(..)]` attribute on an item, and report which
+    /// of its attributes were consumed so the rest can be re-emitted.
+    fn parse(attrs: &[syn::Attribute]) -> syn::Result<Opts> {
+        let mut o = Opts::default();
+        for a in attrs {
+            if !a.path().is_ident("wasm_bindgen") {
+                continue;
+            }
+            if matches!(a.meta, syn::Meta::Path(_)) {
+                continue; // bare `#[wasm_bindgen]`
+            }
+            a.parse_nested_meta(|m| {
+                let id = m
+                    .path
+                    .get_ident()
+                    .ok_or_else(|| m.error("expected an identifier"))?
+                    .clone();
+                match id.to_string().as_str() {
+                    "method" => o.method = true,
+                    "getter" => {
+                        o.getter = true;
+                        // `getter = "name"` is an accepted spelling.
+                        if m.input.peek(syn::Token![=]) {
+                            o.js_name = Some(m.value()?.parse::<LitStr>()?.value());
+                        }
+                    }
+                    "setter" => {
+                        o.setter = true;
+                        if m.input.peek(syn::Token![=]) {
+                            o.js_name = Some(m.value()?.parse::<LitStr>()?.value());
+                        }
+                    }
+                    "constructor" => o.constructor = true,
+                    "catch" => o.catch = true,
+                    "indexing_getter" => o.indexing_getter = true,
+                    "indexing_setter" => o.indexing_setter = true,
+                    "js_name" => o.js_name = Some(string_or_ident(&m)?),
+                    "js_class" => o.js_class = Some(string_or_ident(&m)?),
+                    "static_method_of" => {
+                        o.static_method_of = Some(m.value()?.parse::<Ident>()?);
+                    }
+                    "js_namespace" => o.js_namespace = Some(namespace(&m)?),
+                    "extends" => o.extends.push(m.value()?.parse::<Path>()?),
+                    // Accepted and ignored: these describe *how* wasm-bindgen
+                    // looks a member up or what it emits for TypeScript, and
+                    // wasm_lite's lowering already does the equivalent (a
+                    // property lookup on the receiver) or has no TS output.
+                    "structural" | "final" | "typescript_type" | "skip_typescript"
+                    | "skip_jsdoc" | "getter_with_clone" | "no_deref" => {
+                        if m.input.peek(syn::Token![=]) {
+                            let _: TokenStream2 = m.value()?.parse()?;
+                        }
+                    }
+                    // Refused rather than ignored: silently dropping these
+                    // generates glue that calls the wrong thing.
+                    other @ ("variadic" | "module" | "raw_module" | "inline_js" | "start") => {
+                        return Err(m.error(format!(
+                            "#[wasm_bindgen({other})] is not supported by the wasm_lite shim yet"
+                        )));
+                    }
+                    other => {
+                        return Err(m.error(format!("unknown #[wasm_bindgen] argument `{other}`")));
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        Ok(o)
+    }
+}
+
+/// `js_name = "foo"` and `js_name = foo` are both in the wild.
+fn string_or_ident(m: &syn::meta::ParseNestedMeta) -> syn::Result<String> {
+    let v = m.value()?;
+    if v.peek(LitStr) {
+        Ok(v.parse::<LitStr>()?.value())
+    } else {
+        Ok(v.parse::<Ident>()?.to_string())
+    }
+}
+
+/// `js_namespace = Foo` or `js_namespace = ["Foo", "Bar"]`.
+fn namespace(m: &syn::meta::ParseNestedMeta) -> syn::Result<String> {
+    let v = m.value()?;
+    if v.peek(syn::token::Bracket) {
+        let content;
+        syn::bracketed!(content in v);
+        let parts: syn::punctuated::Punctuated<LitStr, syn::Token![,]> =
+            content.parse_terminated(|p| p.parse::<LitStr>(), syn::Token![,])?;
+        if parts.len() != 1 {
+            // A dotted namespace would have to be `globalThis["a"]["b"]`, and
+            // wasm_lite's codegen does a single lookup. Emitting it anyway
+            // would produce glue that reads `globalThis["a.b"]`.
+            return Err(Error::new_spanned(
+                parts.first(),
+                "the wasm_lite shim supports only a single-segment js_namespace",
+            ));
+        }
+        Ok(parts[0].value())
+    } else if v.peek(LitStr) {
+        Ok(v.parse::<LitStr>()?.value())
+    } else {
+        Ok(v.parse::<Ident>()?.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// extern blocks
+// ---------------------------------------------------------------------------
+
+fn extern_block(fm: syn::ItemForeignMod) -> syn::Result<TokenStream2> {
+    let mut out = Vec::new();
+    for item in fm.items {
+        match item {
+            ForeignItem::Type(t) => out.push(extern_type(t)?),
+            ForeignItem::Fn(f) => out.push(extern_fn(f)?),
+            other => {
+                return Err(Error::new_spanned(
+                    other,
+                    "#[wasm_bindgen]: only `type` and `fn` items are supported in an extern block",
+                ));
+            }
+        }
+    }
+    Ok(quote! { #(#out)* })
+}
+
+/// `pub type Foo;` → a transparent newtype over a handle.
+fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
+    let opts = Opts::parse(&t.attrs)?;
+    let name = &t.ident;
+    let vis = &t.vis;
+    let docs = doc_attrs(&t.attrs);
+
+    // `extends = Base` gives the inherited API. One `Deref` target is possible
+    // in Rust, so the first `extends` becomes `Deref` (which chains, so the
+    // whole ancestry is reachable) and the rest become `AsRef`.
+    let deref = opts.extends.first().map(|base| {
+        quote! {
+            impl ::core::ops::Deref for #name {
+                type Target = #base;
+                fn deref(&self) -> &#base {
+                    // SAFETY: every type this macro generates is
+                    // `#[repr(transparent)]` over the same `JsValue`, so the
+                    // reference is valid at either type. The JS value really
+                    // being a `#base` is the binding author's claim, exactly as
+                    // it is under wasm-bindgen.
+                    unsafe { &*(self as *const #name as *const #base) }
+                }
+            }
+        }
+    });
+    let as_refs = opts.extends.iter().map(|base| {
+        quote! {
+            impl ::core::convert::AsRef<#base> for #name {
+                fn as_ref(&self) -> &#base {
+                    // SAFETY: as above.
+                    unsafe { &*(self as *const #name as *const #base) }
+                }
+            }
+        }
+    });
+
+    Ok(quote! {
+        #(#docs)*
+        #[repr(transparent)]
+        #[derive(Debug)]
+        #vis struct #name {
+            obj: ::wasm_bindgen::__rt::JsValue,
+        }
+
+        impl ::wasm_bindgen::JsObject for #name {
+            fn as_js(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
+            fn from_js(obj: ::wasm_bindgen::__rt::JsValue) -> Self { #name { obj } }
+        }
+
+        #deref
+        #(#as_refs)*
+    })
+}
+
+/// How a parameter or return value crosses the boundary.
+enum Cross {
+    /// Passes through unchanged (scalars, `&str`, slices, `JsValue`).
+    Direct,
+    /// A generated newtype: crosses as a handle.
+    Handle,
+}
+
+/// Types the ABI carries without a newtype wrapper.
+fn crosses_directly(ty: &Type) -> bool {
+    match ty {
+        Type::Reference(r) => crosses_directly(&r.elem),
+        Type::Slice(_) => true,
+        Type::Path(p) => {
+            let Some(seg) = p.path.segments.last() else {
+                return true;
+            };
+            matches!(
+                seg.ident.to_string().as_str(),
+                "f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
+                    | "usize" | "isize" | "bool" | "str" | "String" | "JsValue" | "Vec"
+            )
+        }
+        _ => true,
+    }
+}
+
+fn classify(ty: &Type) -> Cross {
+    if crosses_directly(ty) {
+        Cross::Direct
+    } else {
+        Cross::Handle
+    }
+}
+
+/// Strip one layer of `&`.
+fn deref_ty(ty: &Type) -> &Type {
+    match ty {
+        Type::Reference(r) => deref_ty(&r.elem),
+        other => other,
+    }
+}
+
+fn doc_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
+    attrs.iter().filter(|a| a.path().is_ident("doc")).collect()
+}
+
+// ---------------------------------------------------------------------------
+// returns
+// ---------------------------------------------------------------------------
+
+/// The return type as the inner `import!` should see it.
+fn shim_ret_ty(ty: &Type) -> TokenStream2 {
+    if let Some(inner) = generic_inner(ty, "Option") {
+        let m = shim_ret_ty(inner);
+        return quote! { ::core::option::Option<#m> };
+    }
+    if let Some((ok, err)) = generic_pair(ty, "Result") {
+        let o = shim_ret_ty(ok);
+        let e = shim_ret_ty(err);
+        return quote! { ::core::result::Result<#o, #e> };
+    }
+    match classify(ty) {
+        Cross::Direct => quote! { #ty },
+        // Bare, not `::wasm_bindgen::__rt::JsValue`: `import!` recognises the
+        // handle type by ident, and the generated module imports it.
+        Cross::Handle => quote! { JsValue },
+    }
+}
+
+/// Rebuild the declared return type from `value`, the shim's result.
+fn raise_ret(ty: &Type, value: TokenStream2) -> TokenStream2 {
+    if let Some(inner) = generic_inner(ty, "Option") {
+        let m = raise_ret(inner, quote!(__v));
+        return quote! { ::core::option::Option::map(#value, |__v| #m) };
+    }
+    if let Some((ok, err)) = generic_pair(ty, "Result") {
+        let o = raise_ret(ok, quote!(__v));
+        let e = raise_ret(err, quote!(__e));
+        return quote! {
+            match #value {
+                ::core::result::Result::Ok(__v) => ::core::result::Result::Ok(#o),
+                ::core::result::Result::Err(__e) => ::core::result::Result::Err(#e),
+            }
+        };
+    }
+    match classify(ty) {
+        Cross::Direct => value,
+        Cross::Handle => quote! { <#ty as ::wasm_bindgen::JsObject>::from_js(#value) },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// imported functions
+// ---------------------------------------------------------------------------
+
+/// One imported function.
+///
+/// Emits a private module holding the `import!`, plus a wrapper that converts
+/// newtypes to and from handles. The wrapper is an **inherent method** when the
+/// attributes say so — `method`/`getter`/`setter` become `impl Recv { fn .. }`,
+/// `constructor`/`static_method_of` become associated functions — because that
+/// is what wasm-bindgen produces, and it is why callers write
+/// `element.tag_name()` rather than `tag_name(&element)`.
+fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
+    let opts = Opts::parse(&f.attrs)?;
+    let name = &f.sig.ident;
+    let vis = &f.vis;
+    let docs = doc_attrs(&f.attrs);
+
+    // A constructor's JS name is the *class*, not the Rust function — every
+    // web-sys constructor is spelled `fn new()`, and `new globalThis["new"]`
+    // is a TypeError. Fall back to the constructed type's name when `js_class`
+    // is absent, which is what wasm-bindgen does.
+    let js_name = opts.js_name.clone().unwrap_or_else(|| {
+        if opts.constructor {
+            opts.js_class.clone().unwrap_or_else(|| match &f.sig.output {
+                ReturnType::Type(_, ty) => type_ident(constructed_ty(ty)),
+                ReturnType::Default => name.to_string(),
+            })
+        } else {
+            name.to_string().trim_start_matches("r#").to_string()
+        }
+    });
+
+    let kind_attr = if opts.constructor {
+        Some(quote!(#[constructor]))
+    } else if opts.getter {
+        Some(quote!(#[getter]))
+    } else if opts.setter {
+        Some(quote!(#[setter]))
+    } else if opts.indexing_getter {
+        Some(quote!(#[indexing_getter]))
+    } else if opts.indexing_setter {
+        Some(quote!(#[indexing_setter]))
+    } else {
+        None
+    };
+
+    // Anything that reads or writes a member of a receiver takes one.
+    let takes_receiver =
+        opts.method || opts.getter || opts.setter || opts.indexing_getter || opts.indexing_setter;
+
+    let mut wrapper_params = Vec::new();
+    let mut shim_params = Vec::new();
+    let mut call_args = Vec::new();
+    let mut receiver_ty: Option<Type> = None;
+
+    for (i, arg) in f.sig.inputs.iter().enumerate() {
+        let FnArg::Typed(PatType { pat, ty, .. }) = arg else {
+            return Err(Error::new_spanned(arg, "#[wasm_bindgen]: unexpected `self`"));
+        };
+        let Pat::Ident(pi) = &**pat else {
+            return Err(Error::new_spanned(
+                pat,
+                "#[wasm_bindgen]: parameters must be plain identifiers",
+            ));
+        };
+        let orig_ident = &pi.ident;
+
+        if takes_receiver && i == 0 {
+            // The declared `this: &Foo` becomes `&self`, and wasm_lite spells
+            // the receiver `this` on its side.
+            receiver_ty = Some(deref_ty(ty).clone());
+            wrapper_params.push(quote! { &self });
+            shim_params.push(quote! { this: &JsValue });
+            call_args.push(quote! { ::wasm_bindgen::JsObject::as_js(self) });
+            continue;
+        }
+
+        wrapper_params.push(quote! { #orig_ident: #ty });
+        match classify(deref_ty(ty)) {
+            Cross::Direct => {
+                shim_params.push(quote! { #orig_ident: #ty });
+                call_args.push(quote! { #orig_ident });
+            }
+            Cross::Handle => {
+                // Handles are always *lent* to an import, so the shim takes a
+                // reference whether the declared parameter was one or not —
+                // which means only a by-value parameter needs the extra `&`.
+                shim_params.push(quote! { #orig_ident: &JsValue });
+                let borrow = if matches!(&**ty, Type::Reference(_)) {
+                    quote! { #orig_ident }
+                } else {
+                    quote! { &#orig_ident }
+                };
+                call_args.push(quote! { ::wasm_bindgen::JsObject::as_js(#borrow) });
+            }
+        }
+    }
+
+    // The namespace keys the import-object slot; for a method it is the class,
+    // for a static the class the method hangs off, for a free function the JS
+    // namespace (or the global object).
+    let namespace = opts
+        .js_class
+        .clone()
+        .or_else(|| opts.static_method_of.as_ref().map(|i| i.to_string()))
+        .or_else(|| opts.js_namespace.clone())
+        .unwrap_or_else(|| "globalThis".to_string());
+    let ns_lit = LitStr::new(&namespace, name.span());
+    let js_lit = LitStr::new(&js_name, name.span());
+
+    // Where the wrapper hangs: the receiver for a method, the named class for a
+    // static, the constructed type for a constructor.
+    let impl_target: Option<Type> = if takes_receiver {
+        receiver_ty
+    } else if let Some(cls) = &opts.static_method_of {
+        Some(syn::parse_quote!(#cls))
+    } else if opts.constructor {
+        match &f.sig.output {
+            ReturnType::Type(_, ty) => Some(constructed_ty(ty).clone()),
+            ReturnType::Default => None,
+        }
+    } else {
+        None
+    };
+
+    // Module names must not collide when two classes share a member name.
+    let bare = name.to_string();
+    let bare = bare.trim_start_matches("r#");
+    let module = match &impl_target {
+        Some(t) => format_ident!("__wb_{}_{}", type_ident(t), bare),
+        None => format_ident!("__wb_{}", bare),
+    };
+    let call = quote! { #module::shim( #(#call_args),* ) };
+
+    let (wrapper_ret, shim_ret, body) = match &f.sig.output {
+        ReturnType::Default => (quote! {}, quote! {}, call),
+        ReturnType::Type(_, ty) => (
+            quote! { -> #ty },
+            {
+                let s = shim_ret_ty(ty);
+                quote! { -> #s }
+            },
+            raise_ret(ty, call),
+        ),
+    };
+
+    let shim_mod = quote! {
+        #[allow(non_snake_case, unused_imports)]
+        mod #module {
+            use ::wasm_bindgen::__rt::JsValue;
+            ::wasm_bindgen::__rt::import! {
+                crate = ::wasm_bindgen::__rt;
+                #ns_lit {
+                    #kind_attr
+                    fn shim( #(#shim_params),* ) #shim_ret as #js_lit;
+                }
+            }
+        }
+    };
+
+    let wrapper = quote! {
+        #(#docs)*
+        #[allow(non_snake_case, clippy::too_many_arguments)]
+        #vis fn #name( #(#wrapper_params),* ) #wrapper_ret { #body }
+    };
+
+    Ok(match impl_target {
+        Some(t) => quote! {
+            #shim_mod
+            impl #t { #wrapper }
+        },
+        None => quote! {
+            #shim_mod
+            #wrapper
+        },
+    })
+}
+
+/// The type a constructor yields, looking through `Option`/`Result`.
+fn constructed_ty(ty: &Type) -> &Type {
+    if let Some(inner) = generic_inner(ty, "Option") {
+        return constructed_ty(inner);
+    }
+    if let Some((ok, _)) = generic_pair(ty, "Result") {
+        return constructed_ty(ok);
+    }
+    ty
+}
+
+/// A module-name-safe rendering of a type's last path segment.
+fn type_ident(ty: &Type) -> String {
+    match ty {
+        Type::Path(p) => p
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_else(|| "ty".into()),
+        _ => "ty".into(),
+    }
+}
+
+fn generic_inner<'a>(ty: &'a Type, name: &str) -> Option<&'a Type> {
+    let Type::Path(p) = ty else { return None };
+    let seg = p.path.segments.last()?;
+    if seg.ident != name {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(ab) = &seg.arguments else {
+        return None;
+    };
+    if ab.args.len() != 1 {
+        return None;
+    }
+    match &ab.args[0] {
+        syn::GenericArgument::Type(t) => Some(t),
+        _ => None,
+    }
+}
+
+fn generic_pair<'a>(ty: &'a Type, name: &str) -> Option<(&'a Type, &'a Type)> {
+    let Type::Path(p) = ty else { return None };
+    let seg = p.path.segments.last()?;
+    if seg.ident != name {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(ab) = &seg.arguments else {
+        return None;
+    };
+    let types: Vec<&Type> = ab
+        .args
+        .iter()
+        .filter_map(|a| match a {
+            syn::GenericArgument::Type(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    if types.len() == 2 {
+        Some((types[0], types[1]))
+    } else {
+        None
+    }
+}

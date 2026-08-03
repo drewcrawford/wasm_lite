@@ -20,15 +20,50 @@
 //!
 //! # Status
 //!
-//! Early. What works today is the **substitution mechanism** — the part
-//! everything else depends on, and the part that was not obviously possible.
-//! See [`__rt`]. The `#[wasm_bindgen]` attribute macro that translates
-//! wasm-bindgen's grammar into these primitives is not written yet, so no
-//! upstream crate compiles against this.
+//! Early, but past the interesting part. The substitution mechanism works (see
+//! [`__rt`]), and [`macro@wasm_bindgen`] translates the attribute grammar
+//! web-sys is written in: `extends`, `method`, `getter`, `setter`,
+//! `constructor`, `static_method_of`, `indexing_getter`/`indexing_setter`,
+//! `js_name`, `js_class`, `js_namespace`, `catch`, and the lookup hints
+//! (`structural`, `final`) that wasm_lite's lowering already satisfies.
+//!
+//! `shims_wasm_bindgen/consumer-demo` exercises all of that in a browser from a
+//! crate whose only dependency is this one.
+//!
+//! Not yet handled — each an explicit error rather than silently wrong glue:
+//! `variadic`, `module`/`raw_module`/`inline_js`, `start`, and multi-segment
+//! `js_namespace`. Nor is there a `JsCast` implementation, so downcasting is
+//! unavailable even though the `instanceof` primitive underneath it exists.
+//! `js-sys` and `web-sys` have not been tried.
 
 #![deny(missing_docs)]
 
+pub use wasm_bindgen_macro_wl::wasm_bindgen;
 pub use wasm_lite::JsValue;
+
+/// The handle behind a generated extern-type newtype.
+///
+/// `#[wasm_bindgen] extern "C" { pub type Element; }` produces a
+/// `#[repr(transparent)]` struct wrapping a [`JsValue`], and this is how the
+/// generated wrappers get at it — a trait rather than field access, so the
+/// conversion works across the module boundary each binding is generated into.
+pub trait JsObject {
+    /// The underlying handle, to lend to an import.
+    fn as_js(&self) -> &JsValue;
+    /// Wrap a handle returned by an import.
+    fn from_js(obj: JsValue) -> Self
+    where
+        Self: Sized;
+}
+
+impl JsObject for JsValue {
+    fn as_js(&self) -> &JsValue {
+        self
+    }
+    fn from_js(obj: JsValue) -> JsValue {
+        obj
+    }
+}
 
 /// The wasm_lite runtime, re-exported for generated code.
 ///
@@ -65,5 +100,5 @@ pub mod __rt {
 
 /// The names wasm-bindgen users expect from `wasm_bindgen::prelude::*`.
 pub mod prelude {
-    pub use crate::JsValue;
+    pub use crate::{JsObject, JsValue, wasm_bindgen};
 }

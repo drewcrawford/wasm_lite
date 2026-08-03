@@ -32,3 +32,4 @@ path = "src/lib.rs"
 
 [dependencies]
 wasm_lite = { path = "../../crates/wasm_lite" }
+wasm-bindgen-macro-wl = { path = "../wasm_bindgen_macro_wl" }
