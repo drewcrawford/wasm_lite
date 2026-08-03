@@ -627,6 +627,17 @@ mod suite {
         });
     }
 
+    /// The sleep future must be `Send`.
+    ///
+    /// It holds a realm-bound `Closure` in spirit, and an executor that cannot
+    /// move the task has lost most of the point — portable_async_sleep asserts
+    /// exactly this about its own future.
+    #[wasm_lite::wasm_lite_test]
+    fn the_sleep_future_is_send() {
+        fn assert_send<T: Send>(_: T) {}
+        assert_send(wasm_lite_std::sleep_async(Duration::from_millis(1)));
+    }
+
     /// A sleep longer than `setTimeout` can express must not fire immediately.
     ///
     /// Browsers truncate the delay to `i32`, so a naive 30-day `setTimeout`

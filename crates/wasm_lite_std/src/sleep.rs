@@ -98,39 +98,78 @@ impl Future for SleepAsync {
 mod wasm_impl {
     use super::*;
     use crate::async_wait::AsyncWait;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
     use wasm_lite::Closure;
 
+    thread_local! {
+        /// Closures for timers that have not fired, by id.
+        ///
+        /// The closure cannot live in the future itself: `Closure` wraps a
+        /// realm-bound handle and is `!Send`, and a sleep that is not `Send` is
+        /// most of the use gone — an executor cannot move the task. Parking it
+        /// here keeps the future `Send` while still owning the closure, so a
+        /// cancelled sleep drops it instead of leaking.
+        static PENDING: RefCell<HashMap<u64, Closure>> = RefCell::new(HashMap::new());
+        static NEXT_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
     /// A `setTimeout` whose callback wakes an async waiter.
-    ///
-    /// The `Closure` is owned by the timer rather than forgotten, so dropping
-    /// the future drops the closure *and* clears the timeout — no callback
-    /// firing into a future that is gone.
     pub(super) struct Timer {
         wait: AsyncWait,
-        id: f64,
-        // Kept alive for as long as the timer can fire.
-        _cb: Closure,
+        js_id: f64,
+        key: u64,
+        /// The thread that armed it. Clearing a timeout or dropping a `Closure`
+        /// is only meaningful in the realm that created it.
+        owner: crate::ThreadId,
     }
 
     impl Timer {
         pub(super) fn new(dur: Duration) -> Self {
             let (wake, wait) = waiter();
-            // `Closure::new` takes FnMut, and a one-shot wake is FnOnce; an
+            let key = NEXT_ID.with(|n| {
+                let k = n.get();
+                n.set(k + 1);
+                k
+            });
+            // `Closure::new` takes FnMut; a one-shot wake is FnOnce, so an
             // Option makes it callable more than once without being wrong.
             let mut wake = Some(wake);
             let cb = Closure::new(move || {
                 if let Some(w) = wake.take() {
                     w.wake();
                 }
+                // Fired: the closure is no longer needed.
+                PENDING.with(|p| {
+                    p.borrow_mut().remove(&key);
+                });
             });
-            let id = wasm_lite::timer::set_timeout(cb.as_js_value(), dur.as_secs_f64() * 1000.0);
-            Timer { wait, id, _cb: cb }
+            let js_id = wasm_lite::timer::set_timeout(cb.as_js_value(), dur.as_secs_f64() * 1000.0);
+            PENDING.with(|p| {
+                p.borrow_mut().insert(key, cb);
+            });
+            Timer {
+                wait,
+                js_id,
+                key,
+                owner: crate::current().id(),
+            }
         }
     }
 
     impl Drop for Timer {
         fn drop(&mut self) {
-            wasm_lite::timer::clear_timeout(self.id);
+            // Off-thread drop: the timer and its closure belong to another
+            // realm, where neither `clearTimeout` nor dropping the handle means
+            // anything from here. Leave them; the callback will fire, find its
+            // waiter gone, and clean itself up.
+            if crate::current().id() != self.owner {
+                return;
+            }
+            wasm_lite::timer::clear_timeout(self.js_id);
+            PENDING.with(|p| {
+                p.borrow_mut().remove(&self.key);
+            });
         }
     }
 
