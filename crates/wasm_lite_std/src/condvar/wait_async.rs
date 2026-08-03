@@ -214,10 +214,15 @@ impl Condvar {
             });
         });
 
-        // Compute the remaining time on the calling thread: `Instant`s are not
-        // comparable across threads on wasm (each worker's clock starts at its
-        // own time origin), so the spawned thread must receive a `Duration`,
-        // never the deadline itself.
+        // Compute the remaining time on the calling thread and send a
+        // `Duration` rather than the deadline.
+        //
+        // This used to be load-bearing: `Instant` was per-realm, so a deadline
+        // taken here meant something else on the spawned worker. That is fixed
+        // (`Instant` folds in `performance.timeOrigin` now), so this is no
+        // longer a correctness requirement — but it stays, because a duration is
+        // what the sleeping side actually wants and it keeps this independent of
+        // the clock's representation.
         let timeout = deadline - Instant::now();
 
         // Spawn a thread to handle the timeout

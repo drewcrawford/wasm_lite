@@ -609,6 +609,36 @@ mod suite {
         });
     }
 
+    /// `sleep_async` waits without blocking, and for at least as long as asked.
+    ///
+    /// On the main thread, which is the case that matters: `sleep` would trap
+    /// there (`Atomics.wait` is forbidden), so an executor scheduling work for
+    /// later has nothing else to use.
+    #[wasm_lite::wasm_lite_test]
+    fn sleep_async_waits_on_the_main_thread() {
+        wasm_lite_std::async_doctest!(async {
+            let start = Instant::now();
+            wasm_lite_std::sleep_async(Duration::from_millis(30)).await;
+            let elapsed = start.elapsed();
+            assert!(
+                elapsed >= Duration::from_millis(25),
+                "slept {elapsed:?}, expected at least ~30ms"
+            );
+        });
+    }
+
+    /// Dropping a pending sleep cancels its timer rather than leaving a callback
+    /// to fire into freed state.
+    #[wasm_lite::wasm_lite_test]
+    fn dropping_a_pending_sleep_is_safe() {
+        wasm_lite_std::async_doctest!(async {
+            let sleep = wasm_lite_std::sleep_async(Duration::from_secs(30));
+            drop(sleep);
+            // Still alive and still scheduling afterwards.
+            wasm_lite_std::sleep_async(Duration::from_millis(5)).await;
+        });
+    }
+
     /// Two threads must agree on `Instant`.
     ///
     /// `performance.now()` is **per-realm**: a worker's zero is the moment that
