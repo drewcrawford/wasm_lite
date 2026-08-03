@@ -96,6 +96,15 @@ extern "C" {
 
 #[wasm_bindgen]
 extern "C" {
+    /// `Math.PI` — a constant on a namespace. Declared as a `static` in
+    /// wasm-bindgen's grammar; reading it is a call into JS, so the shim emits
+    /// a function.
+    #[wasm_bindgen(js_namespace = Math)]
+    pub static PI: f64;
+}
+
+#[wasm_bindgen]
+extern "C" {
     /// `JSON.parse`, bound with `catch` so a malformed document is an `Err`
     /// rather than a trap.
     #[wasm_bindgen(js_namespace = JSON, js_name = "parse", catch)]

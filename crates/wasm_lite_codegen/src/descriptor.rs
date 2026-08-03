@@ -15,6 +15,8 @@
 //! | `ig` | [`Kind::IndexGet`] | `receiver[index]` |
 //! | `is` | [`Kind::IndexSet`] | `receiver[index] = value` |
 //! | `io` | [`Kind::InstanceOf`] | `receiver instanceof globalThis[js_name]` |
+//! | `sg` | [`Kind::StaticGetter`] | `globalThis[ns][js_name]` |
+//! | `id` | [`Kind::IndexDelete`] | `delete receiver[index]` |
 //!
 //! `import_name` is the wasm import symbol (unique per binding — it carries the
 //! crate/module path); `js_name` is the JavaScript function the shim actually
@@ -57,6 +59,14 @@ pub enum Kind {
     /// `receiver[index] = value` — computed property write. Three arguments
     /// (receiver, index, value) and no return.
     IndexSet,
+    /// `globalThis[namespace][js_name]` — a *namespaced* property read, with
+    /// no receiver. This is what a constant like `Math.PI` or a static
+    /// accessor like `Symbol.iterator` needs: [`Kind::Function`] would call it
+    /// and [`Kind::Getter`] wants an object to read from.
+    StaticGetter,
+    /// `delete receiver[index]` — computed property removal. Two arguments
+    /// (receiver, index) and a `bool` return, as the JS operator yields.
+    IndexDelete,
     /// `receiver instanceof globalThis[js_name]` — a type test. One argument
     /// (the receiver) and a `bool` return.
     ///
@@ -265,6 +275,8 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
             "ig" => Kind::IndexGet,
             "is" => Kind::IndexSet,
             "io" => Kind::InstanceOf,
+            "sg" => Kind::StaticGetter,
+            "id" => Kind::IndexDelete,
             other => return Err(format!("unknown import kind {other:?} in {line:?}")),
         };
 
@@ -306,6 +318,7 @@ fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Res
             | Kind::Setter
             | Kind::IndexGet
             | Kind::IndexSet
+            | Kind::IndexDelete
             | Kind::InstanceOf
     );
     if needs_receiver && args.first() != Some(&AbiArg::Handle) {
@@ -315,6 +328,8 @@ fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Res
     // (exact arity, must return a value) for the fixed-shape kinds.
     let expect = match kind {
         Kind::Getter | Kind::InstanceOf => Some((1, true)),
+        Kind::StaticGetter => Some((0, true)),
+        Kind::IndexDelete => Some((2, true)),
         Kind::Setter => Some((2, false)),
         Kind::IndexGet => Some((2, true)),
         Kind::IndexSet => Some((3, false)),

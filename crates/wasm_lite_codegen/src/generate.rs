@@ -723,6 +723,7 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                     | Kind::Setter
                     | Kind::IndexGet
                     | Kind::IndexSet
+                    | Kind::IndexDelete
                     | Kind::InstanceOf
             );
         let marshalled = match arg {
@@ -812,7 +813,9 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
         Kind::Getter => format!("{}[{js_name}]", recv()),
         Kind::Setter => format!("{}[{js_name}] = {}", recv(), arg(0)),
         Kind::Constructor => format!("new globalThis[{js_name}]({})", js_args.join(", ")),
+        Kind::StaticGetter => format!("globalThis[{ns}][{js_name}]"),
         Kind::IndexGet => format!("{}[{}]", recv(), arg(0)),
+        Kind::IndexDelete => format!("delete {}[{}]", recv(), arg(0)),
         Kind::IndexSet => format!("{}[{}] = {}", recv(), arg(0), arg(1)),
         // Guarded: `instanceof` throws a TypeError if the right-hand side is
         // not a constructor, which is exactly what happens when the class is

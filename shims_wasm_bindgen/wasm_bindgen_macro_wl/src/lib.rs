@@ -164,6 +164,7 @@ struct Opts {
     catch: bool,
     indexing_getter: bool,
     indexing_setter: bool,
+    indexing_deleter: bool,
     js_name: Option<String>,
     js_class: Option<String>,
     js_namespace: Option<String>,
@@ -209,6 +210,7 @@ impl Opts {
                     "catch" => o.catch = true,
                     "indexing_getter" => o.indexing_getter = true,
                     "indexing_setter" => o.indexing_setter = true,
+                    "indexing_deleter" => o.indexing_deleter = true,
                     "js_name" => o.js_name = Some(string_or_ident(&m)?),
                     "js_class" => o.js_class = Some(string_or_ident(&m)?),
                     "static_method_of" => {
@@ -221,7 +223,8 @@ impl Opts {
                     // wasm_lite's lowering already does the equivalent (a
                     // property lookup on the receiver) or has no TS output.
                     "structural" | "final" | "typescript_type" | "skip_typescript"
-                    | "skip_jsdoc" | "getter_with_clone" | "no_deref" | "is_type_of" => {
+                    | "skip_jsdoc" | "getter_with_clone" | "no_deref" | "is_type_of"
+                    | "no_upcast" | "no_promising" | "thread_local" | "thread_local_v2" => {
                         // `is_type_of` carries a closure; consume whatever the
                         // value is rather than trying to parse it.
                         if m.input.peek(syn::Token![=]) {
@@ -303,6 +306,7 @@ fn extern_block(fm: syn::ItemForeignMod) -> syn::Result<TokenStream2> {
         let expanded = match item {
             ForeignItem::Type(t) => extern_type(t),
             ForeignItem::Fn(f) => extern_fn(f),
+            ForeignItem::Static(st) => extern_static(st),
             other => Err(Error::new_spanned(
                 other,
                 "#[wasm_bindgen]: only `type` and `fn` items are supported in an extern block",
@@ -415,6 +419,51 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
 
         #deref
         #(#as_refs)*
+    })
+}
+
+/// `pub static PI: f64;` — a constant on a JS namespace, e.g. `Math.PI`.
+///
+/// Emitted as a function rather than a Rust `static`, because reading it is a
+/// call into JS: there is nothing to initialise at load time.
+fn extern_static(st: syn::ForeignItemStatic) -> syn::Result<TokenStream2> {
+    let opts = Opts::parse(&st.attrs)?;
+    let attrs = passthrough_attrs(&st.attrs);
+    let name = &st.ident;
+    let vis = &st.vis;
+    let ty = &st.ty;
+
+    let js_name = opts.js_name.clone().unwrap_or_else(|| name.to_string());
+    let namespace = opts
+        .js_namespace
+        .clone()
+        .or_else(|| opts.js_class.clone())
+        .unwrap_or_else(|| "globalThis".to_string());
+    let ns_lit = LitStr::new(&namespace, name.span());
+    let js_lit = LitStr::new(&js_name, name.span());
+    let module = format_ident!("__wb_static_{}", name);
+
+    let shim_ret = shim_ret_ty(ty);
+    let body = raise_ret(ty, quote! { #module::shim() });
+    let cfgs = cfg_attrs(&st.attrs);
+
+    Ok(quote! {
+        #(#cfgs)*
+        #[allow(non_snake_case, unused_imports)]
+        mod #module {
+            use ::wasm_bindgen::__rt::JsValue;
+            ::wasm_bindgen::__rt::import! {
+                crate = ::wasm_bindgen::__rt;
+                #ns_lit {
+                    #[static_getter]
+                    fn shim() -> #shim_ret as #js_lit;
+                }
+            }
+        }
+
+        #(#attrs)*
+        #[allow(non_snake_case)]
+        #vis fn #name() -> #ty { #body }
     })
 }
 
@@ -775,8 +824,14 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
         }
     });
 
+    // A `getter` hung off a class rather than an instance (`Symbol.iterator`)
+    // reads a *namespaced* property, with nothing to read it from.
+    let static_property = opts.getter && opts.static_method_of.is_some();
+
     let kind_attr = if opts.constructor {
         Some(quote!(#[constructor]))
+    } else if static_property {
+        Some(quote!(#[static_getter]))
     } else if opts.getter {
         Some(quote!(#[getter]))
     } else if opts.setter {
@@ -785,13 +840,20 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
         Some(quote!(#[indexing_getter]))
     } else if opts.indexing_setter {
         Some(quote!(#[indexing_setter]))
+    } else if opts.indexing_deleter {
+        Some(quote!(#[indexing_deleter]))
     } else {
         None
     };
 
     // Anything that reads or writes a member of a receiver takes one.
-    let takes_receiver =
-        opts.method || opts.getter || opts.setter || opts.indexing_getter || opts.indexing_setter;
+    let takes_receiver = !static_property
+        && (opts.method
+            || opts.getter
+            || opts.setter
+            || opts.indexing_getter
+            || opts.indexing_setter
+            || opts.indexing_deleter);
 
     let mut wrapper_params = Vec::new();
     let mut shim_params = Vec::new();

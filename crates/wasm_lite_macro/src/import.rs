@@ -78,6 +78,8 @@ impl KindAttr {
             _ if id == "indexing_getter" => ("ig", "indexing_getter", 2, true, true),
             _ if id == "indexing_setter" => ("is", "indexing_setter", 3, false, true),
             _ if id == "instanceof" => ("io", "instanceof", 1, true, true),
+            _ if id == "static_getter" => ("sg", "static_getter", 0, true, false),
+            _ if id == "indexing_deleter" => ("id", "indexing_deleter", 2, true, true),
             _ => return None,
         };
         Some(KindAttr {
@@ -164,7 +166,8 @@ impl Parse for ImportFn {
                     a,
                     "import!: only doc comments and the binding-kind attributes \
                      (#[getter], #[setter], #[constructor], #[indexing_getter], \
-                     #[indexing_setter], #[instanceof]) are supported on imported \
+                     #[indexing_setter], #[indexing_deleter], #[instanceof], \
+                     #[static_getter]) are supported on imported \
                      functions; other \
                      attributes (including #[cfg]) are not honored here — apply them to \
                      the surrounding import! invocation or module instead",

@@ -43,10 +43,17 @@ wasm_lite::import! {
     "Array" {
         #[indexing_getter] fn at(this: &JsValue, i: u32) -> f64;       // arr[i]
         #[indexing_setter] fn put(this: &JsValue, i: u32, v: f64);     // arr[i] = v
+        #[indexing_deleter] fn remove_at(this: &JsValue, i: u32) -> bool; // delete arr[i]
         #[instanceof]      fn is_array(this: &JsValue) -> bool as "Array";
+    }
+    "Math" {
+        #[static_getter]   fn pi() -> f64 as "PI";                     // Math.PI
     }
 }
 ```
+
+`#[static_getter]` is the receiver-less property read — `Math.PI` is a constant,
+not a function, so `Kind::Function` would call it and throw.
 
 `#[instanceof]` is the type test a checked downcast needs: given an opaque
 handle, decide whether it really is the class you are about to treat it as. It

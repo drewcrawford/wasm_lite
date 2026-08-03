@@ -212,6 +212,12 @@ mod websys_grammar {
         // ...and the instance is still usable afterwards.
         assert_eq!(arr.length(), 2.0);
     }
+
+    /// `pub static` in an extern block: a namespaced constant.
+    #[wasm_lite_test]
+    fn an_extern_static_reads_a_namespaced_constant() {
+        assert!((PI() - core::f64::consts::PI).abs() < 1e-12);
+    }
 }
 
 wasm_lite::test_main!();

@@ -48,6 +48,10 @@ wasm_lite::import! {
         #[indexing_setter]
         fn put(this: &JsValue, i: u32, value: f64);
 
+        /// `delete arr[i]`
+        #[indexing_deleter]
+        fn remove_at(this: &JsValue, i: u32) -> bool;
+
         /// `arr.length` — the case that motivates getters: as a method call
         /// this would throw, because `length` is a number, not a function.
         #[getter]
@@ -90,6 +94,12 @@ wasm_lite::import! {
     "globalThis" {
         /// `String(v)` — renders any handle, so a test can see what it holds.
         fn render(v: &JsValue) -> String as "String";
+    }
+
+    "Math" {
+        /// `Math.PI` — a namespaced property, not a call. `Math.PI()` throws.
+        #[static_getter]
+        fn pi() -> f64 as "PI";
     }
 
     "Object" {
@@ -387,6 +397,27 @@ fn reading_the_wrong_type_is_none_not_a_wrong_answer() {
             .is_some_and(f64::is_nan)
     );
     assert_eq!(JsValue::from_str("").as_string().as_deref(), Some(""));
+}
+
+/// A namespaced property read. `Math.PI` is the canonical case for why this
+/// cannot be a `Kind::Function`: calling it throws.
+#[wasm_lite_test]
+fn a_namespaced_property_reads_without_calling() {
+    assert!((pi() - core::f64::consts::PI).abs() < 1e-12);
+}
+
+/// `delete arr[i]` leaves a hole rather than shortening the array — which is
+/// exactly what distinguishes it from a `splice`, and what proves the operator
+/// ran.
+#[wasm_lite_test]
+fn indexing_deleter_removes_the_element() {
+    let arr = parse("[10, 20, 30]");
+    assert!(remove_at(&arr, 1));
+
+    assert_eq!(length(&arr), 3.0, "delete leaves the length alone");
+    assert_eq!(at(&arr, 0), 10.0);
+    assert_eq!(at(&arr, 2), 30.0);
+    assert_eq!(render(&arr), "10,,30", "the middle slot is now a hole");
 }
 
 wasm_lite::test_main!();
