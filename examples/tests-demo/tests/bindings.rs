@@ -52,6 +52,20 @@ wasm_lite::import! {
         /// this would throw, because `length` is a number, not a function.
         #[getter]
         fn length(this: &JsValue) -> f64;
+
+        /// `x instanceof Array`
+        #[instanceof]
+        fn is_array(this: &JsValue) -> bool as "Array";
+    }
+
+    "URLTest" {
+        /// `x instanceof URL`
+        #[instanceof]
+        fn is_url(this: &JsValue) -> bool as "URL";
+
+        /// A class no engine defines, to check the guard.
+        #[instanceof]
+        fn is_nonexistent(this: &JsValue) -> bool as "NoSuchClassAnywhere";
     }
 }
 
@@ -93,6 +107,27 @@ fn indexing_reads_and_writes_elements() {
     // Untouched neighbours stay put, so the index really was computed.
     assert_eq!(at(&arr, 0), 10.0);
     assert_eq!(at(&arr, 2), 30.0);
+}
+
+#[wasm_lite_test]
+fn instanceof_distinguishes_classes() {
+    let url = new_url("https://example.com/");
+    let arr = parse("[1, 2]");
+
+    assert!(is_url(&url));
+    assert!(!is_url(&arr));
+    assert!(is_array(&arr));
+    assert!(!is_array(&url));
+}
+
+#[wasm_lite_test]
+fn instanceof_of_a_missing_class_is_false_not_a_trap() {
+    // Bare `x instanceof undefined` is a TypeError. A downcast test against a
+    // class this engine does not have must answer "no" and leave the instance
+    // usable — so the assertion after it has to run at all.
+    let arr = parse("[1, 2]");
+    assert!(!is_nonexistent(&arr));
+    assert_eq!(length(&arr), 2.0);
 }
 
 wasm_lite::test_main!();

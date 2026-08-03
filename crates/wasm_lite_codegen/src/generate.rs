@@ -634,7 +634,12 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
         let is_receiver = i == 0
             && matches!(
                 d.kind,
-                Kind::Method | Kind::Getter | Kind::Setter | Kind::IndexGet | Kind::IndexSet
+                Kind::Method
+                    | Kind::Getter
+                    | Kind::Setter
+                    | Kind::IndexGet
+                    | Kind::IndexSet
+                    | Kind::InstanceOf
             );
         let marshalled = match arg {
             AbiArg::Str => {
@@ -709,6 +714,14 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
         Kind::Constructor => format!("new globalThis[{js_name}]({})", js_args.join(", ")),
         Kind::IndexGet => format!("{}[{}]", recv(), arg(0)),
         Kind::IndexSet => format!("{}[{}] = {}", recv(), arg(0), arg(1)),
+        // Guarded: `instanceof` throws a TypeError if the right-hand side is
+        // not a constructor, which is exactly what happens when the class is
+        // missing from this engine. A downcast test should answer "no", not
+        // kill the instance.
+        Kind::InstanceOf => format!(
+            "(typeof globalThis[{js_name}] === \"function\" && {} instanceof globalThis[{js_name}])",
+            recv()
+        ),
     };
 
     // `imports[ns] ||= {}` then assign the shim, keyed on the wasm import name.
@@ -1039,6 +1052,29 @@ mod tests {
                 "imports[\"Element\"][\"b\"] = (p0, p1, p2) => __wl_obj(p0)[(p1 >>> 0)] = __wl_obj(p2);"
             ),
             "{set}"
+        );
+    }
+
+    /// A missing class must answer "not an instance", not throw: bare
+    /// `x instanceof undefined` is a TypeError, and a downcast test that kills
+    /// the instance is worse than one that returns false.
+    #[test]
+    fn instanceof_is_guarded_against_a_missing_class() {
+        let js = generate_glue(
+            &[shaped(
+                Kind::InstanceOf,
+                "Element",
+                vec![AbiArg::Handle],
+                Ret::Value("bool".into()),
+            )],
+            &[],
+            None,
+        );
+        assert!(
+            js.contains(
+                "typeof globalThis[\"Element\"] === \"function\" && __wl_obj(p0) instanceof globalThis[\"Element\"]"
+            ),
+            "{js}"
         );
     }
 

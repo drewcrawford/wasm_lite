@@ -14,6 +14,7 @@
 //! | `n` | [`Kind::Constructor`] | `new globalThis[js_name](args)` |
 //! | `ig` | [`Kind::IndexGet`] | `receiver[index]` |
 //! | `is` | [`Kind::IndexSet`] | `receiver[index] = value` |
+//! | `io` | [`Kind::InstanceOf`] | `receiver instanceof globalThis[js_name]` |
 //!
 //! `import_name` is the wasm import symbol (unique per binding — it carries the
 //! crate/module path); `js_name` is the JavaScript function the shim actually
@@ -56,6 +57,14 @@ pub enum Kind {
     /// `receiver[index] = value` — computed property write. Three arguments
     /// (receiver, index, value) and no return.
     IndexSet,
+    /// `receiver instanceof globalThis[js_name]` — a type test. One argument
+    /// (the receiver) and a `bool` return.
+    ///
+    /// This is what a checked downcast needs: given an opaque handle, decide
+    /// whether it really is the class you are about to treat it as. Unlike the
+    /// other kinds it never touches the object's own properties, so it is safe
+    /// on any value, including `null`.
+    InstanceOf,
 }
 
 /// The return marshalling of an import.
@@ -179,6 +188,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
             "n" => Kind::Constructor,
             "ig" => Kind::IndexGet,
             "is" => Kind::IndexSet,
+            "io" => Kind::InstanceOf,
             other => return Err(format!("unknown import kind {other:?} in {line:?}")),
         };
 
@@ -215,7 +225,12 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
 fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Result<(), String> {
     let needs_receiver = matches!(
         kind,
-        Kind::Method | Kind::Getter | Kind::Setter | Kind::IndexGet | Kind::IndexSet
+        Kind::Method
+            | Kind::Getter
+            | Kind::Setter
+            | Kind::IndexGet
+            | Kind::IndexSet
+            | Kind::InstanceOf
     );
     if needs_receiver && args.first() != Some(&AbiArg::Handle) {
         return Err(format!("{kind:?} {import_name:?} needs a handle receiver"));
@@ -223,7 +238,7 @@ fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Res
 
     // (exact arity, must return a value) for the fixed-shape kinds.
     let expect = match kind {
-        Kind::Getter => Some((1, true)),
+        Kind::Getter | Kind::InstanceOf => Some((1, true)),
         Kind::Setter => Some((2, false)),
         Kind::IndexGet => Some((2, true)),
         Kind::IndexSet => Some((3, false)),
@@ -242,6 +257,13 @@ fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Res
         if !returns_value && *ret != Ret::Void {
             return Err(format!("{kind:?} {import_name:?} must not return a value"));
         }
+    }
+
+    // `instanceof` is a test; anything but a bool would be a mis-declaration.
+    if kind == Kind::InstanceOf && *ret != Ret::Value("bool".to_string()) {
+        return Err(format!(
+            "instanceof {import_name:?} must return bool, got {ret:?}"
+        ));
     }
 
     // A constructor that did not yield the constructed object would be a leak

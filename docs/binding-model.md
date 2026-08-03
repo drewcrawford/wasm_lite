@@ -43,9 +43,15 @@ wasm_lite::import! {
     "Array" {
         #[indexing_getter] fn at(this: &JsValue, i: u32) -> f64;       // arr[i]
         #[indexing_setter] fn put(this: &JsValue, i: u32, v: f64);     // arr[i] = v
+        #[instanceof]      fn is_array(this: &JsValue) -> bool as "Array";
     }
 }
 ```
+
+`#[instanceof]` is the type test a checked downcast needs: given an opaque
+handle, decide whether it really is the class you are about to treat it as. It
+is guarded, so a class this engine does not define answers `false` rather than
+throwing a `TypeError` (bare `x instanceof undefined` does).
 
 Getting this wrong is not a subtle mismatch: emitting `el.tagName()` for a
 property read throws, so the shapes are checked in the macro *and* in the
