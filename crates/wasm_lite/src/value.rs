@@ -72,6 +72,8 @@ unsafe extern "C" {
     fn cmp3(a: u32, b: u32) -> i32;
     #[link_name = "__wl_is"]
     fn is_kind(kind: u32, a: u32) -> i32;
+    #[link_name = "__wl_checked_div"]
+    fn checked_div_raw(a: u32, b: u32) -> u32;
 }
 
 /// JavaScript's relational operators.
@@ -141,6 +143,17 @@ impl JsValue {
     /// JS `~` — bitwise complement, distinct from `Not`'s logical `!`.
     pub fn bit_not(&self) -> JsValue {
         JsValue::__wl_from_abi(unsafe { unop(2, self.idx) })
+    }
+
+    /// JS `/`, handing back whatever it throws rather than propagating.
+    ///
+    /// `BigInt` division by zero raises a `RangeError`, and a binding that
+    /// wants to report that as a value needs the error object rather than a
+    /// dead instance. Inspect the result with [`JsCast`]-style tests.
+    ///
+    /// [`JsCast`]: https://docs.rs/wasm-bindgen
+    pub fn checked_div(&self, rhs: &JsValue) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { checked_div_raw(self.idx, rhs.idx) })
     }
 
     /// JS `**`.

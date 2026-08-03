@@ -342,7 +342,9 @@ fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Res
     let expect = match kind {
         Kind::Getter | Kind::InstanceOf => Some((1, true)),
         Kind::StaticGetter => Some((0, true)),
-        Kind::IndexDelete => Some((2, true)),
+        // `delete` yields a bool, but discarding it is normal, so the return
+        // is checked separately below rather than required here.
+        Kind::IndexDelete => None,
         Kind::Setter => Some((2, false)),
         Kind::IndexGet => Some((2, true)),
         Kind::IndexSet => Some((3, false)),
@@ -360,6 +362,20 @@ fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Res
         }
         if !returns_value && *ret != Ret::Void {
             return Err(format!("{kind:?} {import_name:?} must not return a value"));
+        }
+    }
+
+    if kind == Kind::IndexDelete {
+        if args.len() != 2 {
+            return Err(format!(
+                "IndexDelete {import_name:?} takes exactly 2 arguments, got {}",
+                args.len()
+            ));
+        }
+        if !matches!(ret, Ret::Void) && *ret != Ret::Value("bool".to_string()) {
+            return Err(format!(
+                "indexing_deleter {import_name:?} must return bool or nothing, got {ret:?}"
+            ));
         }
     }
 

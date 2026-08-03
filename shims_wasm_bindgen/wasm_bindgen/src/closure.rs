@@ -39,6 +39,26 @@ impl<T: ?Sized> Closure<T> {
     }
 }
 
+/// A `Closure` is a handle like any other, so it can be passed wherever a
+/// binding takes one.
+impl<T: ?Sized> crate::JsObject for Closure<T> {
+    fn as_js(&self) -> &JsValue {
+        self.inner.as_js_value()
+    }
+    fn from_js(_obj: JsValue) -> Self {
+        // A JS function is not a Rust closure: there is no captured state to
+        // recover, and inventing one would make `forget` and `drop` lie.
+        panic!("a Closure cannot be reconstructed from an arbitrary JS value")
+    }
+    fn into_js(self) -> JsValue {
+        // The JS function outlives this wrapper, so the registry entry has to
+        // stay: dropping it here would hand back an inert function.
+        let handle = self.inner.as_js_value().clone();
+        self.inner.forget();
+        handle
+    }
+}
+
 impl<T: ?Sized> AsRef<JsValue> for Closure<T> {
     fn as_ref(&self) -> &JsValue {
         self.inner.as_js_value()

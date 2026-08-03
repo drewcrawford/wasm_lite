@@ -64,8 +64,9 @@ struct KindAttr {
     spelled: &'static str,
     /// Exact parameter count, including the receiver.
     arity: usize,
-    /// Whether the binding must have a return type.
-    returns: bool,
+    /// Whether the binding must have a return type; `None` when either is
+    /// allowed.
+    returns: Option<bool>,
     /// Whether the first parameter must be `this: &JsValue`.
     receiver: bool,
 }
@@ -73,15 +74,16 @@ struct KindAttr {
 impl KindAttr {
     fn from_ident(id: &Ident) -> Option<Self> {
         let (tag, spelled, arity, returns, receiver) = match () {
-            _ if id == "getter" => ("g", "getter", 1, true, true),
-            _ if id == "setter" => ("s", "setter", 2, false, true),
+            _ if id == "getter" => ("g", "getter", 1, Some(true), true),
+            _ if id == "setter" => ("s", "setter", 2, Some(false), true),
             // A constructor's argument count is whatever the JS class takes.
-            _ if id == "constructor" => ("n", "constructor", usize::MAX, true, false),
-            _ if id == "indexing_getter" => ("ig", "indexing_getter", 2, true, true),
-            _ if id == "indexing_setter" => ("is", "indexing_setter", 3, false, true),
-            _ if id == "instanceof" => ("io", "instanceof", 1, true, true),
-            _ if id == "static_getter" => ("sg", "static_getter", 0, true, false),
-            _ if id == "indexing_deleter" => ("id", "indexing_deleter", 2, true, true),
+            _ if id == "constructor" => ("n", "constructor", usize::MAX, Some(true), false),
+            _ if id == "indexing_getter" => ("ig", "indexing_getter", 2, Some(true), true),
+            _ if id == "indexing_setter" => ("is", "indexing_setter", 3, Some(false), true),
+            _ if id == "instanceof" => ("io", "instanceof", 1, Some(true), true),
+            _ if id == "static_getter" => ("sg", "static_getter", 0, Some(true), false),
+            // `delete` yields a bool, but discarding it is normal.
+            _ if id == "indexing_deleter" => ("id", "indexing_deleter", 2, None, true),
             _ => return None,
         };
         Some(KindAttr {
@@ -375,13 +377,13 @@ fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream
                     ),
                 ));
             }
-            if k.returns && f.ret.is_none() {
+            if k.returns == Some(true) && f.ret.is_none() {
                 return Err(Error::new_spanned(
                     name,
                     format!("import!: #[{}] must have a return type", k.spelled),
                 ));
             }
-            if !k.returns && f.ret.is_some() {
+            if k.returns == Some(false) && f.ret.is_some() {
                 return Err(Error::new_spanned(
                     name,
                     format!("import!: #[{}] must not have a return type", k.spelled),

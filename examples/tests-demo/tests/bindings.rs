@@ -63,6 +63,11 @@ wasm_lite::import! {
         #[indexing_deleter]
         fn remove_at(this: &JsValue, i: u32) -> bool;
 
+        /// The same, discarding the boolean — which is the usual way to write
+        /// it, so the kind must not insist on a return type.
+        #[indexing_deleter]
+        fn drop_at(this: &JsValue, i: u32);
+
         /// `arr.length` — the case that motivates getters: as a method call
         /// this would throw, because `length` is a number, not a function.
         #[getter]
@@ -680,6 +685,36 @@ fn wide_integers_convert_to_bigint() {
     let small = JsValue::from(42u32);
     assert!(!small.is_bigint());
     assert_eq!(small.as_f64(), Some(42.0));
+}
+
+/// `delete` yields a boolean, and discarding it is the normal spelling.
+#[wasm_lite_test]
+fn indexing_deleter_may_discard_its_result() {
+    let arr = parse("[1, 2, 3]");
+    drop_at(&arr, 0);
+    assert_eq!(length(&arr), 3.0, "delete leaves a hole");
+    assert_eq!(render(&arr), ",2,3");
+}
+
+/// `BigInt` division by zero raises a `RangeError`. `checked_div` hands the
+/// error back as a value rather than letting it kill the instance.
+#[wasm_lite_test]
+fn checked_div_returns_the_error_instead_of_throwing() {
+    let ten = JsValue::from(10i64);
+    let two = JsValue::from(2i64);
+    assert_eq!(render(&ten.checked_div(&two)), "5", "ordinary division");
+
+    let zero = JsValue::from(0i64);
+    let failed = ten.checked_div(&zero);
+    assert!(failed.is_object(), "an Error object, not a number");
+    assert!(
+        render(&failed).contains("RangeError"),
+        "got {}",
+        render(&failed)
+    );
+
+    // The instance survived, which is the point of catching it.
+    assert_eq!(render(&ten.checked_div(&two)), "5");
 }
 
 wasm_lite::test_main!();
