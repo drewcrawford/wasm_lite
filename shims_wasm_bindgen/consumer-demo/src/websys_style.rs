@@ -96,6 +96,15 @@ extern "C" {
 
 #[wasm_bindgen]
 extern "C" {
+    /// A JS *primitive* string, which `instanceof String` reports as false —
+    /// so the membership test has to be a custom predicate, not `instanceof`.
+    #[wasm_bindgen(js_name = String, is_type_of = JsValue::is_string)]
+    #[derive(Debug)]
+    pub type PrimitiveString;
+}
+
+#[wasm_bindgen]
+extern "C" {
     /// `Math.PI` — a constant on a namespace. Declared as a `static` in
     /// wasm-bindgen's grammar; reading it is a call into JS, so the shim emits
     /// a function.

@@ -368,6 +368,24 @@ mod runtime_surface {
         assert_eq!(Some(41u32).unwrap_throw(), 41);
         assert_eq!(Ok::<_, ()>("ok").expect_throw("unused"), "ok");
     }
+
+    /// `is_type_of` replaces `instanceof`, and js-sys relies on it for every
+    /// type whose values are JS *primitives*. Ignoring it compiles fine and
+    /// then answers `false` for `"hi"`, which is the kind of wrong that hides.
+    #[wasm_lite_test]
+    fn is_type_of_replaces_instanceof() {
+        use consumer_demo::websys_style::PrimitiveString;
+        use wasm_bindgen::JsCast;
+
+        let s = JsValue::from_str("hi");
+        assert!(
+            s.is_instance_of::<PrimitiveString>(),
+            "a primitive string is a String — `instanceof` would say no"
+        );
+
+        assert!(!JsValue::from_f64(1.0).is_instance_of::<PrimitiveString>());
+        assert!(!JsValue::NULL.is_instance_of::<PrimitiveString>());
+    }
 }
 
 wasm_lite::test_main!();

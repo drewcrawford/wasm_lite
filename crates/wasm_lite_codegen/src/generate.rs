@@ -123,7 +123,8 @@ function __wl_is(kind, a) {
         case 3: return x === null ? 1 : 0;
         case 4: return x === undefined ? 1 : 0;
         case 5: return x ? 1 : 0;
-        default: return typeof x === \"bigint\" ? 1 : 0;
+        case 6: return typeof x === \"bigint\" ? 1 : 0;
+        default: return typeof x === \"symbol\" ? 1 : 0;
     }
 }
 // `/` that hands back whatever it throws instead of propagating — BigInt

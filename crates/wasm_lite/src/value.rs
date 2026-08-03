@@ -245,6 +245,10 @@ impl JsValue {
     pub fn is_bigint(&self) -> bool {
         unsafe { is_kind(6, self.idx) != 0 }
     }
+    /// `typeof x === "symbol"`.
+    pub fn is_symbol(&self) -> bool {
+        unsafe { is_kind(7, self.idx) != 0 }
+    }
 }
 
 /// So that a `JsValue` can stand in wherever a binding takes

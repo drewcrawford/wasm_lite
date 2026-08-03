@@ -236,6 +236,9 @@ struct Opts {
     js_namespace: Option<String>,
     static_method_of: Option<Ident>,
     extends: Vec<Path>,
+    /// `is_type_of = <expr>` — a custom membership test, used where
+    /// `instanceof` is wrong.
+    is_type_of: Option<syn::Expr>,
 }
 
 impl Opts {
@@ -284,15 +287,18 @@ impl Opts {
                     }
                     "js_namespace" => o.js_namespace = Some(namespace(&m)?),
                     "extends" => o.extends.push(m.value()?.parse::<Path>()?),
+                    // A *custom* membership test, replacing `instanceof`.
+                    // Ignoring it is not cosmetic: js-sys uses it exactly where
+                    // `instanceof` gives the wrong answer, because
+                    // `"hi" instanceof String` is false for a primitive.
+                    "is_type_of" => o.is_type_of = Some(m.value()?.parse()?),
                     // Accepted and ignored: these describe *how* wasm-bindgen
                     // looks a member up or what it emits for TypeScript, and
                     // wasm_lite's lowering already does the equivalent (a
                     // property lookup on the receiver) or has no TS output.
                     "structural" | "final" | "typescript_type" | "skip_typescript"
-                    | "skip_jsdoc" | "getter_with_clone" | "no_deref" | "is_type_of"
-                    | "no_upcast" | "no_promising" => {
-                        // `is_type_of` carries a closure; consume whatever the
-                        // value is rather than trying to parse it.
+                    | "skip_jsdoc" | "getter_with_clone" | "no_deref" | "no_upcast"
+                    | "no_promising" => {
                         if m.input.peek(syn::Token![=]) {
                             let _: syn::Expr = m.value()?.parse()?;
                         }
@@ -484,6 +490,39 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
     let js_class_lit = LitStr::new(&js_class, name.span());
     let cast_mod = format_ident!("__wb_instanceof_{}", name);
 
+    // `is_type_of` replaces the `instanceof` test entirely — that is the whole
+    // point of it — so the binding is not emitted at all in that case.
+    let (cast_mod_def, cast_test) = match &opts.is_type_of {
+        Some(expr) => (
+            quote! {},
+            // Coerced through a `fn` pointer so a bare closure — js-sys writes
+            // `is_type_of = |v| v.is_bigint()` — knows its parameter type.
+            // Every such predicate is non-capturing, so the coercion holds.
+            quote! {
+                {
+                    let __test: fn(&::wasm_bindgen::__rt::JsValue) -> bool = #expr;
+                    __test(val)
+                }
+            },
+        ),
+        None => (
+            quote! {
+                #[allow(non_snake_case, unused_imports)]
+                mod #cast_mod {
+                    use ::wasm_bindgen::__rt::JsValue;
+                    ::wasm_bindgen::__rt::import! {
+                        crate = ::wasm_bindgen::__rt;
+                        #js_class_lit {
+                            #[instanceof]
+                            fn shim(this: &JsValue) -> bool as #js_class_lit;
+                        }
+                    }
+                }
+            },
+            quote! { #cast_mod::shim(val) },
+        ),
+    };
+
     Ok(quote! {
         #(#attrs)*
         #[repr(transparent)]
@@ -500,21 +539,11 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
             fn into_js(self) -> ::wasm_bindgen::__rt::JsValue { self.obj }
         }
 
-        #[allow(non_snake_case, unused_imports)]
-        mod #cast_mod {
-            use ::wasm_bindgen::__rt::JsValue;
-            ::wasm_bindgen::__rt::import! {
-                crate = ::wasm_bindgen::__rt;
-                #js_class_lit {
-                    #[instanceof]
-                    fn shim(this: &JsValue) -> bool as #js_class_lit;
-                }
-            }
-        }
+        #cast_mod_def
 
         impl #impl_g ::wasm_bindgen::JsCast for #name #ty_g #where_g {
             fn instanceof(val: &::wasm_bindgen::__rt::JsValue) -> bool {
-                #cast_mod::shim(val)
+                #cast_test
             }
             fn unchecked_from_js(obj: ::wasm_bindgen::__rt::JsValue) -> Self {
                 #name { obj, #phantom_init }
