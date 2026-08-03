@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
   measuring. Timing is batch-calibrated because `performance.now()` is coarsened
   to 5 µs even under cross-origin isolation — see
   [docs/testing.md](docs/testing.md#benchmark-in-a-browser).
+- `wasm_lite::performance::time_origin()` — `performance.timeOrigin`.
 - Runner environment variables, now documented in
   [docs/testing.md](docs/testing.md#configure-the-runner): `WASM_LITE_GPU` (a
   real WebGPU adapter in headless Chrome), `WASM_LITE_BROWSER_ARGS`,
@@ -24,6 +25,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **`Instant` was not comparable across threads.** It was raw
+  `performance.now()`, which is per-realm — a Web Worker's zero is the moment
+  that worker started, so an `Instant` taken on one thread and read on another
+  was out by however long the page had been up. `Instant` is `Ord` and deadlines
+  cross threads constantly (`join_async`, every `*_timeout`, an executor's
+  `poll_after`), so this affected anything threaded. Now
+  `performance.timeOrigin + performance.now()`.
 - **A Web Worker could not spawn a Web Worker in Chrome.** The spawn returned a
   handle, nothing reported an error, and the thread never ran; joining it blocked
   forever. Chrome fetches a nested worker's module script through its parent, and
