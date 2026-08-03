@@ -609,6 +609,43 @@ mod suite {
         });
     }
 
+    /// Two threads must agree on `Instant`.
+    ///
+    /// `performance.now()` is **per-realm**: a worker's zero is the moment that
+    /// worker started, so a reading taken there is smaller than one taken on the
+    /// main thread at the same moment — by however long the page had been up.
+    /// `Instant` is `Ord` and deadlines cross threads constantly (`join_async`,
+    /// `lock_block_timeout`, an executor's `poll_after`), so the time origin has
+    /// to be folded in. Without that this asserts backwards.
+    ///
+    /// `(worker)` because `join` blocks, which the browser main thread may not.
+    /// Two realms is the point; which two does not matter.
+    #[wasm_lite::wasm_lite_test(worker)]
+    fn instants_are_comparable_across_threads() {
+        // Give the page a measurable age first, so a worker-relative clock is
+        // visibly wrong rather than merely imprecise.
+        spin_for(Duration::from_millis(50));
+        let before = Instant::now();
+        let (on_worker, after) = wasm_lite_std::spawn(move || {
+            let t = Instant::now();
+            spin_for(Duration::from_millis(5));
+            (t, Instant::now())
+        })
+        .join()
+        .unwrap();
+
+        assert!(
+            on_worker >= before,
+            "a worker's Instant is on a different timeline: {on_worker:?} < {before:?}"
+        );
+        assert!(after > on_worker, "and time still moves forward on it");
+        // Sanity bound: the same timeline, not merely a bigger number.
+        assert!(
+            after.duration_since(before) < Duration::from_secs(30),
+            "the two threads' clocks are wildly apart"
+        );
+    }
+
     /// A worker spawning a worker, then blocking on it.
     ///
     /// Chrome fetches a nested worker's module script *through its parent*, and

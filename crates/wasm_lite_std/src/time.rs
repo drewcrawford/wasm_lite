@@ -44,18 +44,43 @@ mod wasm_impl {
         Duration::from_secs_f64(ms.max(0.0) / 1000.0)
     }
 
-    /// A measurement of a monotonically nondecreasing clock, backed by
-    /// `performance.now()`.
+    /// This realm's `performance.timeOrigin`, read once.
     ///
-    /// Stored as a [`Duration`] from the `performance.now()` time origin so that
-    /// (unlike a raw `f64`) it is `Eq`/`Ord`/`Hash`, matching [`std::time::Instant`].
+    /// Constant for the life of a realm, and a JS call per `Instant::now()` is
+    /// worth avoiding in code that takes deadlines in a loop.
+    fn time_origin_ms() -> f64 {
+        thread_local! {
+            static ORIGIN: f64 = wasm_lite::performance::time_origin();
+        }
+        ORIGIN.with(|o| *o)
+    }
+
+    /// Milliseconds on a timeline shared by every thread.
+    ///
+    /// `performance.now()` alone is **per-realm**: a Web Worker's zero is the
+    /// moment that worker started, so an `Instant` taken on one thread and
+    /// compared on another is wrong by the difference between their origins —
+    /// seconds, in a program that spawns workers after doing some work. Since
+    /// `Instant` is `Ord` and deadlines routinely cross threads (`join_async`,
+    /// `lock_block_timeout`, an executor's `poll_after`), the origin has to be
+    /// folded in.
+    fn now_ms() -> f64 {
+        time_origin_ms() + wasm_lite::performance::now()
+    }
+
+    /// A measurement of a monotonically nondecreasing clock, backed by
+    /// `performance.timeOrigin + performance.now()`.
+    ///
+    /// Stored as a [`Duration`] from the Unix epoch so that (unlike a raw `f64`)
+    /// it is `Eq`/`Ord`/`Hash`, matching [`std::time::Instant`] — and so that
+    /// two threads agree on it.
     #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct Instant(Duration);
 
     impl Instant {
         /// Returns an instant corresponding to "now".
         pub fn now() -> Instant {
-            Instant(ms_to_duration(wasm_lite::performance::now()))
+            Instant(ms_to_duration(now_ms()))
         }
 
         /// Returns the amount of time elapsed from `earlier` to this instant,
