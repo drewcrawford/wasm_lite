@@ -553,6 +553,49 @@ pub fn install_println_eprintln_console_hook() {
     });
 }
 
+/// Run a closure on a **dedicated worker**, fail-closed, for doctests.
+///
+/// The counterpart of [`async_doctest!`](crate::async_doctest) for *blocking*
+/// code. A doctest runs as a plain `bin` on the browser main thread, where
+/// `Atomics.wait` traps — so anything that calls `join`, `park`, `recv_block` or
+/// a `lock_block` cannot be demonstrated there at all. This spawns the body on a
+/// worker, where those are legal, and defers the verdict until the worker joins,
+/// so a panic inside it fails the doctest rather than passing silently.
+///
+/// It is what `#[wasm_lite_test(worker)]` does, in a form a doctest can use.
+/// On native it just calls the closure.
+///
+/// This replaces wasm-bindgen's `wasm_bindgen_test_configure!(run_in_dedicated_worker)`,
+/// which was a file-level switch; this is per-doctest, because a file usually
+/// has both kinds.
+///
+/// ```
+/// # #[cfg(target_arch = "wasm32")] wasm_lite::set_panic_hook();
+/// wasm_lite_std::worker_doctest!(|| {
+///     // `join` blocks, which is fine here and would trap on the main thread.
+///     let v = wasm_lite_std::spawn(|| 2 + 2).join().unwrap();
+///     assert_eq!(v, 4);
+/// });
+/// ```
+#[macro_export]
+macro_rules! worker_doctest {
+    ($body:expr) => {{
+        #[cfg(target_arch = "wasm32")]
+        {
+            $crate::__rt::test_pending();
+            $crate::spawn_local(async {
+                $crate::spawn($body).join_async().await.unwrap();
+                $crate::__rt::test_pass();
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let f = $body;
+            f();
+        }
+    }};
+}
+
 /// Run a future as a **fail-closed** async test (doctests, tests, `main`) — works in doctests, tests, and
 /// `main`.
 ///
