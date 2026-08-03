@@ -64,6 +64,30 @@ pub(crate) fn vec_u8(ty: &Type) -> bool {
     generic1(ty, "Vec").is_some_and(|inner| is_ident(inner, "u8"))
 }
 
+/// `&[T]` for a numeric `T` other than `u8` → the element tag.
+///
+/// `&[u8]` is deliberately excluded: it already has its own `bytes` tag and
+/// `Uint8Array` lowering, and giving it a second spelling would mean two
+/// descriptor tags for one type.
+///
+/// Arguments only. The slice is a *borrowed view* of Rust's own memory, so the
+/// element alignment is whatever Rust already guaranteed. A `Vec<T>` return
+/// would be the other direction — the host allocating through `__wl_malloc`,
+/// which is align-1 — and a `Float32Array` cannot view an unaligned offset, so
+/// that direction needs an aligned allocator first.
+pub(crate) fn numeric_slice(ty: &Type) -> Option<String> {
+    let Type::Reference(r) = ty else { return None };
+    let Type::Slice(s) = &*r.elem else {
+        return None;
+    };
+    let id = simple_ident(&s.elem)?.to_string();
+    matches!(
+        id.as_str(),
+        "i8" | "i16" | "u16" | "i32" | "u32" | "f32" | "f64"
+    )
+    .then_some(id)
+}
+
 /// `i32`/`u32`/`f64` → its tag; otherwise `None`.
 pub(crate) fn numeric(ty: &Type) -> Option<String> {
     let id = simple_ident(ty)?.to_string();

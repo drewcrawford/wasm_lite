@@ -271,6 +271,15 @@ fn build_fn(ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream2, TokenStream
             call_args.push(quote! { #pname.as_ptr() });
             call_args.push(quote! { #pname.len() });
             arg_tags.push("bytes".into());
+        } else if let Some(elem) = numeric_slice(ty) {
+            // `(ptr, len)` in *elements*, matching `slice::len()`; the shim
+            // makes a typed-array view of that many elements, so neither side
+            // has to know the element size.
+            extern_params.push(quote! { _: *const u8 });
+            extern_params.push(quote! { _: usize });
+            call_args.push(quote! { #pname.as_ptr() as *const u8 });
+            call_args.push(quote! { #pname.len() });
+            arg_tags.push(format!("slice:{elem}"));
         } else if is_ref_jsvalue(ty) {
             extern_params.push(quote! { _: u32 });
             call_args.push(quote! { #pname.__wl_abi() });

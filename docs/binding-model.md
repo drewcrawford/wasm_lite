@@ -96,7 +96,19 @@ Symmetric across imports and exports:
 | numbers / `bool` | ✓ | ✓ | ✓ | ✓ |
 | strings | `&str` | `String` | `&str` | `String` |
 | bytes | `&[u8]` | `Vec<u8>` | `&[u8]` | `Vec<u8>` |
+| numeric slices | `&[f32]`, `&[u32]`, … | — | — | — |
 | JS objects | `&JsValue` | `JsValue` | `JsValue` | `JsValue` |
+
+Numeric slices (`i8`/`i16`/`u16`/`i32`/`u32`/`f32`/`f64`; `&[u8]` keeps its own
+`bytes` spelling) become a typed-array view over wasm memory — `&[f32]` arrives
+as a `Float32Array`. The length crosses in *elements*, so the typed array's
+constructor does the scaling. Like `&[u8]`, the view is only valid for the
+duration of the call.
+
+They are **arguments only**. That direction is a borrowed view of memory Rust
+already aligned; the return direction would have the host allocate through
+`__wl_malloc`, which is align-1, and a `Float32Array` cannot view an unaligned
+offset. Returning one needs an aligned allocator first.
 
 Strings/bytes are passed by allocating in wasm memory (`__wl_malloc`, align 1)
 and handing over a packed `(ptr<<32 | len)` `i64`; ownership transfers to

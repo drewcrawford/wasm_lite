@@ -653,6 +653,14 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                 let len = next_param(&mut params);
                 format!("new Uint8Array(__wl_memory.buffer, {ptr}, {len})")
             }
+            // Like Bytes, a transient view into wasm memory. `len` is in
+            // elements, so the typed array's own constructor does the scaling
+            // and neither side needs to know the element size.
+            AbiArg::Slice(elem) => {
+                let ptr = next_param(&mut params);
+                let len = next_param(&mut params);
+                format!("new {}(__wl_memory.buffer, {ptr}, {len})", elem.js_array())
+            }
             AbiArg::Bool => format!("Boolean({})", next_param(&mut params)),
             AbiArg::Num => next_param(&mut params),
             // The wasm i32 param surfaces as a signed Number; reinterpret.
@@ -839,6 +847,8 @@ fn js_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the tests name this type; the emitter infers it from the match.
+    use crate::descriptor::SliceElem;
 
     fn func(ns: &str, import: &str, js: &str, args: Vec<AbiArg>, ret: Ret) -> Descriptor {
         Descriptor {
@@ -1074,6 +1084,40 @@ mod tests {
             js.contains(
                 "typeof globalThis[\"Element\"] === \"function\" && __wl_obj(p0) instanceof globalThis[\"Element\"]"
             ),
+            "{js}"
+        );
+    }
+
+    /// `len` crosses in elements, so the typed array's constructor scales it.
+    /// Passing a byte length here would read 4x too far.
+    #[test]
+    fn numeric_slices_become_typed_array_views() {
+        let js = generate_glue(
+            &[
+                func(
+                    "Array",
+                    "from_f32",
+                    "from",
+                    vec![AbiArg::Slice(SliceElem::F32)],
+                    Ret::Handle,
+                ),
+                func(
+                    "Array",
+                    "from_u32",
+                    "from",
+                    vec![AbiArg::Slice(SliceElem::U32)],
+                    Ret::Handle,
+                ),
+            ],
+            &[],
+            None,
+        );
+        assert!(
+            js.contains("new Float32Array(__wl_memory.buffer, p0, p1)"),
+            "{js}"
+        );
+        assert!(
+            js.contains("new Uint32Array(__wl_memory.buffer, p0, p1)"),
             "{js}"
         );
     }

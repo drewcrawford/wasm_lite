@@ -56,6 +56,13 @@ wasm_lite::import! {
         /// `x instanceof Array`
         #[instanceof]
         fn is_array(this: &JsValue) -> bool as "Array";
+
+        /// `Array.from(view)` — a static method, i.e. a namespaced function
+        /// with the class as the namespace. Used here to read a typed-array
+        /// view back out as ordinary elements.
+        fn from_f32(v: &[f32]) -> JsValue as "from";
+        fn from_u32(v: &[u32]) -> JsValue as "from";
+        fn from_i32(v: &[i32]) -> JsValue as "from";
     }
 
     "URLTest" {
@@ -128,6 +135,40 @@ fn instanceof_of_a_missing_class_is_false_not_a_trap() {
     let arr = parse("[1, 2]");
     assert!(!is_nonexistent(&arr));
     assert_eq!(length(&arr), 2.0);
+}
+
+#[wasm_lite_test]
+fn numeric_slices_cross_as_typed_array_views() {
+    // Values, not just length: a wrong view type or a byte/element length mixup
+    // still produces *an* array, so only reading the contents back catches it.
+    let floats = from_f32(&[1.5f32, 2.5, 3.5]);
+    assert_eq!(length(&floats), 3.0);
+    assert_eq!(at(&floats, 0), 1.5);
+    assert_eq!(at(&floats, 1), 2.5);
+    assert_eq!(at(&floats, 2), 3.5);
+
+    // u32 must survive the top bit — the wasm param is an i32, so a value above
+    // 2^31 is where a missing reinterpretation would show up.
+    let uints = from_u32(&[1u32, 4_000_000_000, 7]);
+    assert_eq!(length(&uints), 3.0);
+    assert_eq!(at(&uints, 1), 4_000_000_000.0);
+
+    // ...and i32 must keep its sign, which is the same bits read the other way.
+    let ints = from_i32(&[-5i32, 0, 5]);
+    assert_eq!(at(&ints, 0), -5.0);
+    assert_eq!(at(&ints, 2), 5.0);
+}
+
+#[wasm_lite_test]
+fn a_heap_slice_views_at_a_nonzero_offset() {
+    // A Vec is allocated wherever the allocator put it, so this exercises a
+    // non-zero byteOffset — the case where an element/byte length confusion
+    // reads past the end.
+    let v: Vec<f32> = (0..64).map(|i| i as f32 * 0.5).collect();
+    let arr = from_f32(&v);
+    assert_eq!(length(&arr), 64.0);
+    assert_eq!(at(&arr, 0), 0.0);
+    assert_eq!(at(&arr, 63), 31.5);
 }
 
 wasm_lite::test_main!();

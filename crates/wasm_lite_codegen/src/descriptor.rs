@@ -124,13 +124,58 @@ pub enum AbiArg {
     Handle,
     /// `Option<T>`: a discriminant `i32` (0 = `None`) plus T's params.
     Opt(Payload),
+    /// `&[T]` for a numeric `T` other than `u8`: two wasm params
+    /// `(ptr, len_in_elements)`, presented to JS as a typed-array view over
+    /// wasm memory. Borrowed for the duration of the call, like [`AbiArg::Bytes`].
+    Slice(SliceElem),
+}
+
+/// The element type of a [`AbiArg::Slice`], and the typed array that views it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SliceElem {
+    I8,
+    I16,
+    U16,
+    I32,
+    U32,
+    F32,
+    F64,
+}
+
+impl SliceElem {
+    /// The JS typed-array constructor that views this element type.
+    pub fn js_array(self) -> &'static str {
+        match self {
+            SliceElem::I8 => "Int8Array",
+            SliceElem::I16 => "Int16Array",
+            SliceElem::U16 => "Uint16Array",
+            SliceElem::I32 => "Int32Array",
+            SliceElem::U32 => "Uint32Array",
+            SliceElem::F32 => "Float32Array",
+            SliceElem::F64 => "Float64Array",
+        }
+    }
+
+    fn from_tag(tag: &str) -> Option<Self> {
+        Some(match tag {
+            "i8" => SliceElem::I8,
+            "i16" => SliceElem::I16,
+            "u16" => SliceElem::U16,
+            "i32" => SliceElem::I32,
+            "u32" => SliceElem::U32,
+            "f32" => SliceElem::F32,
+            "f64" => SliceElem::F64,
+            _ => return None,
+        })
+    }
 }
 
 impl AbiArg {
     /// Number of wasm-level parameters this argument occupies.
     pub fn param_count(self) -> usize {
         match self {
-            AbiArg::Str | AbiArg::Bytes => 2,
+            AbiArg::Str | AbiArg::Bytes | AbiArg::Slice(_) => 2,
             AbiArg::Bool | AbiArg::Num | AbiArg::U32 | AbiArg::Handle => 1,
             AbiArg::Opt(p) => 1 + p.param_count(),
         }
@@ -148,6 +193,9 @@ impl AbiArg {
             "i32" | "f64" => AbiArg::Num,
             "u32" => AbiArg::U32,
             _ => {
+                if let Some(elem) = tag.strip_prefix("slice:") {
+                    return SliceElem::from_tag(elem).map(AbiArg::Slice);
+                }
                 return tag
                     .strip_prefix("opt:")
                     .and_then(Payload::from_tag)
