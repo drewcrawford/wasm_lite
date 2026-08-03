@@ -72,6 +72,29 @@ glue behind a single `__wl_spawn` import:
   `__wasm_init_tls`, then `__wl_thread_entry` — which reconstitutes the closure
   and runs it. Threads coordinate via `core::sync::atomic`.
 
+### Workers are always created by the main thread
+
+The allocation above happens on whichever thread called `spawn`, but the
+`new Worker(…)` does not: if the caller is itself a worker, the glue posts the
+already-allocated pointers up to its parent, and so on until the main thread
+creates it. One `postMessage` per spawn, and it composes to any nesting depth.
+
+That indirection is not tidiness. **Chrome fetches a nested worker's module
+script through its parent, and a parent sitting in `Atomics.wait` never services
+that fetch** — so the child never starts, and a parent that goes on to `join`,
+`park`, `recv_block` or `lock_block` waits forever. Every blocking primitive sits
+in `Atomics.wait`, which made "spawn a thread, then wait for it" — the most
+ordinary thing a worker can do — a guaranteed deadlock. Nothing reported an
+error: the spawn returned a handle and the thread silently never ran.
+
+Firefox does not behave this way, so a Firefox-only test run stays green while
+Chrome hangs. `scripts/wasm32/tests` therefore runs the `wasm_lite_std` browser
+suite in **both** browsers, and `a_worker_can_spawn_a_worker` /
+`nesting_composes_to_a_third_level` exist to keep it that way.
+
+The main thread's event loop is always turning, so routing creation there
+sidesteps the problem entirely.
+
 This requires the worker bootstrap to import the glue *without* re-running
 `main`, so the runner serves the glue (`program.js`) separately from a small
 bootstrap module. A threaded build must export the linker's thread symbols;

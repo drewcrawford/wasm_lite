@@ -234,15 +234,24 @@ mod suite {
     }
 
     /// `lock_block_timeout`: `None` while held, then `Some` after release.
+    ///
+    /// The holder waits to be told to release rather than holding for a fixed
+    /// 50 ms. With a duration this raced: the assertion below only means
+    /// something while the lock is *actually* held, and under Chrome the wake
+    /// from `Atomics.wait` can take longer than the margin, so the attempt
+    /// sometimes landed after the holder had already let go and the test failed
+    /// claiming `lock_block_timeout` had succeeded when it should not. A
+    /// handshake removes the assumption instead of widening it.
     #[wasm_lite::wasm_lite_test(worker)]
     fn mutex_lock_block_timeout() {
         let m = Arc::new(Mutex::new(0));
         let (tx, rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
         let m2 = Arc::clone(&m);
         wasm_lite_std::spawn(move || {
             let g = m2.lock_block();
             tx.send_block(()).unwrap(); // acquired
-            spin_for(Duration::from_millis(50));
+            release_rx.recv_block().unwrap(); // held until told otherwise
             drop(g);
             tx.send_block(()).unwrap(); // released
         });
@@ -251,6 +260,7 @@ mod suite {
             m.lock_block_timeout(Instant::now() + Duration::from_millis(10))
                 .is_none()
         );
+        release_tx.send_block(()).unwrap();
         rx.recv_block().unwrap();
         let g = m
             .lock_block_timeout(Instant::now() + Duration::from_secs(1))
@@ -579,6 +589,34 @@ mod suite {
             let v = wasm_lite_std::spawn(|| 20 + 22).join_async().await.unwrap();
             assert_eq!(v, 42);
         });
+    }
+
+    /// A worker spawning a worker, then blocking on it.
+    ///
+    /// Chrome fetches a nested worker's module script *through its parent*, and
+    /// a parent sitting in `Atomics.wait` never services that fetch — so the
+    /// child never starts and the `join` below never returns. Every blocking
+    /// primitive we have sits in `Atomics.wait`, which made this the default
+    /// way to deadlock. Firefox does not do it, which is why a Firefox-only run
+    /// of this suite was green while Chrome hung here.
+    ///
+    /// Worth its own test rather than leaving it to `mutex_lock_block`: that
+    /// one happens to nest, this one is *about* nesting, and the difference
+    /// matters when someone reads the failure.
+    #[wasm_lite::wasm_lite_test(worker)]
+    fn a_worker_can_spawn_a_worker() {
+        let v = wasm_lite_std::spawn(|| 20 + 22).join().unwrap();
+        assert_eq!(v, 42);
+    }
+
+    /// Nesting composes: the grandchild is reached through two parents, both of
+    /// which are blocked by the time it starts.
+    #[wasm_lite::wasm_lite_test(worker)]
+    fn nesting_composes_to_a_third_level() {
+        let v = wasm_lite_std::spawn(|| wasm_lite_std::spawn(|| 7u32).join().unwrap() * 6)
+            .join()
+            .unwrap();
+        assert_eq!(v, 42);
     }
 
     /// `mpsc` cross-thread: a worker sends, the main thread `recv_async`s.

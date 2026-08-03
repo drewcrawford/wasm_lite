@@ -54,3 +54,29 @@ else
     cargo +nightly test -p wasm_lite_std --test browser \
         --target wasm32-unknown-unknown -Z build-std=std,panic_abort
 fi
+
+# ...and again in Chrome. Not redundancy: browsers differ on exactly the things
+# this suite covers, and a Firefox-only run stayed green for months while
+# Chrome deadlocked on a worker spawning a worker (a nested worker's module
+# script is fetched through its parent, and a parent in `Atomics.wait` never
+# services it). Threading is where that difference bites, so this is the one
+# suite worth paying for twice.
+#
+# WASM_LITE_GPU gives headless Chrome a software adapter; harmless here, and it
+# keeps this invocation usable for graphics suites later.
+echo "testing wasm_lite_std browser suite (chrome)"
+if ((${#CARGO_ARGS[@]})); then
+    RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \
+    RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+    WASM_LITE_BROWSER=chrome WASM_LITE_GPU=1 \
+    cargo +nightly test -p wasm_lite_std --test browser \
+        --target wasm32-unknown-unknown -Z build-std=std,panic_abort "${CARGO_ARGS[@]}"
+else
+    RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \
+    RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+    WASM_LITE_BROWSER=chrome WASM_LITE_GPU=1 \
+    cargo +nightly test -p wasm_lite_std --test browser \
+        --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+fi
