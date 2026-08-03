@@ -139,10 +139,13 @@ browser-validated; the next frontier is the binding crates. Items marked
 ### Tooling & tests
 
 * **Broaden the wasm test suite** — `crates/wasm_lite_std/tests/browser.rs` ports
-  the bulk of the native unit suite (~46 tests across spin/block/sync/async +
-  timeouts). Remaining: multi-reader `RwLock` and `park`/`unpark`.
-* **Deployment niceties** — a `wasm-lite bundle` command, session pooling/idle
-  reaper for the persistent browser, and test filtering (`cargo test NAME`).
+  the bulk of the native unit suite (52 tests across spin/block/sync/async +
+  timeouts), and `scripts/wasm32/tests` runs it in **both** Firefox and Chrome,
+  because the two disagree on nested worker spawn. Remaining: multi-reader
+  `RwLock` and `park`/`unpark`.
+* **Deployment niceties** — a `wasm-lite bundle` command, and session
+  pooling/idle reaper for the persistent browser. (Test filtering already works:
+  `cargo test NAME`, `--exact` and `--list` all follow libtest.)
 * **Smaller items** — deeply nested generics on imports (`Option<Result<…>>` does
   not work yet, though single-level `Option<Vec<u8>>`/`Result<…>` do), and a
   `panic = "unwind"` mode (catch-unwind per poll, drop just the failed task, poison
