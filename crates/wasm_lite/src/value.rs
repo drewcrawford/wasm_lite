@@ -50,6 +50,12 @@ unsafe extern "C" {
     fn make_num(v: f64) -> u32;
     #[link_name = "__wl_str_val"]
     fn make_str(ptr: *const u8, len: usize) -> u32;
+    #[link_name = "__wl_bigint"]
+    fn make_bigint(v: i64) -> u32;
+    #[link_name = "__wl_ubigint"]
+    fn make_ubigint(v: i64) -> u32;
+    #[link_name = "__wl_bigint_str"]
+    fn make_bigint_str(ptr: *const u8, len: usize) -> u32;
     #[link_name = "__wl_as_f64"]
     fn as_f64_out(idx: u32, out: *mut f64) -> i32;
     #[link_name = "__wl_as_bool"]
@@ -248,6 +254,35 @@ impl JsValue {
         if v { JsValue::TRUE } else { JsValue::FALSE }
     }
 
+    /// A handle to a JS `BigInt`.
+    ///
+    /// 64-bit and wider integers become `BigInt` rather than a number: a JS
+    /// number is a double and silently loses precision above 2^53, which is
+    /// well inside the range of the types that reach here.
+    pub fn from_i64(v: i64) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { make_bigint(v) })
+    }
+
+    /// A handle to an unsigned JS `BigInt`.
+    pub fn from_u64(v: u64) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { make_ubigint(v as i64) })
+    }
+
+    /// A handle to a `BigInt` wider than 64 bits.
+    ///
+    /// Goes through decimal text, because no wasm parameter can carry the
+    /// value in one piece.
+    pub fn from_i128(v: i128) -> JsValue {
+        let s = v.to_string();
+        JsValue::__wl_from_abi(unsafe { make_bigint_str(s.as_ptr(), s.len()) })
+    }
+
+    /// As [`JsValue::from_i128`], unsigned.
+    pub fn from_u128(v: u128) -> JsValue {
+        let s = v.to_string();
+        JsValue::__wl_from_abi(unsafe { make_bigint_str(s.as_ptr(), s.len()) })
+    }
+
     /// A handle to a JS string, copied out of wasm memory.
     // Named to match wasm-bindgen's `JsValue::from_str`, which the shim
     // re-exports, so upstream call sites compile unchanged. It is infallible,
@@ -306,7 +341,18 @@ macro_rules! __from_number {
         }
     )* };
 }
-__from_number!(i8, i16, i32, u8, u16, u32, f32, f64);
+// 32 bits and under are exact as doubles; `usize`/`isize` are 32-bit on
+// wasm32, so they belong here too.
+__from_number!(i8, i16, i32, isize, u8, u16, u32, usize, f32, f64);
+
+macro_rules! __from_bigint {
+    ($($t:ty => $ctor:ident),*) => { $(
+        impl From<$t> for JsValue {
+            fn from(v: $t) -> JsValue { JsValue::$ctor(v as _) }
+        }
+    )* };
+}
+__from_bigint!(i64 => from_i64, u64 => from_u64, i128 => from_i128, u128 => from_u128);
 
 impl From<bool> for JsValue {
     fn from(v: bool) -> JsValue {

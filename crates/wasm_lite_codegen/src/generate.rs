@@ -70,6 +70,12 @@ function __wl_clone(idx) {
 // Handles to primitive JS values. `kind` picks null/undefined/true/false so one
 // import covers the four singletons.
 function __wl_num(v) { return __wl_add(v); }
+// A wasm i64 param is already a BigInt on this side.
+function __wl_bigint(v) { return __wl_add(v); }
+function __wl_ubigint(v) { return __wl_add(BigInt.asUintN(64, v)); }
+// Wider than 64 bits: the value arrives as decimal text, since no wasm
+// parameter can carry it.
+function __wl_bigint_str(ptr, len) { return __wl_add(BigInt(__wl_str(ptr, len))); }
 
 function __wl_str_val(ptr, len) { return __wl_add(__wl_str(ptr, len)); }
 // JS strict equality between two handles.
@@ -429,7 +435,7 @@ pub fn generate_glue(
     // to drive the async executor; shared-memory builds also get __wl_spawn for
     // thread spawning. (Unused entries are harmless — the wasm only imports what
     // it references.)
-    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop, __wl_cmp: __wl_cmp, __wl_is: __wl_is";
+    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_bigint: __wl_bigint, __wl_ubigint: __wl_ubigint, __wl_bigint_str: __wl_bigint_str, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop, __wl_cmp: __wl_cmp, __wl_is: __wl_is";
     if memory.is_some() {
         let _ = writeln!(
             js,
@@ -1113,7 +1119,7 @@ mod tests {
         ));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
-        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop, __wl_cmp: __wl_cmp, __wl_is: __wl_is };"));
+        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_bigint: __wl_bigint, __wl_ubigint: __wl_ubigint, __wl_bigint_str: __wl_bigint_str, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop, __wl_cmp: __wl_cmp, __wl_is: __wl_is };"));
     }
 
     #[test]

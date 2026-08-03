@@ -655,4 +655,31 @@ fn a_dotted_js_name_resolves_and_writes_back() {
     assert_eq!(buf, [1, 2, 3]);
 }
 
+/// 64-bit and wider integers become `BigInt`, not numbers: a JS number is a
+/// double and loses precision above 2^53, which is well inside these ranges.
+#[wasm_lite_test]
+fn wide_integers_convert_to_bigint() {
+    let big = JsValue::from(9_007_199_254_740_993i64); // 2^53 + 1
+    assert!(big.is_bigint());
+    assert_eq!(render(&big), "9007199254740993");
+
+    assert_eq!(render(&JsValue::from(u64::MAX)), "18446744073709551615");
+    assert_eq!(render(&JsValue::from(i64::MIN)), "-9223372036854775808");
+
+    // Wider than any wasm parameter, so it travels as decimal text.
+    assert_eq!(
+        render(&JsValue::from(i128::MIN)),
+        "-170141183460469231731687303715884105728"
+    );
+    assert_eq!(
+        render(&JsValue::from(u128::MAX)),
+        "340282366920938463463374607431768211455"
+    );
+
+    // ...while 32-bit and under stay ordinary numbers.
+    let small = JsValue::from(42u32);
+    assert!(!small.is_bigint());
+    assert_eq!(small.as_f64(), Some(42.0));
+}
+
 wasm_lite::test_main!();

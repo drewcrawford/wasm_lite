@@ -256,5 +256,5 @@ fn call_thrower(f: &JsValue) {
 
 /// The names wasm-bindgen users expect from `wasm_bindgen::prelude::*`.
 pub mod prelude {
-    pub use crate::{JsCast, JsError, JsObject, JsValue, UnwrapThrowExt, wasm_bindgen};
+    pub use crate::{Closure, JsCast, JsError, JsObject, JsValue, UnwrapThrowExt, wasm_bindgen};
 }
