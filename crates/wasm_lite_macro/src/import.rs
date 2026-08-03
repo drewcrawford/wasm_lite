@@ -454,6 +454,9 @@ fn build_return(
     };
     let call = quote! { #name( #(#call_args),* ) };
 
+    // `-> ()` is spelled out by generated bindings and means the same as no
+    // return type at all.
+    let ret = ret.filter(|t| !matches!(t, Type::Tuple(t) if t.elems.is_empty()));
     let Some(ty) = ret else {
         return Ok(Return {
             wrapper_ret: quote! {},

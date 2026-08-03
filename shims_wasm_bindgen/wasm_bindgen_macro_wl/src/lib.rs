@@ -71,11 +71,83 @@ fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
             let _ = attr;
             Ok(quote! { #[::wasm_bindgen::__rt::export] #f })
         }
+        Item::Enum(e) => string_enum(e),
         other => Err(Error::new_spanned(
             other,
-            "#[wasm_bindgen] supports `extern \"C\"` blocks and free functions here",
+            "#[wasm_bindgen] supports `extern \"C\"` blocks, free functions and string \
+             enums here",
         )),
     }
+}
+
+/// wasm-bindgen's *string enum*: `pub enum Key { Calendar = "calendar", .. }`.
+///
+/// The discriminants are string literals, which is not a Rust enum, so the
+/// declaration has to be rewritten rather than passed through. The variants
+/// become ordinary unit variants and the strings become a lookup — which keeps
+/// the derives js-sys puts on these (`Clone, Copy, Debug, PartialEq, Eq`)
+/// working, since the type carries no handle.
+fn string_enum(e: syn::ItemEnum) -> syn::Result<TokenStream2> {
+    let name = &e.ident;
+    let vis = &e.vis;
+    let attrs = passthrough_attrs(&e.attrs);
+
+    let mut idents = Vec::new();
+    let mut strings = Vec::new();
+    let mut variants = Vec::new();
+    for v in &e.variants {
+        let Some((_, expr)) = &v.discriminant else {
+            return Err(Error::new_spanned(
+                v,
+                "#[wasm_bindgen]: a string enum's variants each need a string discriminant",
+            ));
+        };
+        let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(sl),
+            ..
+        }) = expr
+        else {
+            return Err(Error::new_spanned(
+                expr,
+                "#[wasm_bindgen]: a string enum's discriminant must be a string literal",
+            ));
+        };
+        let v_attrs = passthrough_attrs(&v.attrs);
+        let id = &v.ident;
+        variants.push(quote! { #(#v_attrs)* #id });
+        idents.push(id.clone());
+        strings.push(sl.clone());
+    }
+
+    Ok(quote! {
+        #(#attrs)*
+        #vis enum #name {
+            #(#variants,)*
+        }
+
+        impl #name {
+            /// The JavaScript string this variant denotes.
+            pub fn to_js_str(&self) -> &'static str {
+                match self {
+                    #(#name::#idents => #strings,)*
+                }
+            }
+
+            /// The variant a JavaScript string denotes, if any.
+            pub fn from_js_str(s: &str) -> ::core::option::Option<#name> {
+                match s {
+                    #(#strings => ::core::option::Option::Some(#name::#idents),)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+        }
+
+        impl ::core::fmt::Display for #name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str(self.to_js_str())
+            }
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -119,17 +191,18 @@ impl Opts {
                     .clone();
                 match id.to_string().as_str() {
                     "method" => o.method = true,
+                    // `getter`, `getter = "name"` and `getter = name` are all
+                    // in the wild; js-sys writes the bare-ident form.
                     "getter" => {
                         o.getter = true;
-                        // `getter = "name"` is an accepted spelling.
                         if m.input.peek(syn::Token![=]) {
-                            o.js_name = Some(m.value()?.parse::<LitStr>()?.value());
+                            o.js_name = Some(string_or_ident(&m)?);
                         }
                     }
                     "setter" => {
                         o.setter = true;
                         if m.input.peek(syn::Token![=]) {
-                            o.js_name = Some(m.value()?.parse::<LitStr>()?.value());
+                            o.js_name = Some(string_or_ident(&m)?);
                         }
                     }
                     "constructor" => o.constructor = true,
@@ -148,9 +221,11 @@ impl Opts {
                     // wasm_lite's lowering already does the equivalent (a
                     // property lookup on the receiver) or has no TS output.
                     "structural" | "final" | "typescript_type" | "skip_typescript"
-                    | "skip_jsdoc" | "getter_with_clone" | "no_deref" => {
+                    | "skip_jsdoc" | "getter_with_clone" | "no_deref" | "is_type_of" => {
+                        // `is_type_of` carries a closure; consume whatever the
+                        // value is rather than trying to parse it.
                         if m.input.peek(syn::Token![=]) {
-                            let _: TokenStream2 = m.value()?.parse()?;
+                            let _: syn::Expr = m.value()?.parse()?;
                         }
                     }
                     // Refused rather than ignored: silently dropping these
@@ -173,11 +248,15 @@ impl Opts {
 
 /// `js_name = "foo"` and `js_name = foo` are both in the wild.
 fn string_or_ident(m: &syn::meta::ParseNestedMeta) -> syn::Result<String> {
+    use syn::ext::IdentExt;
     let v = m.value()?;
     if v.peek(LitStr) {
         Ok(v.parse::<LitStr>()?.value())
     } else {
-        Ok(v.parse::<Ident>()?.to_string())
+        // `parse_any`, not `parse`: JS member names are not constrained to Rust
+        // idents, and js-sys really does write `js_name = match` and
+        // `js_name = type`.
+        Ok(Ident::parse_any(v)?.unraw().to_string())
     }
 }
 
@@ -210,19 +289,26 @@ fn namespace(m: &syn::meta::ParseNestedMeta) -> syn::Result<String> {
 // extern blocks
 // ---------------------------------------------------------------------------
 
+/// Expand an `extern "C"` block, item by item.
+///
+/// A failing item becomes a `compile_error!` **in place** rather than aborting
+/// the block. That matters more than it sounds: a block declares a type and
+/// then its members, so failing the whole block over one unsupported method
+/// deletes the type too, and every binding elsewhere that mentions it fails as
+/// well. Most of the errors this shim reported against js-sys were that
+/// cascade rather than distinct problems.
 fn extern_block(fm: syn::ItemForeignMod) -> syn::Result<TokenStream2> {
     let mut out = Vec::new();
     for item in fm.items {
-        match item {
-            ForeignItem::Type(t) => out.push(extern_type(t)?),
-            ForeignItem::Fn(f) => out.push(extern_fn(f)?),
-            other => {
-                return Err(Error::new_spanned(
-                    other,
-                    "#[wasm_bindgen]: only `type` and `fn` items are supported in an extern block",
-                ));
-            }
-        }
+        let expanded = match item {
+            ForeignItem::Type(t) => extern_type(t),
+            ForeignItem::Fn(f) => extern_fn(f),
+            other => Err(Error::new_spanned(
+                other,
+                "#[wasm_bindgen]: only `type` and `fn` items are supported in an extern block",
+            )),
+        };
+        out.push(expanded.unwrap_or_else(|e| e.to_compile_error()));
     }
     Ok(quote! { #(#out)* })
 }
