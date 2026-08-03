@@ -107,6 +107,20 @@ no-op rather than aliasing `&mut` to the captured state.
 Zero- and one-argument (`Closure::new` / `Closure::new_with_arg`) signatures
 today.
 
+**Awaiting JS promises** — `JsFuture` wraps a promise as a Rust `Future`
+resolving to `Result<JsValue, JsValue>`: `Ok` for fulfilled, `Err` for
+rejected, the same split as binding a throwing import as `Result<_, JsValue>`.
+
+```rust
+let value = wasm_lite::JsFuture::new(&promise).await;
+```
+
+It is built on `Closure` — the two `then` callbacks are closures the future
+owns — which is also what makes cancellation safe: dropping a pending
+`JsFuture` drops those callbacks, so the promise settles with nowhere to
+report instead of writing into freed state. Driving one needs an executor;
+on wasm that is `wasm_lite_std::spawn_local`.
+
 ## Type marshalling
 
 Symmetric across imports and exports:

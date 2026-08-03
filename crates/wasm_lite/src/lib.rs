@@ -65,10 +65,10 @@
 //! | raw `WebAssembly.instantiate` | tiny ABIs that only need numeric imports/exports and handwritten JavaScript |
 //!
 //! The trade-off is intentional. [`wasm_lite`](crate) does **not** yet replace
-//! the broad `js-sys`/`web-sys` ecosystem, Promise interop (`JsFuture` /
-//! `wasm-bindgen-futures`), TypeScript declaration generation, or rich
-//! serde-style marshalling. Rust closures passed into JS *are* supported, for
-//! zero- and one-argument signatures — see [`Closure`]. The `wasm-bindgen` feature
+//! the broad `js-sys`/`web-sys` ecosystem, TypeScript declaration generation, or
+//! rich serde-style marshalling. Two things it *does* now have: Rust closures
+//! passed into JS ([`Closure`], zero- and one-argument signatures) and awaiting
+//! JS promises ([`JsFuture`]). The `wasm-bindgen` feature
 //! supports incremental migration in the direction where `wasm-lite` is the
 //! final codegen step; the reverse direction, where a wasm-bindgen/wasm-pack app
 //! consumes a wasm_lite leaf without running `wasm-lite`, is still roadmap work.
@@ -327,6 +327,7 @@
 extern crate self as wasm_lite;
 
 mod closure;
+mod future;
 mod macros;
 mod value;
 
@@ -340,6 +341,7 @@ pub mod thread;
 pub mod interop;
 
 pub use closure::Closure;
+pub use future::JsFuture;
 pub use value::JsValue;
 pub use wasm_lite_macro::{export, import, js_class, wasm_lite_test};
 
