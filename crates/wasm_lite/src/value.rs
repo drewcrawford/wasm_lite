@@ -74,6 +74,8 @@ unsafe extern "C" {
     fn is_kind(kind: u32, a: u32) -> i32;
     #[link_name = "__wl_checked_div"]
     fn checked_div_raw(a: u32, b: u32) -> u32;
+    #[link_name = "__wl_num_str"]
+    fn num_str(idx: u32, out: *mut u32) -> i32;
 }
 
 /// JavaScript's relational operators.
@@ -143,6 +145,20 @@ impl JsValue {
     /// JS `~` — bitwise complement, distinct from `Not`'s logical `!`.
     pub fn bit_not(&self) -> JsValue {
         JsValue::__wl_from_abi(unsafe { unop(2, self.idx) })
+    }
+
+    /// The decimal text of a JS number or `BigInt`, or `None` for anything
+    /// else.
+    ///
+    /// Text is the exact route for the wide integer types: a `BigInt` can
+    /// exceed every wasm parameter, and going through `f64` would round.
+    pub fn numeric_text(&self) -> Option<String> {
+        let mut out = [0u32; 2];
+        if unsafe { num_str(self.idx, out.as_mut_ptr()) } == 0 {
+            return None;
+        }
+        let (ptr, len) = (out[0] as usize as *mut u8, out[1] as usize);
+        Some(unsafe { String::from_utf8_unchecked(Vec::from_raw_parts(ptr, len, len)) })
     }
 
     /// JS `/`, handing back whatever it throws rather than propagating.
@@ -366,6 +382,26 @@ macro_rules! __from_bigint {
     )* };
 }
 __from_bigint!(i64 => from_i64, u64 => from_u64, i128 => from_i128, u128 => from_u128);
+
+/// Read a wide integer back out of a handle.
+///
+/// Via the value's decimal text, which is exact — `as_f64` would round
+/// anything past 2^53, and these are the types where that matters. The handle
+/// is returned as the error so a caller can inspect what it actually was.
+macro_rules! __try_from_jsvalue {
+    ($($t:ty),*) => { $(
+        impl TryFrom<JsValue> for $t {
+            type Error = JsValue;
+            fn try_from(v: JsValue) -> Result<$t, JsValue> {
+                match v.numeric_text().and_then(|s| s.parse::<$t>().ok()) {
+                    Some(n) => Ok(n),
+                    None => Err(v),
+                }
+            }
+        }
+    )* };
+}
+__try_from_jsvalue!(i64, u64, i128, u128);
 
 impl From<bool> for JsValue {
     fn from(v: bool) -> JsValue {

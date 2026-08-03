@@ -717,4 +717,27 @@ fn checked_div_returns_the_error_instead_of_throwing() {
     assert_eq!(render(&ten.checked_div(&two)), "5");
 }
 
+/// Wide integers come back out exactly. Via decimal text, because `as_f64`
+/// rounds anything past 2^53 and these are precisely the types where that
+/// matters.
+#[wasm_lite_test]
+fn wide_integers_round_trip_exactly() {
+    for v in [i64::MIN, -1, 0, 9_007_199_254_740_993, i64::MAX] {
+        let handle = JsValue::from(v);
+        assert_eq!(i64::try_from(handle), Ok(v), "i64 {v} round trip");
+    }
+    assert_eq!(u64::try_from(JsValue::from(u64::MAX)), Ok(u64::MAX));
+    assert_eq!(i128::try_from(JsValue::from(i128::MIN)), Ok(i128::MIN));
+    assert_eq!(u128::try_from(JsValue::from(u128::MAX)), Ok(u128::MAX));
+
+    // A number that is not an integer, and a non-number, both fail — and hand
+    // the handle back so the caller can see what it was.
+    assert!(i64::try_from(JsValue::from_f64(1.5)).is_err());
+    let not_a_number = i64::try_from(JsValue::from_str("hello"));
+    assert_eq!(
+        not_a_number.unwrap_err().as_string().as_deref(),
+        Some("hello")
+    );
+}
+
 wasm_lite::test_main!();
