@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# NOTE: the package name is deliberately `wasm_lite`. This crate is meant to be
+# substituted for the real one via `[patch]`, which matches on package name.
+[package]
+name = "wasm_lite"
+description = "wasm-bindgen-backed shim for wasm_lite: lets crates authored against wasm_lite build inside an ordinary wasm-bindgen application (e.g. anything using wgpu)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wasm_lite_macro_wb = { path = "../wasm_lite_macro_wb" }
+# Unconditional, matching the real crate: `wasm_lite` is an rlib that builds on
+# the host too, so downstream `cargo check` on native keeps working. wasm-bindgen
+# compiles for non-wasm targets (its bindings become unreachable stubs).
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+
+[target.'cfg(target_arch="wasm32")'.dependencies]
+wasm_safe_thread = "0.1"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

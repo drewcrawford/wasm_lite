@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# The shim workspace is deliberately separate from the root wasm_lite workspace:
+# `shims/wasm_lite` and `shims/wasm_lite_std` reuse the *package names* of the
+# real crates, because `[patch]` matches on package name. Two packages with the
+# same name cannot live in one workspace, so these get their own.
+[workspace]
+resolver = "2"
+members = ["wasm_lite", "wasm_lite_std", "wasm_lite_macro_wb"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+authors = ["Drew Crawford <drew@sealedabstract.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/drewcrawford/wasm_lite"
+homepage = "https://sealedabstract.com/code/wasm_lite"
+
+[workspace.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
