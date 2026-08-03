@@ -48,8 +48,6 @@ impl JsValue {
 unsafe extern "C" {
     #[link_name = "__wl_num"]
     fn make_num(v: f64) -> u32;
-    #[link_name = "__wl_prim"]
-    fn make_prim(kind: u32) -> u32;
     #[link_name = "__wl_str_val"]
     fn make_str(ptr: *const u8, len: usize) -> u32;
     #[link_name = "__wl_as_f64"]
@@ -58,7 +56,36 @@ unsafe extern "C" {
     fn as_bool_out(idx: u32, out: *mut i32) -> i32;
     #[link_name = "__wl_as_str"]
     fn as_str_out(idx: u32, out: *mut u32) -> i32;
+    #[link_name = "__wl_eq"]
+    fn strict_eq(a: u32, b: u32) -> i32;
 }
+
+/// So that a `JsValue` can stand in wherever a binding takes
+/// `impl AsRef<JsValue>`, which is how generated code accepts either a handle
+/// or one of the newtypes wrapping one.
+impl AsRef<JsValue> for JsValue {
+    fn as_ref(&self) -> &JsValue {
+        self
+    }
+}
+
+/// JavaScript strict equality (`===`) between the values two handles denote.
+///
+/// Two *different* handles to the same object compare equal, which is the
+/// useful reading — a handle is a reference, not an identity.
+impl PartialEq for JsValue {
+    fn eq(&self, other: &JsValue) -> bool {
+        unsafe { strict_eq(self.idx, other.idx) != 0 }
+    }
+}
+
+/// Follows wasm-bindgen, whose `JsValue` is `Eq` too, so that binding crates
+/// deriving `Eq` on their types compile.
+///
+/// Strictly this is a lie: `NaN !== NaN`, so equality is not reflexive. The
+/// alternative — omitting `Eq` — breaks every generated type that derives it,
+/// for a case no binding relies on.
+impl Eq for JsValue {}
 
 impl JsValue {
     /// A handle to the JS number `v`.
@@ -69,9 +96,33 @@ impl JsValue {
         JsValue::__wl_from_abi(unsafe { make_num(v) })
     }
 
+    /// JS `undefined`.
+    pub const UNDEFINED: JsValue = JsValue::__wl_const(0);
+    /// JS `null`.
+    pub const NULL: JsValue = JsValue::__wl_const(1);
+    /// JS `true`.
+    pub const TRUE: JsValue = JsValue::__wl_const(2);
+    /// JS `false`.
+    pub const FALSE: JsValue = JsValue::__wl_const(3);
+
+    /// The first four table slots are permanently the JS singletons, so a
+    /// handle to one is a constant rather than a call into JS.
+    const fn __wl_const(idx: u32) -> JsValue {
+        JsValue {
+            idx,
+            _not_thread_safe: PhantomData,
+        }
+    }
+
+    /// True for one of the reserved singleton slots, which are never freed and
+    /// never cloned into a new slot.
+    const fn is_reserved(&self) -> bool {
+        self.idx < 4
+    }
+
     /// A handle to a JS boolean.
     pub fn from_bool(v: bool) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { make_prim(if v { 2 } else { 3 }) })
+        if v { JsValue::TRUE } else { JsValue::FALSE }
     }
 
     /// A handle to a JS string, copied out of wasm memory.
@@ -85,12 +136,12 @@ impl JsValue {
 
     /// A handle to JS `null`.
     pub fn null() -> JsValue {
-        JsValue::__wl_from_abi(unsafe { make_prim(0) })
+        JsValue::NULL
     }
 
     /// A handle to JS `undefined`.
     pub fn undefined() -> JsValue {
-        JsValue::__wl_from_abi(unsafe { make_prim(1) })
+        JsValue::UNDEFINED
     }
 
     /// The number this handle holds, or `None` if it is not a JS number.
@@ -154,6 +205,11 @@ impl Clone for JsValue {
     /// each frees its own slot on drop. That matches how JS references behave,
     /// and it is what lets generated bindings derive `Clone` on their newtypes.
     fn clone(&self) -> JsValue {
+        // A singleton is the same slot for everyone; there is nothing to
+        // allocate and nothing to free.
+        if self.is_reserved() {
+            return JsValue::__wl_const(self.idx);
+        }
         // Runtime support import; the generated glue always provides it.
         #[link(wasm_import_module = "__wasm_lite")]
         unsafe extern "C" {
@@ -172,6 +228,9 @@ impl fmt::Debug for JsValue {
 
 impl Drop for JsValue {
     fn drop(&mut self) {
+        if self.is_reserved() {
+            return;
+        }
         // Runtime support import; the generated glue always provides it.
         #[link(wasm_import_module = "__wasm_lite")]
         unsafe extern "C" {

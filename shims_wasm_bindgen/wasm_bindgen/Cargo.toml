@@ -17,7 +17,7 @@ description = "wasm-bindgen's API, lowered onto wasm_lite. Not the real wasm-bin
 #    declared version matches what the graph already asks for.
 #
 # Bump this to whatever the target graph pins.
-version = "0.2.114"
+version = "0.2.108"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true

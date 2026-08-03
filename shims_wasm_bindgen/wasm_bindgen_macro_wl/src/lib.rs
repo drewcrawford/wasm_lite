@@ -419,6 +419,22 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
             }
         }
 
+        // The conversions upstream code expects on every binding type.
+        impl #impl_g ::core::convert::AsRef<::wasm_bindgen::__rt::JsValue> for #name #ty_g #where_g {
+            fn as_ref(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
+        }
+
+        impl #impl_g ::core::convert::From<#name #ty_g> for ::wasm_bindgen::__rt::JsValue #where_g {
+            fn from(v: #name #ty_g) -> ::wasm_bindgen::__rt::JsValue { v.obj }
+        }
+
+        /// Unchecked, matching wasm-bindgen. No explicit `TryFrom` alongside
+        /// it: `From` induces the blanket one, and declaring both collides.
+        /// Use `JsCast::dyn_into` for the checked conversion.
+        impl #impl_g ::core::convert::From<::wasm_bindgen::__rt::JsValue> for #name #ty_g #where_g {
+            fn from(obj: ::wasm_bindgen::__rt::JsValue) -> Self { #name { obj, #phantom_init } }
+        }
+
         #deref
         #(#as_refs)*
     })

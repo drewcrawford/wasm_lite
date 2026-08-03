@@ -457,4 +457,43 @@ fn variadic_spreads_the_final_argument() {
     assert_eq!(length(&of_many(&empty)), 0.0);
 }
 
+/// The four JS singletons live in reserved table slots, so they are constants
+/// rather than calls — and must never be freed or reallocated.
+#[wasm_lite_test]
+fn the_singletons_are_stable_constants() {
+    assert_eq!(render(&JsValue::UNDEFINED), "undefined");
+    assert_eq!(render(&JsValue::NULL), "null");
+    assert_eq!(render(&JsValue::TRUE), "true");
+    assert_eq!(render(&JsValue::FALSE), "false");
+
+    // Dropping one must not release its slot: a later use would otherwise find
+    // whatever got allocated there instead.
+    for _ in 0..32 {
+        drop(JsValue::UNDEFINED);
+        drop(JsValue::NULL);
+    }
+    let churn: Vec<JsValue> = (0..32).map(JsValue::from).collect();
+    assert_eq!(churn.len(), 32);
+
+    assert_eq!(render(&JsValue::UNDEFINED), "undefined");
+    assert_eq!(render(&JsValue::NULL), "null");
+    assert_eq!(JsValue::TRUE.as_bool(), Some(true));
+    assert_eq!(JsValue::FALSE.as_bool(), Some(false));
+}
+
+/// Strict equality between handles, which is `===` on what they denote — so
+/// two different handles to the same object compare equal.
+#[wasm_lite_test]
+fn handles_compare_by_javascript_equality() {
+    let a = parse("[1]");
+    let alias = a.clone();
+    assert_eq!(a, alias, "a clone denotes the same object");
+
+    let b = parse("[1]");
+    assert_ne!(a, b, "structurally equal but different objects");
+
+    assert_eq!(JsValue::from_f64(1.5), JsValue::from_f64(1.5));
+    assert_ne!(JsValue::NULL, JsValue::UNDEFINED, "=== distinguishes these");
+}
+
 wasm_lite::test_main!();
