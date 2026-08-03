@@ -222,15 +222,20 @@ mod suite {
     fn mutex_lock_spin_timeout_fails() {
         let m = Arc::new(Mutex::new(0));
         let (tx, rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
         let m2 = Arc::clone(&m);
         wasm_lite_std::spawn(move || {
             let _g = m2.lock_spin();
             tx.send_block(()).unwrap(); // acquired
-            spin_for(Duration::from_millis(100));
+            release_rx.recv_block().unwrap(); // held until told otherwise
         });
         rx.recv_block().unwrap();
         let deadline = Instant::now() + Duration::from_millis(10);
+        // A fixed hold duration raced here: the assertion only means something
+        // while the lock is actually held, and a slow wake put the attempt
+        // after the release. See `mutex_lock_block_timeout`.
         assert!(m.lock_spin_timeout(deadline).is_none());
+        release_tx.send_block(()).unwrap();
     }
 
     /// `lock_block_timeout`: `None` while held, then `Some` after release.
@@ -273,15 +278,20 @@ mod suite {
     fn mutex_lock_sync_timeout_fails() {
         let m = Arc::new(Mutex::new(0));
         let (tx, rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
         let m2 = Arc::clone(&m);
         wasm_lite_std::spawn(move || {
             let _g = m2.lock_sync();
             tx.send_block(()).unwrap();
-            spin_for(Duration::from_millis(100));
+            release_rx.recv_block().unwrap(); // held until told otherwise
         });
         rx.recv_block().unwrap();
         let deadline = Instant::now() + Duration::from_millis(10);
+        // A fixed hold duration raced here: the assertion only means something
+        // while the lock is actually held, and a slow wake put the attempt
+        // after the release. See `mutex_lock_block_timeout`.
         assert!(m.lock_sync_timeout(deadline).is_none());
+        release_tx.send_block(()).unwrap();
     }
 
     /// `lock_async_timeout`: succeeds on a free lock, times out while held.
@@ -296,16 +306,24 @@ mod suite {
             let deadline = Instant::now() + Duration::from_secs(1);
             assert!(m.lock_async_timeout(deadline).await.is_some());
 
+            // The holder waits to be told to release. Holding for a fixed
+            // 100 ms raced the same way `mutex_lock_block_timeout` did: the
+            // assertion below only means something while the lock is actually
+            // held, and a slow wake put the attempt after the release.
             let (tx, rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
             let m2 = Arc::clone(&m);
             wasm_lite_std::spawn(move || {
                 let _g = m2.lock_block();
                 tx.send_block(()).unwrap();
-                spin_for(Duration::from_millis(100));
+                release_rx.recv_block().unwrap();
             });
             rx.recv_async().await.unwrap();
             let deadline = Instant::now() + Duration::from_millis(10);
             assert!(m.lock_async_timeout(deadline).await.is_none());
+            // `send_spin`, not `send_block`: this runs on the browser main
+            // thread, where `Atomics.wait` is forbidden.
+            release_tx.send_spin(()).unwrap();
         });
     }
 

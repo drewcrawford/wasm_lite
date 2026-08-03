@@ -171,6 +171,35 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
 /// Run a plain `bin`: success is `main` completing without a trap.
 fn run_main(browser: &Browser, port: u16) -> Result<i32, String> {
     browser.goto(&format!("http://127.0.0.1:{port}/"))?;
+
+    // An application whose work outlives `main` — a render loop, an executor,
+    // anything driven from the event loop — otherwise "passes" the instant
+    // `main` returns, and its console is discarded on success. That is right
+    // for a doctest and useless for watching a program run, so
+    // `WASM_LITE_RUN_SECONDS` keeps the page alive and always prints what it
+    // logged.
+    if let Some(secs) = run_seconds() {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        while Instant::now() < deadline {
+            // Stop early if the program itself reported a failure; there is no
+            // point watching a dead instance for another minute.
+            if browser
+                .eval_bool("return !!globalThis.__wl_done && globalThis.__wl_done.ok === false;")?
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        let console = browser.eval_string(CONSOLE_JOIN)?;
+        if !console.is_empty() {
+            println!("{console}");
+        }
+        let failed = browser
+            .eval_bool("return !!globalThis.__wl_done && globalThis.__wl_done.ok === false;")?;
+        println!("test result: {}", if failed { "FAILED" } else { "ok" });
+        return Ok(if failed { 1 } else { 0 });
+    }
+
     // A hang is a failure of this program, not of the runner, so report what it
     // logged before it stopped. Without this a timeout says only "timed out",
     // which is the least informative thing we know about it.
@@ -430,6 +459,12 @@ fn thousands(value: f64) -> String {
 /// instantiates itself on several workers before it logs anything, so
 /// `WASM_LITE_TIMEOUT_SECS` raises it. An unparseable value is ignored rather
 /// than fatal — a typo in an env var should not stop the suite.
+fn run_seconds() -> Option<u64> {
+    std::env::var("WASM_LITE_RUN_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+}
+
 fn timeout_secs() -> u64 {
     std::env::var("WASM_LITE_TIMEOUT_SECS")
         .ok()
