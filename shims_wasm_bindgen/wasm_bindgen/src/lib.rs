@@ -179,7 +179,82 @@ pub mod __rt {
     };
 }
 
+/// Unwrap by *throwing* a JS exception rather than panicking.
+///
+/// # Caveat
+///
+/// The exception unwinds *through* the wasm frames without running Rust
+/// destructors, so the instance is left in the same suspect state a panic
+/// leaves it in — wasm_lite's glue marks it unusable. This matches
+/// wasm-bindgen, where `unwrap_throw` has the same hazard. It exists so that
+/// upstream code naming it compiles and reports a JS `Error` rather than an
+/// opaque abort, not because it is a recoverable path.
+pub trait UnwrapThrowExt<T> {
+    /// Unwrap, throwing a JS exception on failure.
+    fn unwrap_throw(self) -> T;
+    /// Unwrap, throwing `message` on failure.
+    fn expect_throw(self, message: &str) -> T;
+}
+
+impl<T> UnwrapThrowExt<T> for Option<T> {
+    fn unwrap_throw(self) -> T {
+        self.expect_throw("called `unwrap_throw` on a `None` value")
+    }
+    fn expect_throw(self, message: &str) -> T {
+        match self {
+            Some(v) => v,
+            None => throw_str(message),
+        }
+    }
+}
+
+impl<T, E: core::fmt::Debug> UnwrapThrowExt<T> for Result<T, E> {
+    fn unwrap_throw(self) -> T {
+        self.expect_throw("called `unwrap_throw` on an `Err` value")
+    }
+    fn expect_throw(self, message: &str) -> T {
+        match self {
+            Ok(v) => v,
+            Err(_) => throw_str(message),
+        }
+    }
+}
+
+/// Throw a JS `Error` with this message, never returning.
+///
+/// The throw happens inside a closure JS invokes, which is the only way Rust
+/// can raise a JS exception; the `unreachable!` is never reached because the
+/// exception unwinds the JS frame instead of returning.
+pub fn throw_str(message: &str) -> ! {
+    let err = JsError::new(message);
+    let thrower =
+        wasm_lite::Closure::new_variadic_fallible(move |_args| Err(JsObject::as_js(&err).clone()));
+    call_thrower(thrower.as_js_value());
+    unreachable!("the thrower always raises")
+}
+
+mod js {
+    use wasm_lite::JsValue;
+    wasm_lite::import! {
+        "Reflect" {
+            /// `Reflect.apply(f, this, args)`.
+            fn apply(f: &JsValue, this: &JsValue, args: &JsValue) -> JsValue;
+        }
+        "Array" {
+            /// `Array.of()` — an empty argument list.
+            fn of() -> JsValue;
+        }
+    }
+}
+
+fn call_thrower(f: &JsValue) {
+    // `Reflect.apply(f, null, [])` through a *non*-`Result` binding, so the
+    // closure's exception escapes as a real JS throw rather than being caught
+    // and handed back.
+    js::apply(f, &JsValue::null(), &js::of());
+}
+
 /// The names wasm-bindgen users expect from `wasm_bindgen::prelude::*`.
 pub mod prelude {
-    pub use crate::{JsCast, JsError, JsObject, JsValue, wasm_bindgen};
+    pub use crate::{JsCast, JsError, JsObject, JsValue, UnwrapThrowExt, wasm_bindgen};
 }

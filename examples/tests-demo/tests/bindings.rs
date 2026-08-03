@@ -586,4 +586,52 @@ fn a_zero_payload_is_some_not_none() {
     assert_eq!(at_opt_f32(&zeros, 2), Some(0.0));
 }
 
+/// JS relational operators. `None` is the answer JS gives for `NaN`, and it is
+/// the reason this is `PartialOrd` rather than `Ord`.
+#[wasm_lite_test]
+fn javascript_ordering_including_the_unordered_case() {
+    let one = JsValue::from_f64(1.0);
+    let two = JsValue::from_f64(2.0);
+    let nan = JsValue::from_f64(f64::NAN);
+
+    assert!(one < two);
+    assert!(two > one);
+    assert!(one <= JsValue::from_f64(1.0));
+    assert_eq!(one.partial_cmp(&two), Some(core::cmp::Ordering::Less));
+
+    // NaN is unordered against everything, itself included.
+    assert_eq!(nan.partial_cmp(&one), None);
+    assert_eq!(nan.partial_cmp(&nan), None);
+
+    // Strings compare lexicographically, as in JS.
+    assert!(JsValue::from_str("a") < JsValue::from_str("b"));
+}
+
+#[wasm_lite_test]
+fn type_predicates_and_loose_equality() {
+    assert!(parse("{}").is_object());
+    assert!(!parse("1").is_object());
+    assert!(!JsValue::NULL.is_object(), "null is not an object here");
+
+    assert!(JsValue::from_str("s").is_string());
+    assert!(JsValue::NULL.is_null());
+    assert!(JsValue::UNDEFINED.is_undefined());
+
+    assert!(JsValue::from_f64(1.0).is_truthy());
+    assert!(JsValue::from_f64(0.0).is_falsy());
+    assert!(JsValue::from_str("").is_falsy());
+
+    // `==` coerces where `===` does not — the whole reason both exist.
+    let one = JsValue::from_f64(1.0);
+    let one_str = JsValue::from_str("1");
+    assert!(one.loose_eq(&one_str));
+    assert_ne!(one, one_str, "strict equality says no");
+}
+
+#[wasm_lite_test]
+fn exponentiation() {
+    let two = JsValue::from_f64(2.0);
+    assert_eq!(two.pow(&JsValue::from_f64(10.0)).as_f64(), Some(1024.0));
+}
+
 wasm_lite::test_main!();

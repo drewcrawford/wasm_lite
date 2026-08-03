@@ -135,6 +135,11 @@ JS-only `>>>` and `~`). These are *JavaScript's* semantics, not Rust's: `+`
 concatenates strings, `/` yields `Infinity`, and the bitwise operators coerce
 to 32-bit integers.
 
+**`JsValue` also answers the questions JS code asks about a value** —
+`PartialOrd` (`None` for `NaN`, which is why it is not `Ord`), `loose_eq` for
+`==` against `PartialEq`'s `===`, `pow`, and the `is_object`/`is_function`/
+`is_string`/`is_null`/`is_undefined`/`is_truthy`/`is_bigint` predicates.
+
 **Primitives cross both ways** — `JsValue::from_f64`/`from_bool`/`from_str`/
 `null()`/`undefined()` (plus `From` impls for the numeric types, `bool` and
 `&str`) make one; `as_f64()`/`as_bool()`/`as_string()` read one back, returning

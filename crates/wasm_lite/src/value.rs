@@ -62,6 +62,25 @@ unsafe extern "C" {
     fn binop(op: u32, a: u32, b: u32) -> u32;
     #[link_name = "__wl_unop"]
     fn unop(op: u32, a: u32) -> u32;
+    #[link_name = "__wl_cmp"]
+    fn cmp3(a: u32, b: u32) -> i32;
+    #[link_name = "__wl_is"]
+    fn is_kind(kind: u32, a: u32) -> i32;
+}
+
+/// JavaScript's relational operators.
+///
+/// `None` where JS says neither `<`, `>` nor `==` holds — `NaN` against
+/// anything, and values whose coercion does not compare.
+impl PartialOrd for JsValue {
+    fn partial_cmp(&self, other: &JsValue) -> Option<core::cmp::Ordering> {
+        match unsafe { cmp3(self.idx, other.idx) } {
+            -1 => Some(core::cmp::Ordering::Less),
+            0 => Some(core::cmp::Ordering::Equal),
+            1 => Some(core::cmp::Ordering::Greater),
+            _ => None,
+        }
+    }
 }
 
 /// The JS operators, applied to the values two handles denote.
@@ -116,6 +135,51 @@ impl JsValue {
     /// JS `~` — bitwise complement, distinct from `Not`'s logical `!`.
     pub fn bit_not(&self) -> JsValue {
         JsValue::__wl_from_abi(unsafe { unop(2, self.idx) })
+    }
+
+    /// JS `**`.
+    pub fn pow(&self, exp: &JsValue) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { binop(11, self.idx, exp.idx) })
+    }
+
+    /// JS `==` — *loose* equality, which coerces. [`PartialEq`] is `===`.
+    pub fn loose_eq(&self, other: &JsValue) -> bool {
+        // The three-way comparison reports 0 for `==`, so loose equality falls
+        // out of it without a second import.
+        unsafe { cmp3(self.idx, other.idx) == 0 }
+    }
+
+    /// `typeof x === "object"` and not `null`.
+    pub fn is_object(&self) -> bool {
+        unsafe { is_kind(0, self.idx) != 0 }
+    }
+    /// `typeof x === "function"`.
+    pub fn is_function(&self) -> bool {
+        unsafe { is_kind(1, self.idx) != 0 }
+    }
+    /// `typeof x === "string"`.
+    pub fn is_string(&self) -> bool {
+        unsafe { is_kind(2, self.idx) != 0 }
+    }
+    /// `x === null`.
+    pub fn is_null(&self) -> bool {
+        unsafe { is_kind(3, self.idx) != 0 }
+    }
+    /// `x === undefined`.
+    pub fn is_undefined(&self) -> bool {
+        unsafe { is_kind(4, self.idx) != 0 }
+    }
+    /// Whether JS considers the value truthy.
+    pub fn is_truthy(&self) -> bool {
+        unsafe { is_kind(5, self.idx) != 0 }
+    }
+    /// Whether JS considers the value falsy.
+    pub fn is_falsy(&self) -> bool {
+        !self.is_truthy()
+    }
+    /// `typeof x === "bigint"`.
+    pub fn is_bigint(&self) -> bool {
+        unsafe { is_kind(6, self.idx) != 0 }
     }
 }
 
