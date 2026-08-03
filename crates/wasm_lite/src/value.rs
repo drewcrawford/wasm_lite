@@ -39,6 +39,72 @@ impl JsValue {
     }
 }
 
+// Runtime support imports; the generated glue always provides them.
+#[link(wasm_import_module = "__wasm_lite")]
+unsafe extern "C" {
+    #[link_name = "__wl_num"]
+    fn make_num(v: f64) -> u32;
+    #[link_name = "__wl_prim"]
+    fn make_prim(kind: u32) -> u32;
+    #[link_name = "__wl_str_val"]
+    fn make_str(ptr: *const u8, len: usize) -> u32;
+}
+
+impl JsValue {
+    /// A handle to the JS number `v`.
+    ///
+    /// Every JS number is a double, so this is the one numeric constructor;
+    /// the `From` impls below funnel into it.
+    pub fn from_f64(v: f64) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { make_num(v) })
+    }
+
+    /// A handle to a JS boolean.
+    pub fn from_bool(v: bool) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { make_prim(if v { 2 } else { 3 }) })
+    }
+
+    /// A handle to a JS string, copied out of wasm memory.
+    // Named to match wasm-bindgen's `JsValue::from_str`, which the shim
+    // re-exports, so upstream call sites compile unchanged. It is infallible,
+    // so it is not `FromStr` and never could be.
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { make_str(s.as_ptr(), s.len()) })
+    }
+
+    /// A handle to JS `null`.
+    pub fn null() -> JsValue {
+        JsValue::__wl_from_abi(unsafe { make_prim(0) })
+    }
+
+    /// A handle to JS `undefined`.
+    pub fn undefined() -> JsValue {
+        JsValue::__wl_from_abi(unsafe { make_prim(1) })
+    }
+}
+
+macro_rules! __from_number {
+    ($($t:ty),*) => { $(
+        impl From<$t> for JsValue {
+            fn from(v: $t) -> JsValue { JsValue::from_f64(v as f64) }
+        }
+    )* };
+}
+__from_number!(i8, i16, i32, u8, u16, u32, f32, f64);
+
+impl From<bool> for JsValue {
+    fn from(v: bool) -> JsValue {
+        JsValue::from_bool(v)
+    }
+}
+
+impl From<&str> for JsValue {
+    fn from(v: &str) -> JsValue {
+        JsValue::from_str(v)
+    }
+}
+
 impl Clone for JsValue {
     /// A second handle to the same JavaScript value.
     ///

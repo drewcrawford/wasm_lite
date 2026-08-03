@@ -114,6 +114,11 @@ passes two arguments and `find` passes three — and it avoids a trampoline per
 allocates a table slot rather than copying the object: both handles denote the
 same JS value and each frees only its own slot.
 
+**Primitives can be turned into handles** — `JsValue::from_f64`, `from_bool`,
+`from_str`, `null()`, `undefined()`, plus `From` impls for the numeric types,
+`bool` and `&str`. Needed wherever a binding passes a number or string into a
+position typed as an object.
+
 **Awaiting JS promises** — `JsFuture` wraps a promise as a Rust `Future`
 resolving to `Result<JsValue, JsValue>`: `Ok` for fulfilled, `Err` for
 rejected, the same split as binding a throwing import as `Result<_, JsValue>`.

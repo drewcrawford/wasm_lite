@@ -87,6 +87,11 @@ wasm_lite::import! {
         fn parse_u64(text: &str) -> u64 as "BigInt";
     }
 
+    "globalThis" {
+        /// `String(v)` — renders any handle, so a test can see what it holds.
+        fn render(v: &JsValue) -> String as "String";
+    }
+
     "Object" {
         /// `Object.freeze(o)` bound as a fallible *void* operation. It does
         /// return the object in JS; binding it as `Result<(), _>` discards that
@@ -307,6 +312,42 @@ fn cloning_a_handle_shares_the_object() {
     drop(alias);
     assert_eq!(pathname(&url), "/a");
     assert_eq!(hash(&url), "#two");
+}
+
+/// Handles to primitive JS values, which is what `JsValue::from` needs to
+/// produce for a binding to pass a number or a string where an object is
+/// expected.
+#[wasm_lite_test]
+fn primitive_handles_hold_the_right_values() {
+    assert_eq!(render(&JsValue::from_f64(1.5)), "1.5");
+    assert_eq!(render(&JsValue::from_f64(-0.25)), "-0.25");
+    assert_eq!(render(&JsValue::from(42u32)), "42");
+    assert_eq!(render(&JsValue::from(-7i32)), "-7");
+
+    assert_eq!(render(&JsValue::from_bool(true)), "true");
+    assert_eq!(render(&JsValue::from_bool(false)), "false");
+
+    assert_eq!(render(&JsValue::from_str("hi there")), "hi there");
+    assert_eq!(render(&JsValue::from("")), "");
+
+    assert_eq!(render(&JsValue::null()), "null");
+    assert_eq!(render(&JsValue::undefined()), "undefined");
+}
+
+/// `false` and `undefined` must not collapse into the same slot: the four
+/// singletons share one import, keyed by a discriminant, which is exactly where
+/// an off-by-one would show.
+#[wasm_lite_test]
+fn the_primitive_singletons_stay_distinct() {
+    let values = [
+        (JsValue::null(), "null"),
+        (JsValue::undefined(), "undefined"),
+        (JsValue::from_bool(true), "true"),
+        (JsValue::from_bool(false), "false"),
+    ];
+    for (v, expected) in &values {
+        assert_eq!(render(v), *expected);
+    }
 }
 
 wasm_lite::test_main!();

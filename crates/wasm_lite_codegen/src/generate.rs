@@ -62,6 +62,13 @@ function __wl_drop(idx) {
 function __wl_clone(idx) {
     return __wl_add(__wl_heap[idx]);
 }
+// Handles to primitive JS values. `kind` picks null/undefined/true/false so one
+// import covers the four singletons.
+function __wl_num(v) { return __wl_add(v); }
+function __wl_prim(kind) {
+    return __wl_add(kind === 0 ? null : kind === 1 ? undefined : kind === 2);
+}
+function __wl_str_val(ptr, len) { return __wl_add(__wl_str(ptr, len)); }
 
 // Async executor support. Drive one executor turn; a panic in a polled task
 // traps here, which we turn into a test failure (fail-closed) rather than an
@@ -338,7 +345,7 @@ pub fn generate_glue(
     // to drive the async executor; shared-memory builds also get __wl_spawn for
     // thread spawning. (Unused entries are harmless — the wasm only imports what
     // it references.)
-    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone";
+    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_prim: __wl_prim, __wl_str_val: __wl_str_val";
     if memory.is_some() {
         let _ = writeln!(
             js,
@@ -946,7 +953,7 @@ mod tests {
         ));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
-        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone };"));
+        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_prim: __wl_prim, __wl_str_val: __wl_str_val };"));
     }
 
     #[test]
