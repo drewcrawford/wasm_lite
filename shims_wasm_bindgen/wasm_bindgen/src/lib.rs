@@ -44,6 +44,7 @@ pub use wasm_lite::JsValue;
 
 pub mod closure;
 pub mod error;
+pub mod snippet;
 pub mod views;
 pub use closure::Closure;
 pub use error::JsError;
