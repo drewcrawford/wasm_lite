@@ -48,6 +48,17 @@ wasm_lite::import! {
         #[indexing_setter]
         fn put(this: &JsValue, i: u32, value: f64);
 
+        /// Sparse reads: past the end is `undefined`, i.e. `None`. Each width
+        /// takes a different path through the sret buffer.
+        #[indexing_getter]
+        fn at_opt_i64(this: &JsValue, i: u32) -> Option<i64>;
+        #[indexing_getter]
+        fn at_opt_u8(this: &JsValue, i: u32) -> Option<u8>;
+        #[indexing_getter]
+        fn at_opt_f32(this: &JsValue, i: u32) -> Option<f32>;
+        #[indexing_getter]
+        fn at_opt_i16(this: &JsValue, i: u32) -> Option<i16>;
+
         /// `delete arr[i]`
         #[indexing_deleter]
         fn remove_at(this: &JsValue, i: u32) -> bool;
@@ -544,6 +555,35 @@ fn bitwise_operators_coerce_to_32_bit_integers() {
     // `!` is logical and `~` is bitwise; Rust spells both `!`.
     assert_eq!((!&JsValue::from_f64(0.0)).as_bool(), Some(true));
     assert_eq!(a.bit_not().as_f64(), Some(-13.0));
+}
+
+/// `Option<T>` returns put `T` in an sret buffer, and each width reads and
+/// writes it differently — 64-bit through BigInt, the narrow ones through
+/// sized DataView accessors.
+#[wasm_lite_test]
+fn option_returns_carry_every_scalar_width() {
+    let arr = parse("[7, 255, -32768, 1.5]");
+
+    assert_eq!(at_opt_i64(&arr, 0), Some(7));
+    assert_eq!(at_opt_u8(&arr, 1), Some(255), "u8 at its maximum");
+    assert_eq!(at_opt_i16(&arr, 2), Some(-32768), "i16 at its minimum");
+    assert_eq!(at_opt_f32(&arr, 3), Some(1.5));
+
+    // Past the end is `undefined`, which is `None` — and must not be confused
+    // with a zero payload.
+    assert_eq!(at_opt_i64(&arr, 9), None);
+    assert_eq!(at_opt_u8(&arr, 9), None);
+    assert_eq!(at_opt_f32(&arr, 9), None);
+}
+
+/// Zero is a value, not an absence — the case a sentinel-based encoding would
+/// get wrong.
+#[wasm_lite_test]
+fn a_zero_payload_is_some_not_none() {
+    let zeros = parse("[0, 0, 0]");
+    assert_eq!(at_opt_i64(&zeros, 0), Some(0));
+    assert_eq!(at_opt_u8(&zeros, 1), Some(0));
+    assert_eq!(at_opt_f32(&zeros, 2), Some(0.0));
 }
 
 wasm_lite::test_main!();

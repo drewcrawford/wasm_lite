@@ -496,8 +496,20 @@ fn emit_export(js: &mut String, export: &Export) {
                 match p {
                     // `Option<()>` carries nothing beyond its discriminant.
                     Payload::Unit => {}
-                    Payload::I32 | Payload::U32 | Payload::F64 => {
+                    Payload::I32
+                    | Payload::U32
+                    | Payload::F64
+                    | Payload::I8
+                    | Payload::I16
+                    | Payload::U8
+                    | Payload::U16
+                    | Payload::F32 => {
                         wasm_args.push(format!("(__s{i} ? p{i} : 0)"));
+                    }
+                    // A 64-bit wasm param is a BigInt, so its absent value has
+                    // to be one too.
+                    Payload::I64 | Payload::U64 => {
+                        wasm_args.push(format!("(__s{i} ? BigInt(p{i}) : 0n)"));
                     }
                     Payload::Bool => wasm_args.push(format!("(__s{i} ? (p{i} ? 1 : 0) : 0)")),
                     Payload::Handle => {
@@ -657,6 +669,14 @@ fn read_payload(p: Payload, off: &str, sfx: &str) -> (Vec<String>, String) {
         // Nothing was written, so there is nothing to read; the discriminant
         // already carried the whole answer.
         Payload::Unit => (vec![], "undefined".to_string()),
+        Payload::I8 => (vec![], format!("__dv.getInt8({off})")),
+        Payload::I16 => (vec![], format!("__dv.getInt16({off}, true)")),
+        Payload::U8 => (vec![], format!("__dv.getUint8({off})")),
+        Payload::U16 => (vec![], format!("__dv.getUint16({off}, true)")),
+        // 64-bit payloads are BigInts on the JS side, as everywhere else.
+        Payload::I64 => (vec![], format!("__dv.getBigInt64({off}, true)")),
+        Payload::U64 => (vec![], format!("__dv.getBigUint64({off}, true)")),
+        Payload::F32 => (vec![], format!("__dv.getFloat32({off}, true)")),
         Payload::I32 => (vec![], format!("__dv.getInt32({off}, true)")),
         Payload::U32 => (vec![], format!("__dv.getUint32({off}, true)")),
         Payload::F64 => (vec![], format!("__dv.getFloat64({off}, true)")),
@@ -694,6 +714,22 @@ fn write_payload(p: Payload, off: &str, val: &str) -> (Vec<String>, Vec<String>)
         // is the call itself, and skipping it would skip the side effect the
         // binding exists for.
         Payload::Unit => (vec![format!("void ({val});")], vec![]),
+        Payload::I8 => (vec![], vec![format!("__dv.setInt8({off}, {val});")]),
+        Payload::I16 => (vec![], vec![format!("__dv.setInt16({off}, {val}, true);")]),
+        Payload::U8 => (vec![], vec![format!("__dv.setUint8({off}, {val});")]),
+        Payload::U16 => (vec![], vec![format!("__dv.setUint16({off}, {val}, true);")]),
+        Payload::I64 => (
+            vec![],
+            vec![format!("__dv.setBigInt64({off}, BigInt({val}), true);")],
+        ),
+        Payload::U64 => (
+            vec![],
+            vec![format!("__dv.setBigUint64({off}, BigInt({val}), true);")],
+        ),
+        Payload::F32 => (
+            vec![],
+            vec![format!("__dv.setFloat32({off}, {val}, true);")],
+        ),
         Payload::I32 => (vec![], vec![format!("__dv.setInt32({off}, {val}, true);")]),
         Payload::U32 => (vec![], vec![format!("__dv.setUint32({off}, {val}, true);")]),
         Payload::F64 => (
@@ -801,7 +837,15 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                     // `Option<()>` occupies no parameter beyond the
                     // discriminant, so there is nothing to unmarshal.
                     Payload::Unit => "undefined".to_string(),
-                    Payload::I32 | Payload::F64 => next_param(&mut params),
+                    Payload::I32
+                    | Payload::F64
+                    | Payload::I8
+                    | Payload::I16
+                    | Payload::U8
+                    | Payload::U16
+                    | Payload::F32
+                    | Payload::I64
+                    | Payload::U64 => next_param(&mut params),
                     // The wasm i32 param surfaces as a signed Number; reinterpret.
                     Payload::U32 => format!("({} >>> 0)", next_param(&mut params)),
                     Payload::Bool => format!("Boolean({})", next_param(&mut params)),

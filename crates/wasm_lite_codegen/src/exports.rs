@@ -38,6 +38,13 @@ pub enum Payload {
     /// No value at all — `Result<(), E>`, a fallible operation whose success
     /// carries nothing. The sret buffer holds only the discriminant.
     Unit,
+    I8,
+    I16,
+    U8,
+    U16,
+    I64,
+    U64,
+    F32,
     I32,
     U32,
     F64,
@@ -60,6 +67,15 @@ impl Payload {
     pub(crate) fn from_tag(tag: &str) -> Option<Self> {
         Some(match tag {
             "unit" => Payload::Unit,
+            "i8" => Payload::I8,
+            "i16" => Payload::I16,
+            "u8" => Payload::U8,
+            "u16" => Payload::U16,
+            "i64" => Payload::I64,
+            "u64" => Payload::U64,
+            "f32" => Payload::F32,
+            "isize" => Payload::I32,
+            "usize" => Payload::U32,
             "i32" => Payload::I32,
             "u32" => Payload::U32,
             "f64" => Payload::F64,

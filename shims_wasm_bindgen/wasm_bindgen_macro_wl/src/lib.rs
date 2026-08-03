@@ -1017,9 +1017,14 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
     // Module names must not collide when two classes share a member name.
     let bare = name.to_string();
     let bare = bare.trim_start_matches("r#");
+    // Hashed, not just named: js-sys generates the same member on many types
+    // from one macro, and `__wb_<Type>_<name>` still collides when the
+    // generated `impl` targets share a spelling. The signature is what
+    // actually distinguishes them.
+    let disambiguator = token_hash(&quote! { #impl_target #ns_lit #js_lit #(#shim_params)* });
     let module = match &impl_target {
-        Some(t) => format_ident!("__wb_{}_{}", type_ident(t), bare),
-        None => format_ident!("__wb_{}", bare),
+        Some(t) => format_ident!("__wb_{}_{}_{:x}", type_ident(t), bare, disambiguator),
+        None => format_ident!("__wb_{}_{:x}", bare, disambiguator),
     };
     let call = quote! { #module::shim( #(#call_args),* ) };
 
@@ -1154,6 +1159,20 @@ fn constructed_ty(ty: &Type) -> &Type {
         return constructed_ty(ok);
     }
     ty
+}
+
+/// A stable hash of a token stream, for disambiguating generated module names.
+///
+/// FNV-1a over the rendered tokens: a proc macro has no ambient counter, and
+/// spans are not usable as identifiers, so the signature itself has to be what
+/// makes the name unique.
+fn token_hash(tokens: &TokenStream2) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in tokens.to_string().bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
 }
 
 /// A module-name-safe rendering of a type's last path segment.

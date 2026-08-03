@@ -428,7 +428,7 @@ macro_rules! __impl_sret_scalar {
         }
     )* };
 }
-__impl_sret_scalar!(i32, u32, f64);
+__impl_sret_scalar!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize, f32, f64);
 
 impl FromSretPayload for () {
     unsafe fn __wl_read(_base: *const u8) -> Self {}
