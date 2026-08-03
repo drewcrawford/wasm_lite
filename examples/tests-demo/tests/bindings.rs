@@ -284,4 +284,29 @@ fn a_fallible_void_call_maps_a_throw_to_err() {
     assert!(is_frozen(&o));
 }
 
+/// A cloned handle denotes the *same* JS value, not a copy of it — the table
+/// holds references. Mutating through one must be visible through the other,
+/// and each must free only its own slot.
+#[wasm_lite_test]
+fn cloning_a_handle_shares_the_object() {
+    let url = new_url("https://example.com/a");
+    let alias = url.clone();
+
+    set_hash(&url, "one");
+    assert_eq!(hash(&alias), "#one", "the clone sees the write");
+
+    set_hash(&alias, "two");
+    assert_eq!(
+        hash(&url),
+        "#two",
+        "and the original sees the clone's write"
+    );
+
+    // Dropping one leaves the other perfectly usable; a shared slot would make
+    // this a use-after-free.
+    drop(alias);
+    assert_eq!(pathname(&url), "/a");
+    assert_eq!(hash(&url), "#two");
+}
+
 wasm_lite::test_main!();

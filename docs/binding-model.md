@@ -104,8 +104,15 @@ nobody unregistered — calls a no-op instead of reading freed memory. Calling a
 closure takes it out of the registry for the duration, so re-entrant calls
 no-op rather than aliasing `&mut` to the captured state.
 
-Zero- and one-argument (`Closure::new` / `Closure::new_with_arg`) signatures
-today.
+Three shapes: `Closure::new` (no arguments), `Closure::new_with_arg` (one), and
+`Closure::new_variadic`, which takes `&[JsValue]` and may return one. The
+variadic form is what a general binding layer needs — `Array.prototype.sort`
+passes two arguments and `find` passes three — and it avoids a trampoline per
+(arity × return type) combination.
+
+**`JsValue` is `Clone`.** The value table holds references, so cloning
+allocates a table slot rather than copying the object: both handles denote the
+same JS value and each frees only its own slot.
 
 **Awaiting JS promises** — `JsFuture` wraps a promise as a Rust `Future`
 resolving to `Result<JsValue, JsValue>`: `Ok` for fulfilled, `Err` for

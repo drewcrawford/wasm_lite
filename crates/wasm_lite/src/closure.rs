@@ -105,10 +105,12 @@ impl<T> Registry<T> {
 
 type Fn0 = Box<dyn FnMut()>;
 type Fn1 = Box<dyn FnMut(JsValue)>;
+type FnN = Box<dyn FnMut(&[JsValue]) -> Option<JsValue>>;
 
 thread_local! {
     static ZERO_ARG: RefCell<Registry<Fn0>> = const { RefCell::new(Registry::new()) };
     static ONE_ARG: RefCell<Registry<Fn1>> = const { RefCell::new(Registry::new()) };
+    static ANY_ARGS: RefCell<Registry<FnN>> = const { RefCell::new(Registry::new()) };
 }
 
 /// Run `id`'s closure, with the registry unborrowed for the duration of the
@@ -144,6 +146,42 @@ pub extern "C" fn __wl_closure_call_1(id: u32, arg: u32) {
         "the closure is called at most once per trampoline entry"
     )));
     drop(arg);
+}
+
+/// Trampoline for a closure of any arity.
+///
+/// JS packs one value-table index per argument into a buffer it allocated with
+/// `__wl_malloc`, and frees it after the call. Ownership of each handle
+/// transfers to Rust here, matching the one-argument trampoline.
+///
+/// The result is the handle **plus one**, so that `0` can mean "no value"
+/// without colliding with table index 0.
+///
+/// # Safety
+/// `args_ptr` must point at `argc` consecutive `u32` table indices.
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __wl_closure_call_n(id: u32, argc: u32, args_ptr: u32) -> u32 {
+    let raw = unsafe { core::slice::from_raw_parts(args_ptr as *const u32, argc as usize) };
+    // Wrapped up front so the handles are freed on drop whatever happens next
+    // — including the closure having already gone away.
+    let args: Vec<JsValue> = raw.iter().map(|i| JsValue::__wl_from_abi(*i)).collect();
+
+    let taken = ANY_ARGS.with(|r| r.borrow_mut().borrow_out(id));
+    let Some(mut f) = taken else { return 0 };
+    let result = f(&args);
+    ANY_ARGS.with(|r| r.borrow_mut().give_back(id, f));
+
+    match result {
+        // `+ 1` so 0 stays free to mean "returned nothing".
+        Some(v) => {
+            let idx = v.__wl_abi();
+            // JS takes ownership of the slot from here.
+            core::mem::forget(v);
+            idx + 1
+        }
+        None => 0,
+    }
 }
 
 /// A Rust closure exposed to JavaScript as a function value.
@@ -199,6 +237,7 @@ pub struct Closure {
 enum Arity {
     Zero,
     One,
+    Any,
 }
 
 impl Closure {
@@ -245,6 +284,31 @@ impl Closure {
         }
     }
 
+    /// Wrap a closure taking however many arguments JavaScript passes.
+    ///
+    /// The callback receives them as a slice of handles and may return one.
+    /// This is the shape a general binding layer needs: `Array.prototype.sort`
+    /// passes two elements, `find` passes three, and adding a trampoline per
+    /// shape would multiply arity by return type.
+    ///
+    /// Arguments are owned — dropping the slice frees their table slots — so a
+    /// callback that wants to keep one should move it out.
+    pub fn new_variadic<F>(f: F) -> Closure
+    where
+        F: FnMut(&[JsValue]) -> Option<JsValue> + 'static,
+    {
+        #[cfg(target_arch = "wasm32")]
+        #[used]
+        static KEEP: unsafe extern "C" fn(u32, u32, u32) -> u32 = __wl_closure_call_n;
+
+        let id = ANY_ARGS.with(|r| r.borrow_mut().insert(Box::new(f)));
+        Closure {
+            handle: JsValue::__wl_from_abi(unsafe { closure_new(id, 2) }),
+            id,
+            arity: Arity::Any,
+        }
+    }
+
     /// The JS function value, for passing to an import.
     pub fn as_js_value(&self) -> &JsValue {
         &self.handle
@@ -266,6 +330,7 @@ impl Drop for Closure {
         match self.arity {
             Arity::Zero => ZERO_ARG.with(|r| r.borrow_mut().remove(self.id)),
             Arity::One => ONE_ARG.with(|r| r.borrow_mut().remove(self.id)),
+            Arity::Any => ANY_ARGS.with(|r| r.borrow_mut().remove(self.id)),
         }
         // `handle` drops itself, freeing the value-table slot. Any JS reference
         // that outlives this now points at a function whose registry entry is

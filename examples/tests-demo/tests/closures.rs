@@ -20,7 +20,20 @@ wasm_lite::import! {
         /// Reads a handle's *value* back as text, so a test can assert on it.
         fn stringify(v: &JsValue) -> String;
     }
+    "globalThis" {
+        /// `Number(v)` — reached as a member of `globalThis`, which is its own
+        /// property. Produces a handle holding a JS *number*, which is what a
+        /// comparator has to return.
+        fn number_of(v: f64) -> JsValue as "Number";
+    }
     "Array" {
+        /// `arr.sort(cmp)` — a callback taking *two* arguments, which is the
+        /// shape a per-arity trampoline cannot cover.
+        fn sort_with(this: &JsValue, cmp: &JsValue) -> JsValue as "sort";
+        /// `arr.map(f)` — the callback gets (element, index, array).
+        fn map_with(this: &JsValue, f: &JsValue) -> JsValue as "map";
+        #[getter]
+        fn length_of(this: &JsValue) -> f64 as "length";
         /// `Array.of(v)` — a one-element array, used both to build argument
         /// lists and to park a JS value somewhere Rust does not own it.
         fn of1(v: f64) -> JsValue as "of";
@@ -148,6 +161,59 @@ fn a_reused_id_does_not_resurrect_the_old_closure() {
     call0(second.as_js_value());
 
     assert_eq!(*log.borrow(), vec!["first", "second"]);
+}
+
+/// A variadic closure receives however many arguments JS passes.
+#[wasm_lite_test]
+fn a_variadic_closure_sees_every_argument() {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    let cb = Closure::new_variadic(move |args: &[JsValue]| {
+        sink.borrow_mut().push(args.len());
+        None
+    });
+
+    let arr = parse("[3, 1, 2]");
+    let _sorted = map_with(&arr, cb.as_js_value());
+
+    // `map` passes (element, index, array) for each of the three elements.
+    assert_eq!(*seen.borrow(), vec![3, 3, 3]);
+}
+
+/// The callback's *return value* has to reach JS, which is what makes a
+/// comparator work at all.
+#[wasm_lite_test]
+fn a_variadic_closure_returns_a_value_to_javascript() {
+    // Descending sort: return b - a. The arguments arrive as handles, so read
+    // them back through JSON to compare.
+    let cmp = Closure::new_variadic(move |args: &[JsValue]| {
+        let a: f64 = stringify(&args[0]).parse().expect("a number");
+        let b: f64 = stringify(&args[1]).parse().expect("a number");
+        Some(number_of(b - a))
+    });
+
+    let arr = parse("[1, 3, 2]");
+    let sorted = sort_with(&arr, cmp.as_js_value());
+    assert_eq!(
+        stringify(&sorted),
+        "[3,2,1]",
+        "the comparator drove the sort"
+    );
+}
+
+/// Returning `None` must reach JS as `undefined`, not as table index 0 — which
+/// is why the trampoline returns the handle plus one.
+#[wasm_lite_test]
+fn returning_none_is_undefined_not_handle_zero() {
+    let cb = Closure::new_variadic(move |_args: &[JsValue]| None);
+    let arr = parse("[1, 2]");
+    let mapped = map_with(&arr, cb.as_js_value());
+    assert_eq!(
+        stringify(&mapped),
+        "[null,null]",
+        "undefined maps to null in JSON"
+    );
+    assert_eq!(length_of(&mapped), 2.0);
 }
 
 wasm_lite::test_main!();

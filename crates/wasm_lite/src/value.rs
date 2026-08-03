@@ -39,6 +39,24 @@ impl JsValue {
     }
 }
 
+impl Clone for JsValue {
+    /// A second handle to the same JavaScript value.
+    ///
+    /// The value table holds references, so this allocates a table slot rather
+    /// than copying the object: both handles denote the *same* JS value, and
+    /// each frees its own slot on drop. That matches how JS references behave,
+    /// and it is what lets generated bindings derive `Clone` on their newtypes.
+    fn clone(&self) -> JsValue {
+        // Runtime support import; the generated glue always provides it.
+        #[link(wasm_import_module = "__wasm_lite")]
+        unsafe extern "C" {
+            #[link_name = "__wl_clone"]
+            fn clone_handle(idx: u32) -> u32;
+        }
+        JsValue::__wl_from_abi(unsafe { clone_handle(self.idx) })
+    }
+}
+
 impl fmt::Debug for JsValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("JsValue").field("idx", &self.idx).finish()

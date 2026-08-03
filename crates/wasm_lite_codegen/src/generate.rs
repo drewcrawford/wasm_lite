@@ -57,6 +57,11 @@ function __wl_drop(idx) {
     __wl_heap[idx] = undefined;
     __wl_free.push(idx);
 }
+// A second, independently-owned handle to the same JS value. The table holds
+// references, so this is a slot allocation, not a copy of the object.
+function __wl_clone(idx) {
+    return __wl_add(__wl_heap[idx]);
+}
 
 // Async executor support. Drive one executor turn; a panic in a polled task
 // traps here, which we turn into a test failure (fail-closed) rather than an
@@ -131,9 +136,30 @@ function __wl_check_live() {
 // freed memory. Arity picks the trampoline; a one-argument closure takes
 // ownership of its argument's table slot, matching the export convention.
 function __wl_closure_new(id, arity) {
-    const f = arity === 0
-        ? () => { __wl_check_live(); __wl_instance.exports.__wl_closure_call_0(id); }
-        : (a) => { __wl_check_live(); __wl_instance.exports.__wl_closure_call_1(id, __wl_add(a)); };
+    let f;
+    if (arity === 0) {
+        f = () => { __wl_check_live(); __wl_instance.exports.__wl_closure_call_0(id); };
+    } else if (arity === 1) {
+        f = (a) => { __wl_check_live(); __wl_instance.exports.__wl_closure_call_1(id, __wl_add(a)); };
+    } else {
+        // Variadic: pack one table index per argument into a buffer wasm can
+        // read. The Uint32Array view is taken *after* the malloc, which may
+        // grow memory and detach any earlier view.
+        f = function (...args) {
+            __wl_check_live();
+            const n = args.length;
+            const ptr = __wl_instance.exports.__wl_malloc(n * 4);
+            const view = new Uint32Array(__wl_memory.buffer, ptr, n);
+            for (let i = 0; i < n; i++) view[i] = __wl_add(args[i]);
+            const r = __wl_instance.exports.__wl_closure_call_n(id, n, ptr);
+            __wl_instance.exports.__wl_free(ptr, n * 4);
+            // The result is the handle plus one, so 0 can mean: returned nothing.
+            if (r === 0) return undefined;
+            const out = __wl_obj(r - 1);
+            __wl_drop(r - 1);
+            return out;
+        };
+    }
     return __wl_add(f);
 }
 
@@ -312,7 +338,7 @@ pub fn generate_glue(
     // to drive the async executor; shared-memory builds also get __wl_spawn for
     // thread spawning. (Unused entries are harmless — the wasm only imports what
     // it references.)
-    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new";
+    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone";
     if memory.is_some() {
         let _ = writeln!(
             js,
@@ -920,7 +946,7 @@ mod tests {
         ));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
-        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new };"));
+        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone };"));
     }
 
     #[test]
