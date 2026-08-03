@@ -193,3 +193,12 @@ impl<T: ?Sized> Closure<T> {
         crate::JsObject::into_js(self)
     }
 }
+
+// There is deliberately no `IntoWasmClosure<dyn FnMut(&T)>`. It would overlap
+// the by-value impl above — `dyn FnMut(X)` with `X = &Y` matches both — and
+// rustc only tolerates that under a future-compatibility lint, so it is not
+// something to keep. Ruling it out properly needs negative reasoning
+// (`&Y: !FromJs`), which stable Rust does not have.
+//
+// The only crate in this graph that wanted it, `wasm_safe_thread`, is refused
+// earlier anyway for using `inline_js`.

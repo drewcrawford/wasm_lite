@@ -64,7 +64,15 @@ pub fn wasm_bindgen(attr: TokenStream, item: TokenStream) -> TokenStream {
 fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
     let parsed: Item = syn::parse2(item)?;
     match parsed {
-        Item::ForeignMod(fm) => extern_block(fm),
+        Item::ForeignMod(fm) => {
+            // The *block's* own attribute matters: `inline_js`/`module` say the
+            // bindings live in a JS module rather than on `globalThis`.
+            // Ignoring it does not fail loudly — it generates glue that looks
+            // the functions up in the wrong place and throws at the first call,
+            // which is how `wasm_safe_thread` failed before this check.
+            check_block_attr(&attr)?;
+            extern_block(fm)
+        }
         Item::Fn(f) => {
             // `#[wasm_bindgen]` on a Rust fn exports it to JS, which is exactly
             // what wasm_lite's `#[export]` does.
@@ -180,6 +188,30 @@ fn string_enum(e: syn::ItemEnum) -> syn::Result<TokenStream2> {
             }
         }
     })
+}
+
+/// Reject the block-level options that change where bindings are looked up.
+///
+/// `inline_js`, `module` and `raw_module` all mean "these live in a JS module".
+/// wasm_lite's codegen resolves every import against `globalThis`, so honouring
+/// them needs a codegen feature, not a macro change — and pretending otherwise
+/// produces glue that throws on first use.
+fn check_block_attr(attr: &TokenStream2) -> syn::Result<()> {
+    let text = attr.to_string();
+    for opt in ["inline_js", "raw_module", "module"] {
+        if text.contains(opt) {
+            return Err(Error::new_spanned(
+                attr,
+                format!(
+                    "#[wasm_bindgen({opt} = ..)] is not supported by the wasm_lite shim: it \
+                     says these bindings live in a JS module, and wasm_lite's codegen \
+                     resolves imports against `globalThis`. Supporting it needs a codegen \
+                     feature; ignoring it would generate glue that throws on first call."
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
