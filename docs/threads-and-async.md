@@ -76,8 +76,13 @@ glue behind a single `__wl_spawn` import:
 
 The allocation above happens on whichever thread called `spawn`, but the
 `new Worker(…)` does not: if the caller is itself a worker, the glue posts the
-already-allocated pointers up to its parent, and so on until the main thread
-creates it. One `postMessage` per spawn, and it composes to any nesting depth.
+already-allocated pointers to its creator, which creates the worker. One
+`postMessage` per spawn.
+
+Because of that rule, the main thread ends up creating *every* worker, so every
+worker's creator **is** the main thread and the hop is always exactly one — there
+is no chain to walk and no way for an intermediate parent to have exited first.
+Nesting depth in Rust is unbounded; the messaging is flat.
 
 That indirection is not tidiness. **Chrome fetches a nested worker's module
 script through its parent, and a parent sitting in `Atomics.wait` never services

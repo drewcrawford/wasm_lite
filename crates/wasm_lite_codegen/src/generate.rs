@@ -371,9 +371,13 @@ function __wl_spawn(work) {{
     __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize);
 }}
 
-// Create the worker, or ask our parent to. Called with a stack and TLS block
+// Create the worker, or ask our creator to. Called with a stack and TLS block
 // already allocated, so it is position-independent: whoever ends up running it
 // hands the same pointers to the new thread.
+//
+// Because every worker takes this path, the main thread creates all of them —
+// so a worker's creator is always the main thread and this is always one hop,
+// never a chain. Rust-side nesting depth is unbounded; the messaging is flat.
 function __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize) {{
     if (__wl_is_worker) {{
         self.postMessage({{ __wl_spawn_req: [work, stackPtr, tlsPtr, tlsSize] }});
