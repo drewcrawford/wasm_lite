@@ -142,6 +142,38 @@ fn string_enum(e: syn::ItemEnum) -> syn::Result<TokenStream2> {
             }
         }
 
+        // Allowed despite `JsValue` being foreign: the enum is local to the
+        // crate this expands in.
+        impl ::core::convert::From<#name> for ::wasm_bindgen::__rt::JsValue {
+            fn from(v: #name) -> ::wasm_bindgen::__rt::JsValue {
+                ::wasm_bindgen::JsValue::from_str(v.to_js_str())
+            }
+        }
+
+        impl ::wasm_bindgen::JsArg for #name {
+            fn js_arg(&self) -> ::wasm_bindgen::JsArgRef<'_> {
+                ::wasm_bindgen::JsArgRef::Owned(
+                    ::wasm_bindgen::JsValue::from_str(self.to_js_str()),
+                )
+            }
+        }
+
+        impl ::wasm_bindgen::FromJs for #name {
+            fn from_js_value(v: ::wasm_bindgen::__rt::JsValue) -> Self {
+                let s = ::wasm_bindgen::JsValue::as_string(&v).unwrap_or_default();
+                match #name::from_js_str(&s) {
+                    ::core::option::Option::Some(v) => v,
+                    // The binding says the JS side only ever produces these
+                    // strings; anything else is a contract violation worth
+                    // naming rather than papering over with a default.
+                    ::core::option::Option::None => ::core::panic!(
+                        concat!("unexpected value for ", stringify!(#name), ": {:?}"),
+                        s
+                    ),
+                }
+            }
+        }
+
         impl ::core::fmt::Display for #name {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 f.write_str(self.to_js_str())
@@ -620,6 +652,15 @@ fn deref_ty(ty: &Type) -> &Type {
     }
 }
 
+/// The type inside a `Clamped<T>`, if any.
+///
+/// `Clamped` marks a byte buffer as JS's clamped kind; the bytes themselves
+/// cross the same way, so the wrapper is unwrapped for marshalling and put
+/// back on the Rust side.
+fn clamped_inner(ty: &Type) -> Option<&Type> {
+    generic_inner(deref_ty(ty), "Clamped")
+}
+
 /// Just the `#[cfg]`s, for items that must be gated but take no other
 /// attributes — the per-binding shim module in particular. Without this the
 /// wrapper is gated and its module is not, so paired declarations still
@@ -650,6 +691,9 @@ fn passthrough_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
 
 /// The return type as the inner `import!` should see it.
 fn shim_ret_ty(ty: &Type) -> TokenStream2 {
+    if let Some(inner) = generic_inner(ty, "Clamped") {
+        return shim_ret_ty(inner);
+    }
     if let Some(inner) = generic_inner(ty, "Option") {
         let m = shim_ret_ty(inner);
         return quote! { ::core::option::Option<#m> };
@@ -669,6 +713,10 @@ fn shim_ret_ty(ty: &Type) -> TokenStream2 {
 
 /// Rebuild the declared return type from `value`, the shim's result.
 fn raise_ret(ty: &Type, value: TokenStream2) -> TokenStream2 {
+    if let Some(inner) = generic_inner(ty, "Clamped") {
+        let inner_body = raise_ret(inner, value);
+        return quote! { ::wasm_bindgen::Clamped(#inner_body) };
+    }
     if let Some(inner) = generic_inner(ty, "Option") {
         let m = raise_ret(inner, quote!(__v));
         return quote! { ::core::option::Option::map(#value, |__v| #m) };
@@ -685,7 +733,7 @@ fn raise_ret(ty: &Type, value: TokenStream2) -> TokenStream2 {
     }
     match classify(ty) {
         Cross::Direct => value,
-        Cross::Handle => quote! { <#ty as ::wasm_bindgen::JsObject>::from_js(#value) },
+        Cross::Handle => quote! { <#ty as ::wasm_bindgen::FromJs>::from_js_value(#value) },
     }
 }
 
@@ -792,7 +840,7 @@ fn unpack_arg(ty: &Type, i: usize) -> TokenStream2 {
     }
     // A handle. Cloned rather than moved: the slice owns the arguments and
     // frees them when the call returns.
-    quote! { <#ty as ::wasm_bindgen::JsObject>::from_js(#slot.clone()) }
+    quote! { <#ty as ::wasm_bindgen::FromJs>::from_js_value(#slot.clone()) }
 }
 
 /// Convert the callback's result into what the trampoline returns.
@@ -1031,6 +1079,22 @@ fn extern_fn(f: ForeignItemFn, declared: &[Ident]) -> syn::Result<TokenStream2> 
             continue;
         }
 
+        if let Some(inner) = clamped_inner(ty) {
+            let by_ref = matches!(&**ty, Type::Reference(_));
+            let shim_ty = if by_ref {
+                quote! { &#inner }
+            } else {
+                quote! { #inner }
+            };
+            shim_params.push(quote! { #orig_ident: #shim_ty });
+            call_args.push(if by_ref {
+                quote! { &#orig_ident.0 }
+            } else {
+                quote! { #orig_ident.0 }
+            });
+            continue;
+        }
+
         // `Option<&Element>` is a nullable *handle*: `import!` takes
         // `Option<&JsValue>`, so only the element type needs converting.
         if let Some(inner) = generic_inner(ty, "Option")
@@ -1080,7 +1144,7 @@ fn extern_fn(f: ForeignItemFn, declared: &[Ident]) -> syn::Result<TokenStream2> 
                 } else {
                     quote! { &#orig_ident }
                 };
-                call_args.push(quote! { ::wasm_bindgen::JsObject::as_js(#borrow) });
+                call_args.push(quote! { &*::wasm_bindgen::JsArg::js_arg(#borrow) });
             }
         }
     }

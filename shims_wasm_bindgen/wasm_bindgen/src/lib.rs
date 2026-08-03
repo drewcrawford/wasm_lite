@@ -48,6 +48,29 @@ pub mod views;
 pub use closure::Closure;
 pub use error::JsError;
 
+/// Marks a byte buffer as JavaScript's *clamped* kind — `Uint8ClampedArray`
+/// rather than `Uint8Array`.
+///
+/// A transparent wrapper: the bytes cross exactly as they would without it, and
+/// the distinction is only about which typed array JS sees. `web-sys` uses it
+/// for `ImageData`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct Clamped<T>(pub T);
+
+impl<T> core::ops::Deref for Clamped<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> core::ops::DerefMut for Clamped<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 /// The handle behind a generated extern-type newtype.
 ///
 /// `#[wasm_bindgen] extern "C" { pub type Element; }` produces a
@@ -76,6 +99,53 @@ impl JsObject for JsValue {
     }
     fn into_js(self) -> JsValue {
         self
+    }
+}
+
+/// A handle to lend to an import, borrowed when possible.
+///
+/// Most binding types *are* a handle and can lend theirs directly. A string
+/// enum is not — it has to make one — so the argument path returns this rather
+/// than a plain `&JsValue`, and pays for a table slot only in the case that
+/// needs it.
+pub enum JsArgRef<'a> {
+    /// The value already holds a handle.
+    Borrowed(&'a JsValue),
+    /// The value had to be converted, and owns the result for the call.
+    Owned(JsValue),
+}
+
+impl core::ops::Deref for JsArgRef<'_> {
+    type Target = JsValue;
+    fn deref(&self) -> &JsValue {
+        match self {
+            JsArgRef::Borrowed(v) => v,
+            JsArgRef::Owned(v) => v,
+        }
+    }
+}
+
+/// Something a generated binding can pass to JS.
+pub trait JsArg {
+    /// The handle to lend for the duration of a call.
+    fn js_arg(&self) -> JsArgRef<'_>;
+}
+
+impl<T: JsObject> JsArg for T {
+    fn js_arg(&self) -> JsArgRef<'_> {
+        JsArgRef::Borrowed(self.as_js())
+    }
+}
+
+/// Something a generated binding can build from a value JS returned.
+pub trait FromJs {
+    /// Build from the handle an import returned.
+    fn from_js_value(v: JsValue) -> Self;
+}
+
+impl<T: JsObject> FromJs for T {
+    fn from_js_value(v: JsValue) -> T {
+        T::from_js(v)
     }
 }
 
@@ -121,6 +191,11 @@ pub trait JsCast: JsObject + Sized {
 
     /// Is this value an instance of `T`?
     fn is_instance_of<T: JsCast>(&self) -> bool {
+        T::instanceof(self.as_js())
+    }
+
+    /// wasm-bindgen's other spelling of [`JsCast::is_instance_of`].
+    fn has_type<T: JsCast>(&self) -> bool {
         T::instanceof(self.as_js())
     }
 
@@ -258,5 +333,8 @@ fn call_thrower(f: &JsValue) {
 
 /// The names wasm-bindgen users expect from `wasm_bindgen::prelude::*`.
 pub mod prelude {
-    pub use crate::{Closure, JsCast, JsError, JsObject, JsValue, UnwrapThrowExt, wasm_bindgen};
+    pub use crate::{
+        Clamped, Closure, FromJs, JsArg, JsCast, JsError, JsObject, JsValue, UnwrapThrowExt,
+        wasm_bindgen,
+    };
 }

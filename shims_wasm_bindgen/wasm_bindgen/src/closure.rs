@@ -65,27 +65,99 @@ impl<T: ?Sized> AsRef<JsValue> for Closure<T> {
     }
 }
 
-impl Closure<dyn FnMut()> {
-    /// Wrap a zero-argument closure.
-    pub fn new<F: FnMut() + 'static>(f: F) -> Self {
-        Self::from_inner(wasm_lite::Closure::new(f))
+/// A Rust closure that can become a `Closure<T>`.
+///
+/// This is what lets `Closure::new` be a *single* generic constructor, as it is
+/// in wasm-bindgen. Separate inherent `new`s per signature look equivalent
+/// until a call site leaves the signature to inference — `Closure::new(move |_|
+/// ..)` — and then they are ambiguous.
+pub trait IntoWasmClosure<T: ?Sized> {
+    /// Register the closure and return the runtime handle.
+    fn into_wasm_closure(self) -> wasm_lite::Closure;
+}
+
+impl<F: FnMut() + 'static> IntoWasmClosure<dyn FnMut()> for F {
+    fn into_wasm_closure(self) -> wasm_lite::Closure {
+        wasm_lite::Closure::new(self)
+    }
+}
+
+/// Generic over the *argument* type, not just `JsValue`: a callback in a
+/// generated binding takes the type it was declared with
+/// (`GpuUncapturedErrorEvent`, not `JsValue`), and the handle is converted on
+/// the way in. `JsValue` itself is covered because it is `FromJs`, where the
+/// conversion is the identity.
+impl<T, F> IntoWasmClosure<dyn FnMut(T)> for F
+where
+    T: crate::FromJs + 'static,
+    F: FnMut(T) + 'static,
+{
+    fn into_wasm_closure(self) -> wasm_lite::Closure {
+        let mut f = self;
+        wasm_lite::Closure::new_with_arg(move |v| f(T::from_js_value(v)))
+    }
+}
+
+/// As [`IntoWasmClosure`], for a closure that runs at most once.
+pub trait IntoWasmClosureOnce<T: ?Sized> {
+    /// Register the closure and return the runtime handle.
+    fn into_wasm_closure_once(self) -> wasm_lite::Closure;
+}
+
+impl<F: FnOnce() + 'static> IntoWasmClosureOnce<dyn FnMut()> for F {
+    fn into_wasm_closure_once(self) -> wasm_lite::Closure {
+        // The registry holds `FnMut`, so a one-shot closure is stored in an
+        // `Option` and taken on first call. A second call is a no-op rather
+        // than a panic: JS may hold the function after it has fired, and the
+        // whole point of a `Closure` here is that a stale reference is inert.
+        let mut f = Some(self);
+        wasm_lite::Closure::new(move || {
+            if let Some(f) = f.take() {
+                f();
+            }
+        })
+    }
+}
+
+impl<T, F> IntoWasmClosureOnce<dyn FnMut(T)> for F
+where
+    T: crate::FromJs + 'static,
+    F: FnOnce(T) + 'static,
+{
+    fn into_wasm_closure_once(self) -> wasm_lite::Closure {
+        let mut f = Some(self);
+        wasm_lite::Closure::new_with_arg(move |v| {
+            if let Some(f) = f.take() {
+                f(T::from_js_value(v));
+            }
+        })
+    }
+}
+
+impl<T: ?Sized> Closure<T> {
+    /// Wrap a Rust closure whose signature is `T`.
+    pub fn new<F: IntoWasmClosure<T>>(f: F) -> Self {
+        Self::from_inner(f.into_wasm_closure())
     }
 
     /// wasm-bindgen's spelling for the same thing, taking an already-boxed
     /// trait object.
-    pub fn wrap(mut f: Box<dyn FnMut()>) -> Self {
-        Self::from_inner(wasm_lite::Closure::new(move || f()))
-    }
-}
-
-impl Closure<dyn FnMut(JsValue)> {
-    /// Wrap a closure taking one JavaScript argument.
-    pub fn new<F: FnMut(JsValue) + 'static>(f: F) -> Self {
-        Self::from_inner(wasm_lite::Closure::new_with_arg(f))
+    pub fn wrap(f: Box<T>) -> Self
+    where
+        Box<T>: IntoWasmClosure<T>,
+    {
+        Self::from_inner(f.into_wasm_closure())
     }
 
-    /// As [`Closure::wrap`], for the one-argument signature.
-    pub fn wrap(mut f: Box<dyn FnMut(JsValue)>) -> Self {
-        Self::from_inner(wasm_lite::Closure::new_with_arg(move |v| f(v)))
+    /// Wrap a closure that runs at most once.
+    pub fn once<F: IntoWasmClosureOnce<T>>(f: F) -> Self {
+        Self::from_inner(f.into_wasm_closure_once())
+    }
+
+    /// The JS function value, leaving the closure alive for the realm's life.
+    ///
+    /// wasm-bindgen's spelling for "hand this to JS and stop tracking it".
+    pub fn into_js_value(self) -> JsValue {
+        crate::JsObject::into_js(self)
     }
 }
