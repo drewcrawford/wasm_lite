@@ -69,7 +69,7 @@ fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
             // `#[wasm_bindgen]` on a Rust fn exports it to JS, which is exactly
             // what wasm_lite's `#[export]` does.
             let _ = attr;
-            Ok(quote! { #[::wasm_bindgen::__rt::export] #f })
+            Ok(quote! { #[::wasm_bindgen::__rt::export(crate = ::wasm_bindgen::__rt)] #f })
         }
         Item::Enum(e) => string_enum(e),
         other => Err(Error::new_spanned(
@@ -134,17 +134,17 @@ fn string_enum(e: syn::ItemEnum) -> syn::Result<TokenStream2> {
             }
 
             /// The variant a JavaScript string denotes, if any.
-            pub fn from_js_str(s: &str) -> ::core::option::Option<#name> {
+            pub fn from_js_str(s: &str) -> ::wasm_bindgen::__rt::core::option::Option<#name> {
                 match s {
-                    #(#strings => ::core::option::Option::Some(#name::#idents),)*
-                    _ => ::core::option::Option::None,
+                    #(#strings => ::wasm_bindgen::__rt::core::option::Option::Some(#name::#idents),)*
+                    _ => ::wasm_bindgen::__rt::core::option::Option::None,
                 }
             }
         }
 
         // Allowed despite `JsValue` being foreign: the enum is local to the
         // crate this expands in.
-        impl ::core::convert::From<#name> for ::wasm_bindgen::__rt::JsValue {
+        impl ::wasm_bindgen::__rt::core::convert::From<#name> for ::wasm_bindgen::__rt::JsValue {
             fn from(v: #name) -> ::wasm_bindgen::__rt::JsValue {
                 ::wasm_bindgen::JsValue::from_str(v.to_js_str())
             }
@@ -162,11 +162,11 @@ fn string_enum(e: syn::ItemEnum) -> syn::Result<TokenStream2> {
             fn from_js_value(v: ::wasm_bindgen::__rt::JsValue) -> Self {
                 let s = ::wasm_bindgen::JsValue::as_string(&v).unwrap_or_default();
                 match #name::from_js_str(&s) {
-                    ::core::option::Option::Some(v) => v,
+                    ::wasm_bindgen::__rt::core::option::Option::Some(v) => v,
                     // The binding says the JS side only ever produces these
                     // strings; anything else is a contract violation worth
                     // naming rather than papering over with a default.
-                    ::core::option::Option::None => ::core::panic!(
+                    ::wasm_bindgen::__rt::core::option::Option::None => ::wasm_bindgen::__rt::core::panic!(
                         concat!("unexpected value for ", stringify!(#name), ": {:?}"),
                         s
                     ),
@@ -174,8 +174,8 @@ fn string_enum(e: syn::ItemEnum) -> syn::Result<TokenStream2> {
             }
         }
 
-        impl ::core::fmt::Display for #name {
-            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        impl ::wasm_bindgen::__rt::core::fmt::Display for #name {
+            fn fmt(&self, f: &mut ::wasm_bindgen::__rt::core::fmt::Formatter<'_>) -> ::wasm_bindgen::__rt::core::fmt::Result {
                 f.write_str(self.to_js_str())
             }
         }
@@ -212,7 +212,7 @@ impl Opts {
     fn parse(attrs: &[syn::Attribute]) -> syn::Result<Opts> {
         let mut o = Opts::default();
         for a in attrs {
-            if !a.path().is_ident("wasm_bindgen") {
+            if !is_ours(a.path()) {
                 continue;
             }
             if matches!(a.meta, syn::Meta::Path(_)) {
@@ -283,6 +283,18 @@ impl Opts {
         }
         Ok(o)
     }
+}
+
+/// Is this attribute ours?
+///
+/// By the *last* segment, because the attribute is written fully qualified in
+/// the wild — `#[wasm_bindgen::prelude::wasm_bindgen(method, ..)]`. Matching a
+/// bare ident leaves those unconsumed, and they then re-expand on an item that
+/// is no longer an extern block.
+fn is_ours(path: &syn::Path) -> bool {
+    path.segments
+        .last()
+        .is_some_and(|s| s.ident == "wasm_bindgen")
 }
 
 /// `js_name = "foo"` and `js_name = foo` are both in the wild.
@@ -381,7 +393,7 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
     let (impl_g, ty_g, where_g) = t.generics.split_for_impl();
     let phantom = t.generics.type_params().map(|p| {
         let id = &p.ident;
-        quote! { ::core::marker::PhantomData<#id> }
+        quote! { ::wasm_bindgen::__rt::core::marker::PhantomData<#id> }
     });
     let phantom_field = if t.generics.type_params().next().is_some() {
         quote! { _params: (#(#phantom,)*), }
@@ -389,7 +401,7 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
         quote! {}
     };
     let phantom_init = if t.generics.type_params().next().is_some() {
-        quote! { _params: ::core::default::Default::default(), }
+        quote! { _params: ::wasm_bindgen::__rt::core::default::Default::default(), }
     } else {
         quote! {}
     };
@@ -401,7 +413,7 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
     // there — which is what lets `JsValue::as_ref(&some_deep_type)` resolve.
     let root_deref = opts.extends.is_empty().then(|| {
         quote! {
-            impl #impl_g ::core::ops::Deref for #name #ty_g #where_g {
+            impl #impl_g ::wasm_bindgen::__rt::core::ops::Deref for #name #ty_g #where_g {
                 type Target = ::wasm_bindgen::__rt::JsValue;
                 fn deref(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
             }
@@ -410,7 +422,7 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
 
     let deref = opts.extends.first().map(|base| {
         quote! {
-            impl #impl_g ::core::ops::Deref for #name #ty_g #where_g {
+            impl #impl_g ::wasm_bindgen::__rt::core::ops::Deref for #name #ty_g #where_g {
                 type Target = #base;
                 fn deref(&self) -> &#base {
                     // SAFETY: every type this macro generates is
@@ -425,7 +437,7 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
     });
     let as_refs = opts.extends.iter().map(|base| {
         quote! {
-            impl #impl_g ::core::convert::AsRef<#base> for #name #ty_g #where_g {
+            impl #impl_g ::wasm_bindgen::__rt::core::convert::AsRef<#base> for #name #ty_g #where_g {
                 fn as_ref(&self) -> &#base {
                     // SAFETY: as above.
                     unsafe { &*(self as *const #name as *const #base) }
@@ -480,23 +492,35 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
         // `JsValue::from(&x)` for this type. The blanket impl lives in
         // wasm_lite, since only the owning crate may implement `From` for
         // `JsValue`; this is the hook it keys on.
+        impl #impl_g ::wasm_bindgen::JsArg for #name #ty_g #where_g {
+            fn js_arg(&self) -> ::wasm_bindgen::JsArgRef<'_> {
+                ::wasm_bindgen::JsArgRef::Borrowed(&self.obj)
+            }
+        }
+
+        impl #impl_g ::wasm_bindgen::FromJs for #name #ty_g #where_g {
+            fn from_js_value(obj: ::wasm_bindgen::__rt::JsValue) -> Self {
+                #name { obj, #phantom_init }
+            }
+        }
+
         impl #impl_g ::wasm_bindgen::__rt::AsJsValue for #name #ty_g #where_g {
             fn as_js_value(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
         }
 
         // The conversions upstream code expects on every binding type.
-        impl #impl_g ::core::convert::AsRef<::wasm_bindgen::__rt::JsValue> for #name #ty_g #where_g {
+        impl #impl_g ::wasm_bindgen::__rt::core::convert::AsRef<::wasm_bindgen::__rt::JsValue> for #name #ty_g #where_g {
             fn as_ref(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
         }
 
-        impl #impl_g ::core::convert::From<#name #ty_g> for ::wasm_bindgen::__rt::JsValue #where_g {
+        impl #impl_g ::wasm_bindgen::__rt::core::convert::From<#name #ty_g> for ::wasm_bindgen::__rt::JsValue #where_g {
             fn from(v: #name #ty_g) -> ::wasm_bindgen::__rt::JsValue { v.obj }
         }
 
         /// Unchecked, matching wasm-bindgen. No explicit `TryFrom` alongside
         /// it: `From` induces the blanket one, and declaring both collides.
         /// Use `JsCast::dyn_into` for the checked conversion.
-        impl #impl_g ::core::convert::From<::wasm_bindgen::__rt::JsValue> for #name #ty_g #where_g {
+        impl #impl_g ::wasm_bindgen::__rt::core::convert::From<::wasm_bindgen::__rt::JsValue> for #name #ty_g #where_g {
             fn from(obj: ::wasm_bindgen::__rt::JsValue) -> Self { #name { obj, #phantom_init } }
         }
 
@@ -568,7 +592,7 @@ fn extern_static(st: syn::ForeignItemStatic) -> syn::Result<TokenStream2> {
 
         impl #holder {
             /// Read the JS property and hand it to `f`.
-            pub fn with<R>(&self, f: impl ::core::ops::FnOnce(&#ty) -> R) -> R {
+            pub fn with<R>(&self, f: impl ::wasm_bindgen::__rt::core::ops::FnOnce(&#ty) -> R) -> R {
                 f(&{ #body })
             }
         }
@@ -679,10 +703,7 @@ fn cfg_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
 /// collide. User `#[derive]`s pass through for the same reason — they are the
 /// author's, not ours to discard.
 fn passthrough_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
-    attrs
-        .iter()
-        .filter(|a| !a.path().is_ident("wasm_bindgen"))
-        .collect()
+    attrs.iter().filter(|a| !is_ours(a.path())).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -696,12 +717,12 @@ fn shim_ret_ty(ty: &Type) -> TokenStream2 {
     }
     if let Some(inner) = generic_inner(ty, "Option") {
         let m = shim_ret_ty(inner);
-        return quote! { ::core::option::Option<#m> };
+        return quote! { ::wasm_bindgen::__rt::core::option::Option<#m> };
     }
     if let Some((ok, err)) = generic_pair(ty, "Result") {
         let o = shim_ret_ty(ok);
         let e = shim_ret_ty(err);
-        return quote! { ::core::result::Result<#o, #e> };
+        return quote! { ::wasm_bindgen::__rt::core::result::Result<#o, #e> };
     }
     match classify(ty) {
         Cross::Direct => quote! { #ty },
@@ -719,15 +740,15 @@ fn raise_ret(ty: &Type, value: TokenStream2) -> TokenStream2 {
     }
     if let Some(inner) = generic_inner(ty, "Option") {
         let m = raise_ret(inner, quote!(__v));
-        return quote! { ::core::option::Option::map(#value, |__v| #m) };
+        return quote! { ::wasm_bindgen::__rt::core::option::Option::map(#value, |__v| #m) };
     }
     if let Some((ok, err)) = generic_pair(ty, "Result") {
         let o = raise_ret(ok, quote!(__v));
         let e = raise_ret(err, quote!(__e));
         return quote! {
             match #value {
-                ::core::result::Result::Ok(__v) => ::core::result::Result::Ok(#o),
-                ::core::result::Result::Err(__e) => ::core::result::Result::Err(#e),
+                ::wasm_bindgen::__rt::core::result::Result::Ok(__v) => ::wasm_bindgen::__rt::core::result::Result::Ok(#o),
+                ::wasm_bindgen::__rt::core::result::Result::Err(__e) => ::wasm_bindgen::__rt::core::result::Result::Err(#e),
             }
         };
     }
@@ -820,7 +841,7 @@ fn unpack_arg(ty: &Type, i: usize) -> TokenStream2 {
             // ranges exceed it.
             "i64" | "u64" | "i128" | "u128" => {
                 return quote! {
-                    <#ty as ::core::convert::TryFrom<::wasm_bindgen::__rt::JsValue>>::try_from(
+                    <#ty as ::wasm_bindgen::__rt::core::convert::TryFrom<::wasm_bindgen::__rt::JsValue>>::try_from(
                         #slot.clone(),
                     )
                     .unwrap_or_default()
@@ -850,10 +871,16 @@ fn unpack_arg(ty: &Type, i: usize) -> TokenStream2 {
 /// JS exception; an infallible one produces `Option<JsValue>`.
 fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<(TokenStream2, bool)> {
     let Some(ty) = ret else {
-        return Ok((quote! { { #call; ::core::option::Option::None } }, false));
+        return Ok((
+            quote! { { #call; ::wasm_bindgen::__rt::core::option::Option::None } },
+            false,
+        ));
     };
     if matches!(ty, Type::Tuple(t) if t.elems.is_empty()) {
-        return Ok((quote! { { #call; ::core::option::Option::None } }, false));
+        return Ok((
+            quote! { { #call; ::wasm_bindgen::__rt::core::option::Option::None } },
+            false,
+        ));
     }
     if let Some((ok, err)) = generic_pair(ty, "Result") {
         // The `Err` becomes a thrown JS exception, which is how the JS API
@@ -863,8 +890,8 @@ fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<(TokenStre
         return Ok((
             quote! {
                 match #call {
-                    ::core::result::Result::Ok(__ok) => ::core::result::Result::Ok(#ok_body),
-                    ::core::result::Result::Err(__err) => ::core::result::Result::Err(#err_body),
+                    ::wasm_bindgen::__rt::core::result::Result::Ok(__ok) => ::wasm_bindgen::__rt::core::result::Result::Ok(#ok_body),
+                    ::wasm_bindgen::__rt::core::result::Result::Err(__err) => ::wasm_bindgen::__rt::core::result::Result::Err(#err_body),
                 }
             },
             true,
@@ -889,13 +916,13 @@ fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<(TokenStre
                 | "isize"
         ) {
             return Ok((
-                quote! { ::core::option::Option::Some(::wasm_bindgen::JsValue::from(#call)) },
+                quote! { ::wasm_bindgen::__rt::core::option::Option::Some(::wasm_bindgen::JsValue::from(#call)) },
                 false,
             ));
         }
         if n == "String" {
             return Ok((
-                quote! { ::core::option::Option::Some(::wasm_bindgen::JsValue::from_str(&#call)) },
+                quote! { ::wasm_bindgen::__rt::core::option::Option::Some(::wasm_bindgen::JsValue::from_str(&#call)) },
                 false,
             ));
         }
@@ -904,7 +931,7 @@ fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<(TokenStre
             // of the callback expects to receive.
             return Ok((
                 quote! {
-                    ::core::option::Option::Some(
+                    ::wasm_bindgen::__rt::core::option::Option::Some(
                         ::wasm_bindgen::JsValue::from_handles(&#call),
                     )
                 },
@@ -913,7 +940,7 @@ fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<(TokenStre
         }
     }
     Ok((
-        quote! { ::core::option::Option::Some(::wasm_bindgen::JsObject::into_js(#call)) },
+        quote! { ::wasm_bindgen::__rt::core::option::Option::Some(::wasm_bindgen::JsObject::into_js(#call)) },
         false,
     ))
 }
@@ -1068,7 +1095,7 @@ fn extern_fn(f: ForeignItemFn, declared: &[Ident]) -> syn::Result<TokenStream2> 
                     // SAFETY: the Closure is dropped at the end of this
                     // function, before the caller's borrow ends, so the
                     // 'static bound it requires is never actually observed.
-                    let __f: #static_ty = unsafe { ::core::mem::transmute(#orig_ident) };
+                    let __f: #static_ty = unsafe { ::wasm_bindgen::__rt::core::mem::transmute(#orig_ident) };
                     ::wasm_bindgen::__rt::Closure::#ctor(
                         move |__args: &[::wasm_bindgen::__rt::JsValue]| #body,
                     )
@@ -1100,7 +1127,8 @@ fn extern_fn(f: ForeignItemFn, declared: &[Ident]) -> syn::Result<TokenStream2> 
         if let Some(inner) = generic_inner(ty, "Option")
             && matches!(classify(deref_ty(inner)), Cross::Handle)
         {
-            shim_params.push(quote! { #orig_ident: ::core::option::Option<&JsValue> });
+            shim_params
+                .push(quote! { #orig_ident: ::wasm_bindgen::__rt::core::option::Option<&JsValue> });
             let borrowed = if matches!(inner, Type::Reference(_)) {
                 quote! { #orig_ident }
             } else {
@@ -1127,7 +1155,7 @@ fn extern_fn(f: ForeignItemFn, declared: &[Ident]) -> syn::Result<TokenStream2> 
                     // newtypes this macro generates, so `[T]` and `[JsValue]`
                     // have the same layout.
                     unsafe {
-                        ::core::slice::from_raw_parts(
+                        ::wasm_bindgen::__rt::core::slice::from_raw_parts(
                             #orig_ident.as_ptr() as *const ::wasm_bindgen::__rt::JsValue,
                             #orig_ident.len(),
                         )

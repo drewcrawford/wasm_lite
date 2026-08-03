@@ -78,6 +78,8 @@ unsafe extern "C" {
     fn num_str(idx: u32, out: *mut u32) -> i32;
     #[link_name = "__wl_memory_obj"]
     fn memory_obj() -> u32;
+    #[link_name = "__wl_module_obj"]
+    fn module_obj() -> u32;
 }
 
 /// JavaScript's relational operators.
@@ -155,6 +157,14 @@ impl JsValue {
     /// linear memory.
     pub fn wasm_memory() -> JsValue {
         JsValue::__wl_from_abi(unsafe { memory_obj() })
+    }
+
+    /// A handle to the compiled `WebAssembly.Module`.
+    ///
+    /// A thread spawner hands this to a worker so it can instantiate the same
+    /// module rather than re-fetching and re-compiling it.
+    pub fn wasm_module() -> JsValue {
+        JsValue::__wl_from_abi(unsafe { module_obj() })
     }
 
     /// A JS array holding the values these handles denote.
@@ -464,6 +474,20 @@ impl From<bool> for JsValue {
 impl From<&str> for JsValue {
     fn from(v: &str) -> JsValue {
         JsValue::from_str(v)
+    }
+}
+
+/// The unit type is JS `undefined` — what a function returning nothing gives
+/// back on that side.
+impl From<()> for JsValue {
+    fn from(_: ()) -> JsValue {
+        JsValue::UNDEFINED
+    }
+}
+
+impl From<String> for JsValue {
+    fn from(v: String) -> JsValue {
+        JsValue::from_str(&v)
     }
 }
 

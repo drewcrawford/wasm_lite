@@ -132,9 +132,9 @@ pub trait JsArg {
     fn js_arg(&self) -> JsArgRef<'_>;
 }
 
-impl<T: JsObject> JsArg for T {
+impl JsArg for JsValue {
     fn js_arg(&self) -> JsArgRef<'_> {
-        JsArgRef::Borrowed(self.as_js())
+        JsArgRef::Borrowed(self)
     }
 }
 
@@ -144,9 +144,42 @@ pub trait FromJs {
     fn from_js_value(v: JsValue) -> Self;
 }
 
-impl<T: JsObject> FromJs for T {
-    fn from_js_value(v: JsValue) -> T {
-        T::from_js(v)
+impl FromJs for JsValue {
+    fn from_js_value(v: JsValue) -> JsValue {
+        v
+    }
+}
+
+/// Scalars, so a callback declared `FnMut(u32)` works.
+///
+/// Deliberately *not* a blanket over `JsObject`: that would overlap these, and
+/// coherence rejects the pair. The macro emits the per-type impls instead.
+macro_rules! scalar_from_js {
+    ($($t:ty),*) => { $(
+        impl FromJs for $t {
+            fn from_js_value(v: JsValue) -> $t {
+                v.as_f64().unwrap_or_default() as $t
+            }
+        }
+
+        impl JsArg for $t {
+            fn js_arg(&self) -> JsArgRef<'_> {
+                JsArgRef::Owned(JsValue::from_f64(*self as f64))
+            }
+        }
+    )* };
+}
+scalar_from_js!(i8, i16, i32, isize, u8, u16, u32, usize, f32, f64);
+
+impl FromJs for bool {
+    fn from_js_value(v: JsValue) -> bool {
+        v.as_bool().unwrap_or_default()
+    }
+}
+
+impl FromJs for String {
+    fn from_js_value(v: JsValue) -> String {
+        v.as_string().unwrap_or_default()
     }
 }
 
@@ -250,10 +283,38 @@ impl JsCast for JsValue {
 /// Not a stable API.
 #[doc(hidden)]
 pub mod __rt {
+    /// Normalise a binding's return into `Result<JsValue, JsValue>`.
+    ///
+    /// wasm-bindgen's internal, but reachable — `app_window` imports it
+    /// directly — so it is reproduced with the same signature and impls.
+    pub trait IntoJsResult {
+        /// Convert, treating a non-`Result` value as success.
+        fn into_js_result(self) -> Result<JsValue, JsValue>;
+    }
+
+    // Only the blanket impl. wasm-bindgen also has ones for `()` and
+    // `Result<T, E>`, which it can because `JsValue` is local to it; here it is
+    // foreign, so coherence cannot rule out `(): Into<JsValue>` and the pair
+    // overlaps. `JsValue: From<()>` covers the unit case instead.
+    impl<T: Into<JsValue>> IntoJsResult for T {
+        fn into_js_result(self) -> Result<JsValue, JsValue> {
+            Ok(self.into())
+        }
+    }
+
     pub use crate::views::wbg_cast;
+    /// `core` itself, re-exported.
+    ///
+    /// Generated code cannot say `::core::…`: in an **edition 2015** crate that
+    /// names an extern crate which is not linked unless declared, and
+    /// `console_error_panic_hook` — in this very graph — is edition 2015.
+    /// Reaching it through the shim, which such a crate has already declared in
+    /// order to use `#[wasm_bindgen]`, always resolves.
+    pub use core;
     pub use wasm_lite::{
-        __String, __Vec, __wl_free, __wl_malloc, AsJsValue, Closure, FromSretPayload, JsFuture,
-        JsValue, descriptor_bytes, export, import, js_class, set_panic_hook,
+        __Option, __Result, __String, __Vec, __null, __wl_free, __wl_malloc, AsJsValue, Closure,
+        FromSretPayload, JsFuture, JsValue, descriptor_bytes, export, import, js_class,
+        set_panic_hook,
     };
 }
 
@@ -301,6 +362,11 @@ impl<T, E: core::fmt::Debug> UnwrapThrowExt<T> for Result<T, E> {
 /// The module's `WebAssembly.Memory`, as wasm-bindgen spells it.
 pub fn memory() -> JsValue {
     JsValue::wasm_memory()
+}
+
+/// The compiled `WebAssembly.Module`, as wasm-bindgen spells it.
+pub fn module() -> JsValue {
+    JsValue::wasm_module()
 }
 
 /// Throw a JS value, never returning.

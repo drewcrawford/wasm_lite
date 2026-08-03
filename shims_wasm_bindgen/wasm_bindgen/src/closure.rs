@@ -41,6 +41,12 @@ impl<T: ?Sized> Closure<T> {
 
 /// A `Closure` is a handle like any other, so it can be passed wherever a
 /// binding takes one.
+impl<T: ?Sized> crate::JsArg for Closure<T> {
+    fn js_arg(&self) -> crate::JsArgRef<'_> {
+        crate::JsArgRef::Borrowed(self.inner.as_js_value())
+    }
+}
+
 impl<T: ?Sized> crate::JsObject for Closure<T> {
     fn as_js(&self) -> &JsValue {
         self.inner.as_js_value()
@@ -95,6 +101,23 @@ where
     fn into_wasm_closure(self) -> wasm_lite::Closure {
         let mut f = self;
         wasm_lite::Closure::new_with_arg(move |v| f(T::from_js_value(v)))
+    }
+}
+
+/// `Fn`, not just `FnMut`: upstream code spells both.
+impl<F: Fn() + 'static> IntoWasmClosure<dyn Fn()> for F {
+    fn into_wasm_closure(self) -> wasm_lite::Closure {
+        wasm_lite::Closure::new(self)
+    }
+}
+
+impl<T, F> IntoWasmClosure<dyn Fn(T)> for F
+where
+    T: crate::FromJs + 'static,
+    F: Fn(T) + 'static,
+{
+    fn into_wasm_closure(self) -> wasm_lite::Closure {
+        wasm_lite::Closure::new_with_arg(move |v| self(T::from_js_value(v)))
     }
 }
 

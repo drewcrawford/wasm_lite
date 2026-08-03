@@ -344,12 +344,20 @@ pub use closure::Closure;
 pub use future::JsFuture;
 pub use value::{AsJsValue, JsValue};
 
-/// `String` and `Vec`, re-exported for generated code.
+/// The standard-library items generated code needs, re-exported.
 ///
-/// Emitted code cannot say `::std::string::String`: a `no_std` binding crate
-/// (web-sys is one) has no `std` in its crate root. Routing through the
-/// configured crate path means the generated code names something that always
-/// resolves, whichever crate it lands in.
+/// Emitted code cannot name these absolutely. `::std::string::String` fails in
+/// a `no_std` binding crate (web-sys is one), and `::core::option::Option`
+/// fails in an *edition 2015* crate, where `::core` needs an explicit
+/// `extern crate` — `console_error_panic_hook` is one, and it is in this
+/// graph. Routing through the configured crate path means the generated code
+/// names something that always resolves, whichever crate it lands in.
+#[doc(hidden)]
+pub use core::option::Option as __Option;
+#[doc(hidden)]
+pub use core::ptr::null as __null;
+#[doc(hidden)]
+pub use core::result::Result as __Result;
 #[doc(hidden)]
 pub use std::string::String as __String;
 #[doc(hidden)]

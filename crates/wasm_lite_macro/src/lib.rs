@@ -175,9 +175,20 @@ impl Parse for TestArgs {
 /// `JsValue`, and `Option<T>` of those. Supported returns: those, plus `String`,
 /// `Vec<u8>`, `JsValue`, and `Option<T>`/`Result<T, E>` (via a return pointer).
 #[proc_macro_attribute]
-pub fn export(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
-    match build_export(&func) {
+    // `#[export(crate = ::some::path)]` points the generated code at a
+    // re-export of the runtime, for the same reason `import!` takes one: a
+    // shim's users have never heard of wasm_lite.
+    let krate: syn::Path = if attr.is_empty() {
+        syn::parse_quote!(::wasm_lite)
+    } else {
+        match syn::parse::<CratePath>(attr) {
+            Ok(c) => c.path,
+            Err(e) => return e.to_compile_error().into(),
+        }
+    };
+    match build_export(&krate, &func) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }
@@ -281,7 +292,22 @@ fn reject_static_ref(ty: &Type) -> syn::Result<()> {
     Ok(())
 }
 
-fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
+/// `crate = <path>` as an attribute argument.
+struct CratePath {
+    path: syn::Path,
+}
+
+impl syn::parse::Parse for CratePath {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        input.parse::<Token![crate]>()?;
+        input.parse::<Token![=]>()?;
+        Ok(CratePath {
+            path: input.parse()?,
+        })
+    }
+}
+
+fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
     // An `async fn` export would have its future constructed and dropped
     // unpolled by the shim — a silent no-op from the JS caller's perspective.
     if let Some(asyncness) = &func.sig.asyncness {
@@ -336,7 +362,7 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
 
         // `Option<T>` arg: a discriminant param plus T's normal flattening.
         if let Some(inner) = generic1(ty, "Option") {
-            let (flat, recon, tag) = option_arg(&pat, inner)?;
+            let (flat, recon, tag) = option_arg(krate, &pat, inner)?;
             flat_params.extend(flat);
             pre.push(recon);
             call_args.push(quote! { #pat });
@@ -363,7 +389,7 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
         } else if is_jsvalue(ty) {
             // JS registers the object and passes its index; Rust takes ownership.
             flat_params.push(quote! { #pat: u32 });
-            pre.push(quote! { let #pat = ::wasm_lite::JsValue::__wl_from_abi(#pat); });
+            pre.push(quote! { let #pat = #krate::JsValue::__wl_from_abi(#pat); });
             call_args.push(quote! { #pat });
             arg_tags.push("handle".into());
         } else if let Some(scalar) = numeric(ty) {
@@ -386,7 +412,7 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
     }
 
     let call = quote! { #name( #(#call_args),* ) };
-    let (ret_decl, ret_tag, ret_expr, is_sret) = build_return(&call, &func.sig.output)?;
+    let (ret_decl, ret_tag, ret_expr, is_sret) = build_return(krate, &call, &func.sig.output)?;
 
     // sret writes the payload into a JS-provided buffer; the export gains a
     // leading `__ret` pointer.
@@ -405,8 +431,8 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
     let keep_alloc = if needs_alloc {
         quote! {
             const _: () = {
-                #[used] static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = ::wasm_lite::__wl_malloc;
-                #[used] static __WL_KEEP_FREE: extern "C" fn(*mut u8, usize) = ::wasm_lite::__wl_free;
+                #[used] static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = #krate::__wl_malloc;
+                #[used] static __WL_KEEP_FREE: extern "C" fn(*mut u8, usize) = #krate::__wl_free;
             };
         }
     } else {
@@ -441,6 +467,7 @@ fn build_export(func: &ItemFn) -> syn::Result<TokenStream2> {
 /// a single scalar return can't carry both. Discriminant: Option 1=Some/0=None;
 /// Result 0=Ok/1=Err.
 fn build_return(
+    krate: &syn::Path,
     call: &TokenStream2,
     output: &ReturnType,
 ) -> syn::Result<(TokenStream2, String, TokenStream2, bool)> {
@@ -450,31 +477,31 @@ fn build_return(
     };
 
     if let Some(inner) = generic1(ty, "Option") {
-        let (tag, write) = payload(inner, &format_ident!("__x"))?;
+        let (tag, write) = payload(krate, inner, &format_ident!("__x"))?;
         let body = quote! {
-            let __v: ::core::option::Option<#inner> = #call;
+            let __v: #krate::__Option<#inner> = #call;
             match __v {
-                ::core::option::Option::Some(__x) => {
+                #krate::__Option::Some(__x) => {
                     unsafe { ::core::ptr::write_unaligned(__ret as *mut u32, 1u32); }
                     #write
                 }
-                ::core::option::Option::None => unsafe { ::core::ptr::write_unaligned(__ret as *mut u32, 0u32); },
+                #krate::__Option::None => unsafe { ::core::ptr::write_unaligned(__ret as *mut u32, 0u32); },
             }
         };
         return Ok((quote! {}, format!("opt:{tag}"), body, true));
     }
 
     if let Some((ok_ty, err_ty)) = generic2(ty, "Result") {
-        let (ok_tag, ok_write) = payload(ok_ty, &format_ident!("__x"))?;
-        let (err_tag, err_write) = payload(err_ty, &format_ident!("__e"))?;
+        let (ok_tag, ok_write) = payload(krate, ok_ty, &format_ident!("__x"))?;
+        let (err_tag, err_write) = payload(krate, err_ty, &format_ident!("__e"))?;
         let body = quote! {
-            let __v: ::core::result::Result<#ok_ty, #err_ty> = #call;
+            let __v: #krate::__Result<#ok_ty, #err_ty> = #call;
             match __v {
-                ::core::result::Result::Ok(__x) => {
+                #krate::__Result::Ok(__x) => {
                     unsafe { ::core::ptr::write_unaligned(__ret as *mut u32, 0u32); }
                     #ok_write
                 }
-                ::core::result::Result::Err(__e) => {
+                #krate::__Result::Err(__e) => {
                     unsafe { ::core::ptr::write_unaligned(__ret as *mut u32, 1u32); }
                     #err_write
                 }
@@ -500,7 +527,7 @@ fn build_return(
             "str".into(),
             // `#[export]` takes no crate-path override, so this stays absolute.
             // Only `import!` is reached from a crate that may be `no_std`.
-            pack_buffer(call, quote! { ::std::string::String }),
+            pack_buffer(krate, call, quote! { #krate::__String }),
             false,
         ));
     }
@@ -508,7 +535,7 @@ fn build_return(
         return Ok((
             quote! { -> i64 },
             "bytes".into(),
-            pack_buffer(call, quote! { ::std::vec::Vec<u8> }),
+            pack_buffer(krate, call, quote! { #krate::__Vec<u8> }),
             false,
         ));
     }
@@ -516,8 +543,8 @@ fn build_return(
         // Hand the table slot to JS: take the index, then forget so Drop doesn't
         // free it — ownership transfers across the boundary.
         let expr = quote! {
-            let __r: ::wasm_lite::JsValue = #call;
-            let __idx = ::wasm_lite::JsValue::__wl_abi(&__r);
+            let __r: #krate::JsValue = #call;
+            let __idx = #krate::JsValue::__wl_abi(&__r);
             ::core::mem::forget(__r);
             __idx
         };
@@ -535,11 +562,11 @@ fn build_return(
 
 /// Copy a `String`/`Vec<u8>` into a `__wl_malloc` buffer and return a packed
 /// `(ptr << 32 | len)` i64 the JS side decodes and frees.
-fn pack_buffer(call: &TokenStream2, ty: TokenStream2) -> TokenStream2 {
+fn pack_buffer(krate: &syn::Path, call: &TokenStream2, ty: TokenStream2) -> TokenStream2 {
     quote! {
         let __r: #ty = #call;
         let __len = __r.len();
-        let __ptr = ::wasm_lite::__wl_malloc(__len);
+        let __ptr = #krate::__wl_malloc(__len);
         unsafe { ::core::ptr::copy_nonoverlapping(__r.as_ptr(), __ptr, __len); }
         (((__ptr as usize as u64) << 32) | (__len as u64)) as i64
     }
@@ -548,7 +575,7 @@ fn pack_buffer(call: &TokenStream2, ty: TokenStream2) -> TokenStream2 {
 /// Code to write `binding` (of type `ty`) into an sret buffer at `__ret + 8`
 /// (str/bytes also use `__ret + 12` for the length). Returns the descriptor tag
 /// and the code. Writes are unaligned (the buffer is align-1).
-fn payload(ty: &Type, binding: &Ident) -> syn::Result<(String, TokenStream2)> {
+fn payload(krate: &syn::Path, ty: &Type, binding: &Ident) -> syn::Result<(String, TokenStream2)> {
     let off8 = quote! { (__ret as *mut u8).add(8) };
     let off12 = quote! { (__ret as *mut u8).add(12) };
 
@@ -575,7 +602,7 @@ fn payload(ty: &Type, binding: &Ident) -> syn::Result<(String, TokenStream2)> {
             "handle".into(),
             quote! {
                 {
-                    let __h = ::wasm_lite::JsValue::__wl_abi(&#binding);
+                    let __h = #krate::JsValue::__wl_abi(&#binding);
                     ::core::mem::forget(#binding);
                     unsafe { ::core::ptr::write_unaligned(#off8 as *mut u32, __h); }
                 }
@@ -585,7 +612,7 @@ fn payload(ty: &Type, binding: &Ident) -> syn::Result<(String, TokenStream2)> {
     let buf = quote! {
         {
             let __len = #binding.len();
-            let __ptr = ::wasm_lite::__wl_malloc(__len);
+            let __ptr = #krate::__wl_malloc(__len);
             unsafe {
                 ::core::ptr::copy_nonoverlapping(#binding.as_ptr(), __ptr, __len);
                 ::core::ptr::write_unaligned(#off8 as *mut u32, __ptr as usize as u32);
@@ -611,14 +638,18 @@ fn payload(ty: &Type, binding: &Ident) -> syn::Result<(String, TokenStream2)> {
 /// Flatten an `Option<inner>` argument: a discriminant param `<name>_some: i32`
 /// plus `inner`'s normal flattening, with conditional reconstruction. Returns
 /// `(flat_params, reconstruction, inner_tag)`.
-fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, TokenStream2, String)> {
+fn option_arg(
+    krate: &syn::Path,
+    pat: &Ident,
+    inner: &Type,
+) -> syn::Result<(Vec<TokenStream2>, TokenStream2, String)> {
     let some = format_ident!("{pat}_some");
 
     if let Some(scalar) = numeric(inner) {
         let val = format_ident!("{pat}_val");
         return Ok((
             vec![quote! { #some: i32 }, quote! { #val: #inner }],
-            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(#val) } else { ::core::option::Option::None }; },
+            quote! { let #pat = if #some != 0 { #krate::__Option::Some(#val) } else { #krate::__Option::None }; },
             scalar,
         ));
     }
@@ -626,7 +657,7 @@ fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, Toke
         let val = format_ident!("{pat}_val");
         return Ok((
             vec![quote! { #some: i32 }, quote! { #val: i32 }],
-            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(#val != 0) } else { ::core::option::Option::None }; },
+            quote! { let #pat = if #some != 0 { #krate::__Option::Some(#val != 0) } else { #krate::__Option::None }; },
             "bool".into(),
         ));
     }
@@ -634,7 +665,7 @@ fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, Toke
         let h = format_ident!("{pat}_h");
         return Ok((
             vec![quote! { #some: i32 }, quote! { #h: u32 }],
-            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(::wasm_lite::JsValue::__wl_from_abi(#h)) } else { ::core::option::Option::None }; },
+            quote! { let #pat = if #some != 0 { #krate::__Option::Some(#krate::JsValue::__wl_from_abi(#h)) } else { #krate::__Option::None }; },
             "handle".into(),
         ));
     }
@@ -646,7 +677,7 @@ fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, Toke
                 quote! { #p: *const u8 },
                 quote! { #l: usize },
             ],
-            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(unsafe { ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts(#p, #l)) }) } else { ::core::option::Option::None }; },
+            quote! { let #pat = if #some != 0 { #krate::__Option::Some(unsafe { ::core::str::from_utf8_unchecked(::core::slice::from_raw_parts(#p, #l)) }) } else { #krate::__Option::None }; },
             "str".into(),
         ));
     }
@@ -658,7 +689,7 @@ fn option_arg(pat: &Ident, inner: &Type) -> syn::Result<(Vec<TokenStream2>, Toke
                 quote! { #p: *const u8 },
                 quote! { #l: usize },
             ],
-            quote! { let #pat = if #some != 0 { ::core::option::Option::Some(unsafe { ::core::slice::from_raw_parts(#p, #l) }) } else { ::core::option::Option::None }; },
+            quote! { let #pat = if #some != 0 { #krate::__Option::Some(unsafe { ::core::slice::from_raw_parts(#p, #l) }) } else { #krate::__Option::None }; },
             "bytes".into(),
         ));
     }
@@ -788,6 +819,10 @@ impl Parse for JsMethod {
 }
 
 fn build_js_class(class_def: &JsClass) -> syn::Result<TokenStream2> {
+    // `js_class!` takes no crate-path override — it is wasm_lite's own
+    // spelling, not something a shim re-exports — so this is always the
+    // default.
+    let krate: syn::Path = syn::parse_quote!(::wasm_lite);
     let class = &class_def.class;
     let module = format_ident!("__wl_class_{}", snake_case_ident(class));
     let class_lit = LitStr::new(&class.to_string(), Span::call_site());
@@ -851,21 +886,21 @@ fn build_js_class(class_def: &JsClass) -> syn::Result<TokenStream2> {
     }
 
     Ok(quote! {
-        pub struct #class(::wasm_lite::JsValue);
+        pub struct #class(#krate::JsValue);
         impl #class {
             /// Wrap a `JsValue` as this type (unchecked — no runtime type test).
-            pub fn from_js(v: ::wasm_lite::JsValue) -> Self { #class(v) }
+            pub fn from_js(v: #krate::JsValue) -> Self { #class(v) }
             /// Borrow the underlying handle.
-            pub fn as_js(&self) -> &::wasm_lite::JsValue { &self.0 }
+            pub fn as_js(&self) -> &#krate::JsValue { &self.0 }
             /// Unwrap into the underlying handle.
-            pub fn into_js(self) -> ::wasm_lite::JsValue { self.0 }
+            pub fn into_js(self) -> #krate::JsValue { self.0 }
             #(#wrappers)*
         }
-        impl ::core::convert::From<#class> for ::wasm_lite::JsValue {
+        impl ::core::convert::From<#class> for #krate::JsValue {
             fn from(v: #class) -> Self { v.0 }
         }
         mod #module {
-            use ::wasm_lite::JsValue;
+            use #krate::JsValue;
             ::wasm_lite::import! {
                 #class_lit {
                     #(#import_decls)*

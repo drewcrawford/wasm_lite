@@ -287,10 +287,20 @@ fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream
         orig_params.push(quote! { #pname: #ty });
 
         if let Some(inner) = generic1(ty, "Option") {
-            let (ep, ca, tag) = option_arg(pname, inner)?;
+            let (ep, ca, tag) = option_arg(krate, pname, inner)?;
             extern_params.extend(ep);
             call_args.extend(ca);
             arg_tags.push(format!("opt:{tag}"));
+        } else if is_ident(ty, "String") {
+            // An owned `String` argument crosses exactly like `&str` — the
+            // wrapper owns it for the call and drops it after. Generated
+            // binding surfaces write this (`console_error_panic_hook` does),
+            // and refusing it only forces the caller to borrow for no gain.
+            extern_params.push(quote! { _: *const u8 });
+            extern_params.push(quote! { _: usize });
+            call_args.push(quote! { #pname.as_ptr() });
+            call_args.push(quote! { #pname.len() });
+            arg_tags.push("str".into());
         } else if is_str(ty) {
             extern_params.push(quote! { _: *const u8 });
             extern_params.push(quote! { _: usize });
@@ -561,13 +571,13 @@ fn build_return(
             let mut __buf = [0u8; 16];
             unsafe { #sret_call };
             if u32::from_le_bytes([__buf[0], __buf[1], __buf[2], __buf[3]]) == 1 {
-                ::core::option::Option::Some(unsafe { <#inner as #krate::FromSretPayload>::__wl_read(__buf.as_ptr()) })
+                #krate::__Option::Some(unsafe { <#inner as #krate::FromSretPayload>::__wl_read(__buf.as_ptr()) })
             } else {
-                ::core::option::Option::None
+                #krate::__Option::None
             }
         };
         return Ok(Return {
-            wrapper_ret: quote! { -> ::core::option::Option<#inner> },
+            wrapper_ret: quote! { -> #krate::__Option<#inner> },
             extern_decl: sret_extern,
             body,
             ret_tag: format!("opt:{tag}"),
@@ -600,17 +610,17 @@ fn build_return(
             let mut __buf = [0u8; 16];
             unsafe { #sret_call };
             match u32::from_le_bytes([__buf[0], __buf[1], __buf[2], __buf[3]]) {
-                0 => ::core::result::Result::Ok(::core::option::Option::Some(unsafe {
+                0 => #krate::__Result::Ok(#krate::__Option::Some(unsafe {
                     <#inner as #krate::FromSretPayload>::__wl_read(__buf.as_ptr())
                 })),
-                2 => ::core::result::Result::Ok(::core::option::Option::None),
-                _ => ::core::result::Result::Err(unsafe {
+                2 => #krate::__Result::Ok(#krate::__Option::None),
+                _ => #krate::__Result::Err(unsafe {
                     <#err_ty as #krate::FromSretPayload>::__wl_read(__buf.as_ptr())
                 }),
             }
         };
         return Ok(Return {
-            wrapper_ret: quote! { -> ::core::result::Result<#ok_ty, #err_ty> },
+            wrapper_ret: quote! { -> #krate::__Result<#ok_ty, #err_ty> },
             extern_decl: sret_extern,
             body,
             ret_tag: format!("resopt:{ok_tag}:{err_tag}"),
@@ -641,13 +651,13 @@ fn build_return(
             let mut __buf = [0u8; 16];
             unsafe { #sret_call };
             if u32::from_le_bytes([__buf[0], __buf[1], __buf[2], __buf[3]]) == 0 {
-                ::core::result::Result::Ok(unsafe { <#ok_ty as #krate::FromSretPayload>::__wl_read(__buf.as_ptr()) })
+                #krate::__Result::Ok(unsafe { <#ok_ty as #krate::FromSretPayload>::__wl_read(__buf.as_ptr()) })
             } else {
-                ::core::result::Result::Err(unsafe { <#err_ty as #krate::FromSretPayload>::__wl_read(__buf.as_ptr()) })
+                #krate::__Result::Err(unsafe { <#err_ty as #krate::FromSretPayload>::__wl_read(__buf.as_ptr()) })
             }
         };
         return Ok(Return {
-            wrapper_ret: quote! { -> ::core::result::Result<#ok_ty, #err_ty> },
+            wrapper_ret: quote! { -> #krate::__Result<#ok_ty, #err_ty> },
             extern_decl: sret_extern,
             body,
             ret_tag: format!("res:{ok_tag}:{err_tag}"),
@@ -683,6 +693,7 @@ fn unpack_buffer(call: &TokenStream2, from_raw_parts: TokenStream2) -> TokenStre
 /// option: they contribute three arguments (discriminant, pointer, length), and
 /// `Option<&mut [u8]>` is not `Copy`, so using it directly moves it twice over.
 fn option_arg(
+    krate: &Path,
     pname: &Ident,
     inner: &Type,
 ) -> syn::Result<(Vec<TokenStream2>, Vec<TokenStream2>, String)> {
@@ -695,7 +706,7 @@ fn option_arg(
             ],
             vec![
                 quote! { #pname.is_some() as i32 },
-                quote! { #pname.as_deref().map_or(::core::ptr::null(), |__s| __s.as_ptr()) },
+                quote! { #pname.as_deref().map_or(#krate::__null(), |__s| __s.as_ptr()) },
                 quote! { #pname.as_deref().map_or(0, |__s| __s.len()) },
             ],
             "str".into(),
@@ -710,7 +721,7 @@ fn option_arg(
             ],
             vec![
                 quote! { #pname.is_some() as i32 },
-                quote! { #pname.as_deref().map_or(::core::ptr::null(), |__s| __s.as_ptr()) },
+                quote! { #pname.as_deref().map_or(#krate::__null(), |__s| __s.as_ptr()) },
                 quote! { #pname.as_deref().map_or(0, |__s| __s.len()) },
             ],
             "bytes".into(),
