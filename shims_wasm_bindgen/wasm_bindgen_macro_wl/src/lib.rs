@@ -166,6 +166,7 @@ struct Opts {
     indexing_setter: bool,
     indexing_deleter: bool,
     variadic: bool,
+    thread_local: bool,
     js_name: Option<String>,
     js_class: Option<String>,
     js_namespace: Option<String>,
@@ -225,7 +226,7 @@ impl Opts {
                     // property lookup on the receiver) or has no TS output.
                     "structural" | "final" | "typescript_type" | "skip_typescript"
                     | "skip_jsdoc" | "getter_with_clone" | "no_deref" | "is_type_of"
-                    | "no_upcast" | "no_promising" | "thread_local" | "thread_local_v2" => {
+                    | "no_upcast" | "no_promising" => {
                         // `is_type_of` carries a closure; consume whatever the
                         // value is rather than trying to parse it.
                         if m.input.peek(syn::Token![=]) {
@@ -235,6 +236,7 @@ impl Opts {
                     // Refused rather than ignored: silently dropping these
                     // generates glue that calls the wrong thing.
                     "variadic" => o.variadic = true,
+                    "thread_local" | "thread_local_v2" => o.thread_local = true,
                     other @ ("module" | "raw_module" | "inline_js" | "start") => {
                         return Err(m.error(format!(
                             "#[wasm_bindgen({other})] is not supported by the wasm_lite shim yet"
@@ -477,7 +479,7 @@ fn extern_static(st: syn::ForeignItemStatic) -> syn::Result<TokenStream2> {
     let body = raise_ret(ty, quote! { #module::shim() });
     let cfgs = cfg_attrs(&st.attrs);
 
-    Ok(quote! {
+    let shim_mod = quote! {
         #(#cfgs)*
         #[allow(non_snake_case, unused_imports)]
         mod #module {
@@ -490,10 +492,38 @@ fn extern_static(st: syn::ForeignItemStatic) -> syn::Result<TokenStream2> {
                 }
             }
         }
+    };
+
+    if !opts.thread_local {
+        return Ok(quote! {
+            #shim_mod
+            #(#attrs)*
+            #[allow(non_snake_case)]
+            #vis fn #name() -> #ty { #body }
+        });
+    }
+
+    // `thread_local_v2` asks for a value accessed through `.with(|v| ..)`
+    // rather than a call. The property is re-read on each access, which is the
+    // honest reading: it lives in JS and could change.
+    let holder = format_ident!("__WbThreadLocal_{}", name);
+    Ok(quote! {
+        #shim_mod
+
+        #[doc(hidden)]
+        #[allow(non_camel_case_types)]
+        #vis struct #holder;
+
+        impl #holder {
+            /// Read the JS property and hand it to `f`.
+            pub fn with<R>(&self, f: impl ::core::ops::FnOnce(&#ty) -> R) -> R {
+                f(&{ #body })
+            }
+        }
 
         #(#attrs)*
-        #[allow(non_snake_case)]
-        #vis fn #name() -> #ty { #body }
+        #[allow(non_upper_case_globals, non_snake_case)]
+        #vis static #name: #holder = #holder;
     })
 }
 

@@ -101,6 +101,11 @@ extern "C" {
     /// a function.
     #[wasm_bindgen(js_namespace = Math)]
     pub static PI: f64;
+
+    /// `globalThis.self` — declared `thread_local_v2`, so it is read through
+    /// `.with(..)` on each access rather than captured once.
+    #[wasm_bindgen(thread_local_v2, js_name = self)]
+    pub static SELF_OBJ: Option<JsValue>;
 }
 
 #[wasm_bindgen]

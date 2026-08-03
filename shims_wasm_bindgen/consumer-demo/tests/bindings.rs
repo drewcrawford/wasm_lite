@@ -218,6 +218,18 @@ mod websys_grammar {
     fn an_extern_static_reads_a_namespaced_constant() {
         assert!((PI() - core::f64::consts::PI).abs() < 1e-12);
     }
+
+    /// `thread_local_v2` reads the JS property on each access.
+    #[wasm_lite_test]
+    fn a_thread_local_static_reads_through_with() {
+        // `self` is the global object in a page, so this is Some.
+        let present = SELF_OBJ.with(|v| v.is_some());
+        assert!(present, "globalThis.self exists in a browser");
+
+        // Read twice: the value is fetched each time rather than cached, so a
+        // second access must still work.
+        assert!(SELF_OBJ.with(|v| v.is_some()));
+    }
 }
 
 wasm_lite::test_main!();
