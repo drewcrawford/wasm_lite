@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Deliberately reuses the `wasm-bindgen` package name: an application
+# substitutes this for the real crate with
+# `[patch.crates-io] wasm-bindgen = { path = "..." }`, which matches on package
+# name.
+[package]
+name = "wasm-bindgen"
+description = "wasm-bindgen's API, lowered onto wasm_lite. Not the real wasm-bindgen."
+# Impersonates a real wasm-bindgen version, for two independent reasons:
+#
+#  * rustc special-cases this package name and rejects anything below 0.2.88
+#    ("older versions of the `wasm-bindgen` crate are incompatible with current
+#    versions of Rust"), so the shim cannot carry the workspace's 0.1.0; and
+#  * the crates that must compile against it pin it exactly — js-sys 0.3.91
+#    requires `wasm-bindgen =0.2.114` — so substitution only resolves if the
+#    declared version matches what the graph already asks for.
+#
+# Bump this to whatever the target graph pins.
+version = "0.2.114"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+name = "wasm_bindgen"
+path = "src/lib.rs"
+
+[dependencies]
+wasm_lite = { path = "../../crates/wasm_lite" }

@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# The **fake-wasm-bindgen** shim: `wasm-bindgen`'s API, lowered onto wasm_lite.
+# The mirror of `shims/`, which goes the other way (wasm_lite's API lowered onto
+# wasm-bindgen).
+#
+# Its own workspace, and separate from `shims/` for two reasons: this member
+# reuses the *package name* `wasm-bindgen` (substitution matches on package
+# name, and one workspace cannot hold two packages sharing a name), and the
+# `shims/` members depend on the *real* wasm-bindgen, which would be exactly
+# that collision.
+[workspace]
+resolver = "2"
+members = ["wasm_bindgen", "consumer-demo"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+authors = ["Drew Crawford <drew@sealedabstract.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/drewcrawford/wasm_lite"
+homepage = "https://sealedabstract.com/code/wasm_lite"

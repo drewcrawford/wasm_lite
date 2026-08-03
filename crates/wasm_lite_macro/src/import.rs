@@ -16,12 +16,19 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
-use syn::{Attribute, Error, Ident, LitStr, Token, Type, braced, parenthesized};
+use syn::{Attribute, Error, Ident, LitStr, Path, Token, Type, braced, parenthesized};
 
 use crate::ty::*;
 
-/// `import! { "ns" { fns } ... }`.
+/// `import! { [crate = <path>;] "ns" { fns } ... }`.
 struct Import {
+    /// Where the generated code finds the wasm_lite runtime.
+    ///
+    /// Defaults to `::wasm_lite`, which is right whenever the calling crate
+    /// depends on wasm_lite directly. A shim that re-exports the runtime under
+    /// its own name overrides it, so that code generated inside a crate which
+    /// has never heard of wasm_lite still resolves — see the module docs.
+    krate: Path,
     namespaces: Vec<Namespace>,
 }
 
@@ -85,11 +92,20 @@ impl KindAttr {
 
 impl Parse for Import {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let krate = if input.peek(Token![crate]) {
+            input.parse::<Token![crate]>()?;
+            input.parse::<Token![=]>()?;
+            let path: Path = input.parse()?;
+            input.parse::<Token![;]>()?;
+            path
+        } else {
+            syn::parse_quote!(::wasm_lite)
+        };
         let mut namespaces = Vec::new();
         while !input.is_empty() {
             namespaces.push(input.parse()?);
         }
-        Ok(Import { namespaces })
+        Ok(Import { krate, namespaces })
     }
 }
 
@@ -218,7 +234,7 @@ pub(crate) fn build(input: TokenStream2) -> syn::Result<TokenStream2> {
 
     for ns in &parsed.namespaces {
         for f in &ns.fns {
-            let (item, frag) = build_fn(&ns.ns, f)?;
+            let (item, frag) = build_fn(&parsed.krate, &ns.ns, f)?;
             items.push(item);
             descr_frags.push(frag);
         }
@@ -226,13 +242,14 @@ pub(crate) fn build(input: TokenStream2) -> syn::Result<TokenStream2> {
 
     // One descriptor section entry per invocation; `module_path!()` is emitted
     // (not evaluated here) so the import symbol is resolved in context.
+    let krate = &parsed.krate;
     let descriptors = quote! {
         const _: () = {
             const DESCR_STR: &str = concat!( #(#descr_frags),* );
             #[used]
             #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wasm_lite_imports"))]
             static DESCR: [u8; DESCR_STR.len()] =
-                ::wasm_lite::descriptor_bytes::<{ DESCR_STR.len() }>(DESCR_STR);
+                #krate::descriptor_bytes::<{ DESCR_STR.len() }>(DESCR_STR);
         };
     };
 
@@ -242,7 +259,7 @@ pub(crate) fn build(input: TokenStream2) -> syn::Result<TokenStream2> {
     })
 }
 
-fn build_fn(ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream2, TokenStream2)> {
+fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream2, TokenStream2)> {
     let name = &f.name;
     let fname_str = name.to_string();
 
@@ -359,7 +376,7 @@ fn build_fn(ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream2, TokenStream
     // import symbol keeps the raw string — it only has to match the descriptor,
     // which uses the same `fname_str`.
     let js_name = f.js.clone().unwrap_or_else(|| unraw(name));
-    let ret = build_return(name, ns, &extern_params, &call_args, f.ret.as_ref())?;
+    let ret = build_return(krate, name, ns, &extern_params, &call_args, f.ret.as_ref())?;
 
     let Return {
         wrapper_ret,
@@ -372,7 +389,7 @@ fn build_fn(ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream2, TokenStream
     let keep_malloc = if needs_malloc {
         quote! {
             const _: () = {
-                #[used] static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = ::wasm_lite::__wl_malloc;
+                #[used] static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = #krate::__wl_malloc;
             };
         }
     } else {
@@ -415,6 +432,7 @@ struct Return {
 }
 
 fn build_return(
+    krate: &Path,
     name: &Ident,
     ns: &LitStr,
     extern_params: &[TokenStream2],
@@ -457,9 +475,9 @@ fn build_return(
     }
     if is_jsvalue(ty) {
         return Ok(Return {
-            wrapper_ret: quote! { -> ::wasm_lite::JsValue },
+            wrapper_ret: quote! { -> #krate::JsValue },
             extern_decl: scalar_extern(quote! { -> u32 }),
-            body: quote! { ::wasm_lite::JsValue::__wl_from_abi(unsafe { #call }) },
+            body: quote! { #krate::JsValue::__wl_from_abi(unsafe { #call }) },
             ret_tag: "handle".into(),
             needs_malloc: false,
         });
@@ -516,7 +534,7 @@ fn build_return(
             let mut __buf = [0u8; 16];
             unsafe { #sret_call };
             if u32::from_le_bytes([__buf[0], __buf[1], __buf[2], __buf[3]]) == 1 {
-                ::core::option::Option::Some(unsafe { <#inner as ::wasm_lite::FromSretPayload>::__wl_read(__buf.as_ptr()) })
+                ::core::option::Option::Some(unsafe { <#inner as #krate::FromSretPayload>::__wl_read(__buf.as_ptr()) })
             } else {
                 ::core::option::Option::None
             }
@@ -552,9 +570,9 @@ fn build_return(
             let mut __buf = [0u8; 16];
             unsafe { #sret_call };
             if u32::from_le_bytes([__buf[0], __buf[1], __buf[2], __buf[3]]) == 0 {
-                ::core::result::Result::Ok(unsafe { <#ok_ty as ::wasm_lite::FromSretPayload>::__wl_read(__buf.as_ptr()) })
+                ::core::result::Result::Ok(unsafe { <#ok_ty as #krate::FromSretPayload>::__wl_read(__buf.as_ptr()) })
             } else {
-                ::core::result::Result::Err(unsafe { <#err_ty as ::wasm_lite::FromSretPayload>::__wl_read(__buf.as_ptr()) })
+                ::core::result::Result::Err(unsafe { <#err_ty as #krate::FromSretPayload>::__wl_read(__buf.as_ptr()) })
             }
         };
         return Ok(Return {

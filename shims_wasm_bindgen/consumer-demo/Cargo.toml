@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Stands in for js-sys / web-sys / wgpu: a crate that depends on
+# `wasm-bindgen` and **not** on wasm_lite. If its bindings compile and run,
+# the substitution mechanism works for unmodified upstream crates.
+[package]
+name = "consumer-demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Deliberately the only dependency. Adding wasm_lite here would invalidate the
+# whole point of this crate.
+wasm-bindgen = { path = "../wasm_bindgen" }
+
+[dev-dependencies]
+# Test-harness only. `#[wasm_lite_test]`/`test_main!` are how the browser runner
+# discovers tests; a real upstream crate needs none of this, exactly as it needs
+# no `wasm-bindgen-test` in its non-test build.
+wasm_lite = { path = "../../crates/wasm_lite" }
+
+[[test]]
+name = "bindings"
+harness = false

@@ -9,3 +9,7 @@ if [[ " $* " =~ " --relaxed " ]]; then
 fi
 
 RUSTFLAGS="$WARN_FLAGS" cargo check --workspace
+
+# The fake-wasm-bindgen shim is its own workspace (it reuses the `wasm-bindgen`
+# package name), so it needs its own invocation.
+RUSTFLAGS="$WARN_FLAGS" cargo check --manifest-path shims_wasm_bindgen/Cargo.toml --workspace
