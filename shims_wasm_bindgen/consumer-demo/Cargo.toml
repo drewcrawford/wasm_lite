@@ -21,7 +21,16 @@ wasm-bindgen = { path = "../wasm_bindgen" }
 # discovers tests; a real upstream crate needs none of this, exactly as it needs
 # no `wasm-bindgen-test` in its non-test build.
 wasm_lite = { path = "../../crates/wasm_lite" }
+# The companion shim: a crate substituting `wasm-bindgen` almost always has
+# suites written against `#[wasm_bindgen_test]` too.
+wasm-bindgen-test = { path = "../wasm_bindgen_test" }
 
 [[test]]
 name = "bindings"
+harness = false
+
+# `harness = false` is the one thing the test shim cannot do for a consumer:
+# wasm_lite's runner discovers tests from a wasm section and owns `main`.
+[[test]]
+name = "wbt_harness"
 harness = false

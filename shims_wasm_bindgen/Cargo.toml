@@ -11,7 +11,13 @@
 # that collision.
 [workspace]
 resolver = "2"
-members = ["wasm_bindgen", "wasm_bindgen_macro_wl", "consumer-demo"]
+members = [
+    "wasm_bindgen",
+    "wasm_bindgen_macro_wl",
+    "wasm_bindgen_test",
+    "wasm_bindgen_test_macro_wl",
+    "consumer-demo",
+]
 
 [workspace.package]
 version = "0.1.0"

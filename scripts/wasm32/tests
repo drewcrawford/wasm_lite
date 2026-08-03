@@ -28,6 +28,9 @@ echo "testing examples/tests-demo closures"
 echo "testing shims_wasm_bindgen/consumer-demo (depends only on the shim)"
 (cd shims_wasm_bindgen/consumer-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test bindings)
 
+echo "testing shims_wasm_bindgen/consumer-demo wasm-bindgen-test harness"
+(cd shims_wasm_bindgen/consumer-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test wbt_harness)
+
 echo "testing examples/doctest-demo doctests"
 (cd examples/doctest-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --doc)
 

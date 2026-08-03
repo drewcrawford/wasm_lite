@@ -47,6 +47,7 @@ use crate::ty::*;
 #[proc_macro_attribute]
 pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as TestArgs);
+    let krate = &args.krate;
     let func = parse_macro_input!(item as ItemFn);
 
     // Fail closed: an `async fn` body would be constructed and dropped unpolled
@@ -93,7 +94,7 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #[cfg(target_arch = "wasm32")]
             {
-                ::wasm_lite::set_panic_hook();
+                #krate::set_panic_hook();
                 ::wasm_lite_std::__rt::test_pending();
                 ::wasm_lite_std::spawn_local(async {
                     ::wasm_lite_std::spawn(#name).join_async().await.unwrap();
@@ -108,7 +109,7 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         quote! {
             #[cfg(target_arch = "wasm32")]
-            ::wasm_lite::set_panic_hook();
+            #krate::set_panic_hook();
             #name();
         }
     };
@@ -141,21 +142,36 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Arguments to `#[wasm_lite_test]`: nothing (main thread) or `(worker)`.
 struct TestArgs {
     worker: bool,
+    /// Where the generated code finds the runtime; see `import!`'s `crate =`.
+    krate: syn::Path,
 }
 
 impl Parse for TestArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.is_empty() {
-            return Ok(TestArgs { worker: false });
+        let mut args = TestArgs {
+            worker: false,
+            krate: syn::parse_quote!(::wasm_lite),
+        };
+        while !input.is_empty() {
+            if input.peek(Token![crate]) {
+                input.parse::<Token![crate]>()?;
+                input.parse::<Token![=]>()?;
+                args.krate = input.parse()?;
+            } else {
+                let ident: Ident = input.parse()?;
+                if ident != "worker" {
+                    return Err(Error::new_spanned(
+                        &ident,
+                        "expected `worker`, `crate = <path>`, or no argument",
+                    ));
+                }
+                args.worker = true;
+            }
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
         }
-        let ident: Ident = input.parse()?;
-        if ident != "worker" {
-            return Err(Error::new_spanned(
-                &ident,
-                "expected `worker` or no argument",
-            ));
-        }
-        Ok(TestArgs { worker: true })
+        Ok(args)
     }
 }
 
