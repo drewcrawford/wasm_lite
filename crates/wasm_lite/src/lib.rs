@@ -326,6 +326,7 @@
 // those paths resolve when the macros are used *inside* this crate too.
 extern crate self as wasm_lite;
 
+mod bench;
 mod closure;
 mod future;
 mod macros;
@@ -340,6 +341,7 @@ pub mod thread;
 #[cfg(feature = "wasm-bindgen")]
 pub mod interop;
 
+pub use bench::{Bencher, CALIBRATION_MS, SAMPLES};
 pub use closure::Closure;
 pub use future::JsFuture;
 pub use value::{AsJsValue, JsValue};
@@ -362,7 +364,7 @@ pub use core::result::Result as __Result;
 pub use std::string::String as __String;
 #[doc(hidden)]
 pub use std::vec::Vec as __Vec;
-pub use wasm_lite_macro::{export, import, js_class, wasm_lite_test};
+pub use wasm_lite_macro::{export, import, js_class, wasm_lite_bench, wasm_lite_test};
 
 /// Install a panic hook that reports the panic message via `console.error`.
 ///

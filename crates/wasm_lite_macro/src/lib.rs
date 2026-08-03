@@ -139,6 +139,134 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Mark a function as a wasm_lite benchmark (analogous to `#[bench]`).
+///
+/// The function takes a `&mut Bencher` and hands it the work to measure:
+///
+/// ```
+/// #[wasm_lite::wasm_lite_bench]
+/// fn sum_to_1000(b: &mut wasm_lite::Bencher) {
+///     b.iter(|| (0u64..1000).sum::<u64>());
+/// }
+/// # fn main() {}
+/// ```
+///
+/// Generates an exported `__wl_bench_<module_path>::<name>` entry point and
+/// records the benchmark's Rust path in the `__wasm_lite_benches` section, so
+/// the runner discovers and drives it the same way it does tests. Each
+/// benchmark gets its own page load, so one that traps cannot take the rest of
+/// the suite with it.
+///
+/// Unlike `#[wasm_lite_test]` there is no `(worker)` form. A benchmark timed on
+/// a worker would be measuring a thread the browser is free to deprioritize,
+/// and `performance.now()` on a worker is coarsened independently of the main
+/// thread's — two ways for the number to be wrong that are hard to see in the
+/// output. Benchmark the work on the main thread; if what you want to measure
+/// *is* the threading, measure it end-to-end from the main thread.
+#[proc_macro_attribute]
+pub fn wasm_lite_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as BenchArgs);
+    let krate = &args.krate;
+    let func = parse_macro_input!(item as ItemFn);
+
+    // Fail closed, for the same reasons `#[wasm_lite_test]` does: an `async fn`
+    // body would be dropped unpolled (measuring nothing), and a return value
+    // would be discarded. Both would report a passing benchmark that never ran.
+    if let Some(asyncness) = &func.sig.asyncness {
+        return Error::new_spanned(
+            asyncness,
+            "#[wasm_lite_bench] does not support `async fn`: the future would be \
+             dropped without being polled, so the benchmark would measure only \
+             the cost of constructing it. Drive the future to completion inside \
+             the `iter` body instead.",
+        )
+        .to_compile_error()
+        .into();
+    }
+    if let ReturnType::Type(_, ty) = &func.sig.output
+        && !matches!(ty.as_ref(), Type::Tuple(t) if t.elems.is_empty())
+    {
+        return Error::new_spanned(
+            ty,
+            "#[wasm_lite_bench] functions must not return a value: it would be \
+             discarded. Return `()` and measure inside `b.iter(..)`.",
+        )
+        .to_compile_error()
+        .into();
+    }
+    // A benchmark that takes no `Bencher` has nothing to measure with, and the
+    // generated call would fail with an arity error pointing at generated code.
+    if func.sig.inputs.len() != 1 {
+        return Error::new_spanned(
+            &func.sig,
+            "#[wasm_lite_bench] functions take exactly one argument, \
+             `b: &mut Bencher`",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    let name = &func.sig.ident;
+    let entry = format_ident!("__wl_bench_{}", name);
+
+    quote! {
+        #func
+        #[unsafe(export_name = concat!("__wl_bench_", module_path!(), "::", stringify!(#name)))]
+        pub extern "C" fn #entry() {
+            // The hook turns a panic inside the benchmark into a console
+            // message the runner can report, rather than a bare trap.
+            #[cfg(target_arch = "wasm32")]
+            #krate::set_panic_hook();
+            let mut __wl_b = #krate::Bencher::new();
+            #name(&mut __wl_b);
+            __wl_b.__wl_record();
+        }
+        const _: () = {
+            const __WL_BENCH_NAME_LEN: usize = concat!(module_path!(), "::", stringify!(#name), "\n").len();
+            #[used]
+            #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wasm_lite_benches"))]
+            static __WL_BENCH_NAME: [u8; __WL_BENCH_NAME_LEN] = {
+                let bytes = concat!(module_path!(), "::", stringify!(#name), "\n").as_bytes();
+                let mut out = [0u8; __WL_BENCH_NAME_LEN];
+                let mut i = 0;
+                while i < __WL_BENCH_NAME_LEN {
+                    out[i] = bytes[i];
+                    i += 1;
+                }
+                out
+            };
+        };
+    }
+    .into()
+}
+
+/// Arguments to `#[wasm_lite_bench]`: nothing, or `crate = <path>`.
+struct BenchArgs {
+    /// Where the generated code finds the runtime; see `import!`'s `crate =`.
+    krate: syn::Path,
+}
+
+impl Parse for BenchArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut args = BenchArgs {
+            krate: syn::parse_quote!(::wasm_lite),
+        };
+        while !input.is_empty() {
+            if input.peek(Token![crate]) {
+                input.parse::<Token![crate]>()?;
+                input.parse::<Token![=]>()?;
+                args.krate = input.parse()?;
+            } else {
+                return Err(input.error("expected `crate = <path>` or no argument"));
+            }
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+        Ok(args)
+    }
+}
+
 /// Arguments to `#[wasm_lite_test]`: nothing (main thread) or `(worker)`.
 struct TestArgs {
     worker: bool,

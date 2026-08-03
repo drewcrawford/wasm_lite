@@ -160,3 +160,86 @@ crates/wasm_lite_std/run-browser-tests.sh
 
 It requires **nightly** (atomics ⇒ recompiled `std`) and a WebDriver browser; pass
 `--no-run` to just build.
+
+## Benchmark in a browser
+
+`#[wasm_lite_bench]` is the benchmark counterpart of `#[wasm_lite_test]`. The
+function takes a `&mut Bencher` and hands it the work to measure; the harness
+picks the iteration count and reports ns/iter in the shape `cargo bench` prints.
+
+```toml
+# Cargo.toml — `harness = false` for the same reason a test target needs it
+[[bench]]
+name = "arith"
+harness = false
+```
+
+```rust
+use std::hint::black_box;
+use wasm_lite::{Bencher, wasm_lite_bench};
+
+#[wasm_lite_bench]
+fn multiply(b: &mut Bencher) {
+    b.iter(|| black_box(black_box(6364136223846793005u64).wrapping_mul(1442695040888963407)));
+}
+
+wasm_lite::bench_main!();
+```
+
+```text
+$ cargo bench
+running 4 benchmarks
+test arith::empty ... bench:           0 ns/iter (+/- 0)
+test arith::multiply ... bench:           2 ns/iter (+/- 1)
+test arith::sum_to_1000 ... bench:          11 ns/iter (+/- 3)
+test arith::allocate_a_vec ... bench:          65 ns/iter (+/- 10)
+```
+
+Each benchmark gets its own page load, exactly as each test does, so one that
+traps cannot take the rest of the suite with it.
+
+### Why not criterion
+
+[criterion](https://docs.rs/criterion) needs a wall clock it can trust at
+sub-microsecond resolution, spawns processes for its baseline comparisons, and
+writes its history to disk. A browser tab has none of those. What it has is
+`performance.now()` — coarsened to **5 µs** even in a cross-origin-isolated page
+(and to 1 ms without it) as a Spectre mitigation.
+
+That single fact sets the design. A timer that cannot resolve one iteration has
+to time a *batch*, so `iter` calibrates a batch size before measuring anything:
+it grows the count until one batch takes at least 10 ms, at which point the
+clock's granularity contributes under 0.1% of the reading. It then takes 50 such
+batches and reports the **median** ns/iter, with `+/-` as the full spread
+(max − min), the same numbers libtest's `cargo bench` prints.
+
+Median rather than mean because a browser will occasionally interrupt a sample
+with GC or another tab, and one such sample drags a mean much further than it
+drags the truth. The spread is the full range rather than a standard deviation
+so those interruptions stay *visible* — a suspiciously wide `+/-` says the
+machine was busy, not that the code is variable.
+
+The honest limitation: every figure is a batch average, so this measures
+throughput and cannot see per-iteration variance below the batch. It is the
+right tool for "did this change make it faster" and the wrong one for tail
+latency.
+
+### Benchmarks in CI
+
+`cargo bench` measures; `cargo test --benches` runs each benchmark exactly once
+without measuring. Use the latter in CI: it keeps benchmarks compiling and
+working, without publishing timings taken while the rest of the suite competes
+for the same cores — a number produced under those conditions is worse than no
+number, because it looks like data.
+
+A benchmark that never calls `Bencher::iter` **fails** rather than reporting
+`0 ns/iter`, which would read as an astonishing result rather than the mistake
+it is.
+
+There is no `(worker)` form. A benchmark timed on a worker measures a thread the
+browser is free to deprioritize, and `performance.now()` on a worker is
+coarsened independently of the main thread's — two ways for the number to be
+wrong that don't show up in the output. Benchmark on the main thread; if the
+threading *is* what you want to measure, measure it end-to-end from there.
+
+See `examples/bench-demo` for a runnable suite.

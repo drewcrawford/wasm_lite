@@ -19,3 +19,18 @@ macro_rules! test_main {
         fn main() {}
     };
 }
+
+/// Supply the entry point for a `harness = false` bench target.
+///
+/// The benchmark counterpart of [`test_main!`](crate::test_main): the runner
+/// drives each benchmark through its `#[wasm_lite_bench]`-generated export, so
+/// `main` has nothing to do.
+///
+/// A `[[bench]]` target needs `harness = false` in `Cargo.toml`, exactly as a
+/// test target does — libtest's own bench harness would otherwise claim `main`.
+#[macro_export]
+macro_rules! bench_main {
+    () => {
+        fn main() {}
+    };
+}

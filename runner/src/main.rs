@@ -77,7 +77,7 @@ fn is_test_run(args: &Args) -> bool {
     if args.serve {
         return false;
     }
-    if args.test || args.list {
+    if args.test || args.list || args.bench {
         return true;
     }
 
@@ -99,7 +99,10 @@ fn is_test_run(args: &Args) -> bool {
     // A parse error here just means "not conclusively a test harness"; the
     // headless path re-reads the module and reports the real error.
     std::fs::read(&args.program)
-        .map(|module| wasm_lite_codegen::test_names(&module).is_ok_and(|names| !names.is_empty()))
+        .map(|module| {
+            wasm_lite_codegen::test_names(&module).is_ok_and(|names| !names.is_empty())
+                || wasm_lite_codegen::bench_names(&module).is_ok_and(|names| !names.is_empty())
+        })
         .unwrap_or(false)
 }
 
@@ -142,6 +145,12 @@ struct Args {
     exact: bool,
     /// `--list`: print the (filtered) test names and exit, like libtest.
     list: bool,
+    /// `--bench`: measure benchmarks rather than just running them once.
+    ///
+    /// Cargo passes this to a `harness = false` bench target under
+    /// `cargo bench`, and omits it under `cargo test` — which is exactly the
+    /// distinction we want, so there is nothing to infer.
+    bench: bool,
 }
 
 impl Args {
@@ -163,8 +172,9 @@ impl Args {
 /// The first non-flag argument is the program (`.js` or `.wasm`); later
 /// positional arguments are libtest-style test-name filters (`cargo test foo`
 /// invokes us as `runner <artifact.wasm> foo`). `--serve` forces the
-/// interactive server; `--test` forces headless test mode; `--exact` and
-/// `--list` follow libtest. Other flags (e.g. `--nocapture`) are ignored, so
+/// interactive server; `--test` forces headless test mode; `--bench` asks a
+/// bench target for measurements (Cargo passes it under `cargo bench` and not
+/// under `cargo test`); `--exact` and `--list` follow libtest. Other flags (e.g. `--nocapture`) are ignored, so
 /// the runner works directly as a Cargo runner
 /// (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`).
 fn parse_args() -> Result<Args, String> {
@@ -174,6 +184,7 @@ fn parse_args() -> Result<Args, String> {
     let mut test = false;
     let mut exact = false;
     let mut list = false;
+    let mut bench = false;
     for arg in std::env::args_os().skip(1) {
         let text = arg.to_string_lossy();
         if text == "--serve" {
@@ -184,6 +195,8 @@ fn parse_args() -> Result<Args, String> {
             exact = true;
         } else if text == "--list" {
             list = true;
+        } else if text == "--bench" {
+            bench = true;
         } else if text.starts_with('-') {
             // Ignore other flags (e.g. test-harness arguments).
         } else if program.is_none() {
@@ -199,6 +212,7 @@ fn parse_args() -> Result<Args, String> {
         filters,
         exact,
         list,
+        bench,
     })
 }
 

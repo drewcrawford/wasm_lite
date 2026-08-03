@@ -3,9 +3,11 @@
 //! code, for use as a Cargo test runner
 //! (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`).
 //!
-//! Two shapes are supported:
+//! Three shapes are supported:
 //!   * a `#[wasm_lite_test]` harness (a `__wasm_lite_tests` section): each test
 //!     runs in a fresh page load (`?test=<path>`) so a panic only fails that test;
+//!   * a `#[wasm_lite_bench]` harness (a `__wasm_lite_benches` section): the same,
+//!     one page load per benchmark, reporting ns/iter;
 //!   * a plain `bin`: run `main` once (pass = ran to completion).
 
 use crate::webdriver::Browser;
@@ -31,13 +33,24 @@ pub fn run(args: &Args) -> i32 {
     let names: Vec<String> = all.iter().filter(|n| args.selects(n)).cloned().collect();
     let filtered_out = all.len() - names.len();
 
+    let all_benches = module.bench_names.clone();
+    let benches: Vec<String> = all_benches
+        .iter()
+        .filter(|n| args.selects(n))
+        .cloned()
+        .collect();
+    let benches_filtered_out = all_benches.len() - benches.len();
+
     // `cargo test -- --list` / IDE test discovery: report names, don't run.
     if args.list {
         for name in &names {
             println!("{name}: test");
         }
+        for name in &benches {
+            println!("{name}: bench");
+        }
         println!();
-        println!("{} tests, 0 benchmarks", names.len());
+        println!("{} tests, {} benchmarks", names.len(), benches.len());
         return 0;
     }
 
@@ -62,8 +75,14 @@ pub fn run(args: &Args) -> i32 {
         }
     };
 
-    let result = if all.is_empty() {
+    // A bench target under `cargo test` (no `--bench`) still runs each
+    // benchmark, but only to prove it doesn't panic — libtest does the same,
+    // and it is the only thing that keeps benchmarks compiling and working in
+    // CI where nobody reads the timings. `--bench` asks for the measurement.
+    let result = if all.is_empty() && all_benches.is_empty() {
         run_main(&browser, port)
+    } else if all.is_empty() {
+        run_bench_suite(&browser, port, &benches, benches_filtered_out, args.bench)
     } else {
         run_suite(&browser, port, &names, filtered_out)
     };
@@ -76,10 +95,11 @@ pub fn run(args: &Args) -> i32 {
     }
 }
 
-/// Routes to serve plus the discovered test names.
+/// Routes to serve plus the discovered test and benchmark names.
 struct Prepared {
     routes: Vec<Route>,
     test_names: Vec<String>,
+    bench_names: Vec<String>,
 }
 
 fn prepare(program: &Path) -> Result<Prepared, String> {
@@ -96,7 +116,12 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
     let memory = wasm_lite_codegen::imported_memory(&module)?;
     let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
     let test_names = wasm_lite_codegen::test_names(&module)?;
-    let body = if test_names.is_empty() {
+    let bench_names = wasm_lite_codegen::bench_names(&module)?;
+    // One harness bootstrap covers both shapes, dispatching on the query
+    // parameter rather than on which section exists — a target may declare
+    // tests and benchmarks in the same file, and picking by section would make
+    // one of them unreachable.
+    let body = if test_names.is_empty() && bench_names.is_empty() {
         MAIN_BOOTSTRAP
     } else {
         HARNESS_BOOTSTRAP
@@ -136,7 +161,11 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
         });
     }
 
-    Ok(Prepared { routes, test_names })
+    Ok(Prepared {
+        routes,
+        test_names,
+        bench_names,
+    })
 }
 
 /// Run a plain `bin`: success is `main` completing without a trap.
@@ -251,6 +280,128 @@ fn run_suite(
     }
 }
 
+/// Run a `#[wasm_lite_bench]` harness: each benchmark in a fresh page load.
+///
+/// With `measure`, prints libtest's `cargo bench` line; without it, each
+/// benchmark still runs (so a broken one fails CI) but only its pass/fail is
+/// reported — a timing taken while the rest of the suite is compiling or a CI
+/// box is oversubscribed is worse than no timing, because it looks like data.
+fn run_bench_suite(
+    browser: &Browser,
+    port: u16,
+    names: &[String],
+    filtered_out: usize,
+    measure: bool,
+) -> Result<i32, String> {
+    println!(
+        "\nrunning {} benchmark{}{}",
+        names.len(),
+        plural(names.len()),
+        if measure { "" } else { " (not measured)" }
+    );
+    let mut failed = 0;
+
+    for name in names {
+        let encoded_name = encode_query_component(name);
+        browser.goto(&format!("http://127.0.0.1:{port}/?bench={encoded_name}"))?;
+        if let Err(err) = wait_done(browser) {
+            failed += 1;
+            println!("test {name} ... FAILED");
+            println!("    {err}");
+            continue;
+        }
+
+        if !browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
+            failed += 1;
+            println!("test {name} ... FAILED");
+            for line in browser.eval_string(CONSOLE_JOIN)?.lines() {
+                println!("    {line}");
+            }
+            continue;
+        }
+
+        if !measure {
+            println!("test {name} ... ok");
+            continue;
+        }
+
+        let raw = browser.eval_string("return globalThis.__wl_bench || \"\";")?;
+        match Measurement::parse(&raw) {
+            Some(m) if m.iters > 0.0 => {
+                println!(
+                    "test {name} ... bench: {:>11} ns/iter (+/- {})",
+                    thousands(m.median_ns),
+                    thousands(m.max_ns - m.min_ns)
+                );
+            }
+            // Ran cleanly but measured nothing: the body never called
+            // `Bencher::iter`. Reporting `0 ns/iter` would read as an
+            // astonishing result rather than as the mistake it is.
+            _ => {
+                failed += 1;
+                println!("test {name} ... FAILED");
+                println!("    the benchmark never called `Bencher::iter`, so nothing was measured");
+            }
+        }
+    }
+
+    let passed = names.len() - failed;
+    println!();
+    if failed == 0 {
+        println!("test result: ok. {passed} passed; 0 failed; {filtered_out} filtered out");
+        Ok(0)
+    } else {
+        println!(
+            "test result: FAILED. {passed} passed; {failed} failed; {filtered_out} filtered out"
+        );
+        Ok(1)
+    }
+}
+
+/// One benchmark's timings, as read back from the module's exports.
+struct Measurement {
+    median_ns: f64,
+    min_ns: f64,
+    max_ns: f64,
+    iters: f64,
+}
+
+impl Measurement {
+    /// Parse the `median,min,max,iters` string the bootstrap builds.
+    ///
+    /// `None` for anything malformed, which the caller treats as "not
+    /// measured" — a partially-parsed timing is not worth printing.
+    fn parse(raw: &str) -> Option<Measurement> {
+        let mut fields = raw.split(',').map(|f| f.trim().parse::<f64>().ok());
+        let m = Measurement {
+            median_ns: fields.next()??,
+            min_ns: fields.next()??,
+            max_ns: fields.next()??,
+            iters: fields.next()??,
+        };
+        // A trailing field means the shape changed and this parse is a guess.
+        if fields.next().is_some() {
+            return None;
+        }
+        Some(m)
+    }
+}
+
+/// Round to whole nanoseconds and group with underscores, as `cargo bench` does
+/// with commas. Underscores because they are what a Rust literal uses, and the
+/// output is often pasted straight into a comment or a threshold constant.
+fn thousands(value: f64) -> String {
+    let digits = format!("{:.0}", value.max(0.0));
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push('_');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// Poll until the page records a result (or time out).
 fn wait_done(browser: &Browser) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -319,12 +470,29 @@ try {
 }
 "#;
 
-/// Bootstrap for a test harness: run the single test named by `?test=<name>`.
+/// Bootstrap for a test or benchmark harness: run the single case named by
+/// `?test=<name>` or `?bench=<name>`.
+///
+/// A benchmark additionally publishes its measurement in `__wl_bench`, read
+/// back through the module's own exports rather than through a JS global the
+/// benchmark would have to know the name of.
 const HARNESS_BOOTSTRAP: &str = r#"
-const name = new URLSearchParams(location.search).get("test");
+const params = new URLSearchParams(location.search);
+const test = params.get("test");
+const bench = params.get("bench");
 try {
     const instance = await instantiate("/program.wasm");
-    instance.exports["__wl_test_" + name]();
+    if (bench !== null) {
+        instance.exports["__wl_bench_" + bench]();
+        globalThis.__wl_bench = [
+            instance.exports.__wl_bench_median_ns(),
+            instance.exports.__wl_bench_min_ns(),
+            instance.exports.__wl_bench_max_ns(),
+            instance.exports.__wl_bench_iters(),
+        ].join(",");
+    } else {
+        instance.exports["__wl_test_" + test]();
+    }
     if (!globalThis.__wl_async_pending) globalThis.__wl_done = { ok: true, error: "" };
 } catch (e) {
     globalThis.__wl_done = { ok: false, error: String((e && e.stack) || e) };

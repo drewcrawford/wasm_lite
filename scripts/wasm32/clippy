@@ -14,6 +14,7 @@ for example in \
     examples/hello-rust \
     examples/exports-demo \
     examples/tests-demo \
+    examples/bench-demo \
     examples/doctest-demo \
     examples/interop
 do

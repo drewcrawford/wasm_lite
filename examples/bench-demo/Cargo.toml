@@ -1,0 +1,16 @@
+[package]
+name = "bench-demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wasm_lite = { path = "../../crates/wasm_lite" }
+
+# `harness = false` for the same reason a test target needs it: libtest's own
+# bench harness would otherwise own `main`, and the runner drives each
+# benchmark through its `#[wasm_lite_bench]` export.
+[[bench]]
+name = "arith"
+harness = false
+
+[workspace]

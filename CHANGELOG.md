@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- Benchmarking: `#[wasm_lite_bench]`, `Bencher`, and `bench_main!`, driven by the
+  runner one page load per benchmark and reported in `cargo bench`'s format.
+  `cargo bench` measures; `cargo test --benches` runs each once without
+  measuring. Timing is batch-calibrated because `performance.now()` is coarsened
+  to 5 µs even under cross-origin isolation — see
+  [docs/testing.md](docs/testing.md#benchmark-in-a-browser).
+
 ## 0.1.0 - 2026-06-30
 
 Initial release.

@@ -51,6 +51,23 @@ pub fn test_names(wasm: &[u8]) -> Result<Vec<String>, String> {
     }
 }
 
+/// Rust paths of the benchmarks declared via `#[wasm_lite_bench]`, in order.
+///
+/// Empty if the module has no benchmark section. As with [`test_names`], a
+/// malformed module or non-UTF-8 section is an error rather than an empty
+/// suite: a corrupted harness must fail, not silently report nothing to run.
+pub fn bench_names(wasm: &[u8]) -> Result<Vec<String>, String> {
+    match wasm::custom_section(wasm, "__wasm_lite_benches")? {
+        Some(bytes) => Ok(std::str::from_utf8(bytes)
+            .map_err(|e| format!("bench-name section is not UTF-8: {e}"))?
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()),
+        None => Ok(Vec::new()),
+    }
+}
+
 /// Read import descriptors from a compiled wasm module.
 ///
 /// Returns an empty vector if the module has no descriptor section (e.g. it was
