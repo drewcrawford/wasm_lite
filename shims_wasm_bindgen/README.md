@@ -10,6 +10,48 @@ the whole module.
 The mirror of [`shims/`](../shims), which goes the other way: wasm_lite's API
 lowered onto wasm-bindgen, for an app that stays on wasm-bindgen.
 
+## How it sits in the graph
+
+The shim does **not** sit between js-sys and wasm-bindgen. It *is* wasm-bindgen,
+as far as the graph is concerned: same package name, substituted by
+`[patch.crates-io]`. js-sys, web-sys and wgpu are the real, unmodified crates
+from crates.io and never learn otherwise.
+
+```
+   crates.io, UNMODIFIED
+   ┌──────────────────────────────────────────────────────┐
+   │  wgpu 28 ──┬── its own vendored webgpu_sys           │
+   │            │   (128 files, 16,635 lines)             │
+   │            └── web-sys 0.3.85 ── js-sys 0.3.85       │
+   │  glow · plotters · uuid · wasm-bindgen-futures       │
+   └───────────────────────┬──────────────────────────────┘
+                           │  every one of them does
+                           │  `use wasm_bindgen::…`
+                           ▼
+   ┌──────────────────────────────────────────────────────┐
+   │  package `wasm-bindgen` v0.2.108   ←── THE SHIM      │
+   │  shims_wasm_bindgen/wasm_bindgen                     │
+   │  JsValue · JsCast · #[wasm_bindgen] · Closure        │
+   └───────────────────────┬──────────────────────────────┘
+                           ▼
+   ┌──────────────────────────────────────────────────────┐
+   │  wasm_lite                                           │
+   │  JsValue · import! · js_class! · Closure             │
+   └───────────────────────┬──────────────────────────────┘
+                           ▼
+              descriptor custom sections
+                           ▼
+              wasm-lite codegen ──> ES module glue
+```
+
+So there is exactly **one** binding system at runtime. `#[wasm_bindgen]` in
+wgpu's vendored bindings lowers to a wasm_lite descriptor, the same as
+`import!` in your own code, and one codegen pass emits glue for both.
+
+Code *you* write should use `wasm_lite` directly — `import!`/`js_class!` are the
+js-sys equivalent, and going through the shim buys nothing. The shim is for code
+you are not going to rewrite.
+
 ## Using it
 
 ```toml
