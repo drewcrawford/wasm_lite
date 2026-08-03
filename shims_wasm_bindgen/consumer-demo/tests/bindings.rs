@@ -271,4 +271,103 @@ mod snippets {
     }
 }
 
+/// The pieces added while chasing Metropolis's graph, which until now were
+/// only known to satisfy a compiler.
+mod runtime_surface {
+    use wasm_bindgen::{Closure, JsValue, UnwrapThrowExt};
+    use wasm_lite::wasm_lite_test;
+
+    wasm_bindgen::__rt::import! {
+        crate = ::wasm_bindgen::__rt;
+        "globalThis" {
+            fn render(v: &JsValue) -> String as "String";
+        }
+        "Reflect" {
+            fn apply(f: &JsValue, this: &JsValue, args: &JsValue) -> JsValue;
+        }
+        "JSON" {
+            fn parse(text: &str) -> JsValue;
+        }
+        "Array" {
+            fn of1(v: f64) -> JsValue as "of";
+        }
+    }
+
+    fn call_with(f: &JsValue, arg: f64) {
+        apply(f, &JsValue::null(), &of1(arg));
+    }
+
+    /// A callback declared with a *scalar* argument, not `JsValue`. This is
+    /// what `wasm_safe_thread` uses, and it is why `FromJs` could not stay a
+    /// blanket over handle types.
+    #[wasm_lite_test]
+    fn a_closure_can_take_a_scalar_argument() {
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = seen.clone();
+        let cb: Closure<dyn FnMut(u32)> = Closure::new(move |n: u32| sink.borrow_mut().push(n));
+
+        call_with(cb.as_js_value(), 7.0);
+        call_with(cb.as_js_value(), 4_000_000_000.0);
+
+        assert_eq!(*seen.borrow(), vec![7, 4_000_000_000]);
+    }
+
+    /// `Fn`, not only `FnMut` — both spellings appear upstream.
+    #[wasm_lite_test]
+    fn a_closure_may_be_an_fn() {
+        let hits = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let counter = hits.clone();
+        let cb: Closure<dyn Fn()> = Closure::new(move || counter.set(counter.get() + 1));
+
+        apply(cb.as_js_value(), &JsValue::null(), &parse("[]"));
+        apply(cb.as_js_value(), &JsValue::null(), &parse("[]"));
+        assert_eq!(hits.get(), 2);
+    }
+
+    /// `Closure::once` fires at most once; a stale JS reference is inert
+    /// rather than a panic.
+    #[wasm_lite_test]
+    fn a_once_closure_fires_at_most_once() {
+        let hits = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let counter = hits.clone();
+        let cb: Closure<dyn FnMut()> = Closure::once(move || counter.set(counter.get() + 1));
+
+        apply(cb.as_js_value(), &JsValue::null(), &parse("[]"));
+        apply(cb.as_js_value(), &JsValue::null(), &parse("[]"));
+        assert_eq!(hits.get(), 1, "the second call must be a no-op");
+    }
+
+    #[wasm_lite_test]
+    fn conversions_added_for_the_graph() {
+        assert_eq!(render(&JsValue::from(String::from("owned"))), "owned");
+        assert_eq!(render(&JsValue::from(())), "undefined");
+    }
+
+    /// `memory()` and `module()` are what a thread spawner hands to a worker.
+    #[wasm_lite_test]
+    fn the_module_and_memory_are_reachable() {
+        let mem = wasm_bindgen::memory();
+        assert!(
+            render(&mem).contains("Memory"),
+            "expected a WebAssembly.Memory, got {}",
+            render(&mem)
+        );
+
+        let module = wasm_bindgen::module();
+        assert!(
+            render(&module).contains("Module"),
+            "expected a WebAssembly.Module, got {}",
+            render(&module)
+        );
+    }
+
+    #[wasm_lite_test]
+    fn unwrap_throw_passes_a_value_through() {
+        // The success path only: the failure path throws through the wasm
+        // frames and leaves the instance unusable, by design.
+        assert_eq!(Some(41u32).unwrap_throw(), 41);
+        assert_eq!(Ok::<_, ()>("ok").expect_throw("unused"), "ok");
+    }
+}
+
 wasm_lite::test_main!();
