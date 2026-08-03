@@ -68,6 +68,12 @@ mod wasm_impl {
         time_origin_ms() + wasm_lite::performance::now()
     }
 
+    // Precision note: an epoch-based millisecond count is ~1.7e12, which leaves
+    // an `f64` about 0.4 µs of resolution in its fraction, where a page-relative
+    // count left nanoseconds. That costs nothing real — `performance.now()` is
+    // itself coarsened to 5 µs in a cross-origin-isolated page and 1 ms without
+    // — and it buys readings two threads can compare, which is not optional.
+
     /// A measurement of a monotonically nondecreasing clock, backed by
     /// `performance.timeOrigin + performance.now()`.
     ///
