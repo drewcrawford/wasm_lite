@@ -85,6 +85,9 @@ rather than an error, which is much harder to notice:
 * **`WASM_LITE_SERVE_DIR`.** Without it the runner serves only the program's own
   files, so a fetch for a texture or a shader 404s and the program concludes its
   assets are missing — which they are, but not for the reason it will report.
+  Serving is confined to that directory: `..`, absolute components and symlinks
+  leading outside are refused, and the generated routes always take precedence,
+  so nothing on disk can shadow `program.wasm` or the glue.
 * **`WASM_LITE_RUN_SECONDS`.** `cargo test` mode declares success the instant
   `main` returns and then discards the console. For a doctest that is right; for
   an application whose work lives on the event loop — a render loop, an executor

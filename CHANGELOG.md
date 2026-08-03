@@ -16,7 +16,9 @@ All notable changes to this project will be documented in this file.
 - Runner environment variables, now documented in
   [docs/testing.md](docs/testing.md#configure-the-runner): `WASM_LITE_GPU` (a
   real WebGPU adapter in headless Chrome), `WASM_LITE_BROWSER_ARGS`,
-  `WASM_LITE_SERVE_DIR` (serve a directory alongside the program),
+  `WASM_LITE_SERVE_DIR` (serve a directory alongside the program; confined to
+  that directory — `..`, absolute components and symlinks pointing outside are
+  all refused, and the generated routes always win),
   `WASM_LITE_TIMEOUT_SECS`, and `WASM_LITE_RUN_SECONDS` (watch a long-running
   `bin`).
 - The `wasm_lite_std` browser suite now runs in **Chrome as well as Firefox**
