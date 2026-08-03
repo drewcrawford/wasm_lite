@@ -353,11 +353,33 @@ const __wl_workers = new Set();
 
 // Runtime import: spawn a Web Worker for the boxed closure `work`. Allocates a
 // fresh stack + TLS block, then hands the worker this module + shared memory.
+//
+// The allocation happens on the calling thread (the memory is shared, so any
+// thread's allocator serves), but the *worker creation* is delegated to the
+// main thread whenever we are ourselves a worker. Chrome will not start a
+// nested worker while its parent worker is blocked: the child's module script
+// is fetched through the parent, and a parent sitting in `Atomics.wait` — which
+// is what `join`, `park` and every blocking lock do — never services it. The
+// child then never runs and the parent waits forever. (Firefox does not have
+// this problem, which is why a Firefox-only CI never saw it.) Sending the
+// request to the main thread, whose event loop is always turning, sidesteps it
+// entirely and costs one postMessage.
 function __wl_spawn(work) {{
-    globalThis.__wl_spawn_count = (globalThis.__wl_spawn_count || 0) + 1;
     const stackPtr = __wl_instance.exports.__wl_thread_alloc(__WL_STACK);
     const tlsSize = __wl_instance.exports.__tls_size.value;
     const tlsPtr = tlsSize ? __wl_instance.exports.__wl_thread_alloc(tlsSize) : 0;
+    __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize);
+}}
+
+// Create the worker, or ask our parent to. Called with a stack and TLS block
+// already allocated, so it is position-independent: whoever ends up running it
+// hands the same pointers to the new thread.
+function __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize) {{
+    if (__wl_is_worker) {{
+        self.postMessage({{ __wl_spawn_req: [work, stackPtr, tlsPtr, tlsSize] }});
+        return;
+    }}
+    globalThis.__wl_spawn_count = (globalThis.__wl_spawn_count || 0) + 1;
     const w = new Worker(new URL(\"./wl_worker.js\", import.meta.url), {{ type: \"module\" }});
     __wl_workers.add(w);
     // A worker that fails to start — a fetch the page's COEP rejects, a syntax
@@ -375,6 +397,9 @@ function __wl_spawn(work) {{
     w.onmessage = (e) => {{
         const m = e.data;
         if (m && m.__wl_log) {{ __wl_sink_log(m.__wl_log[0], m.__wl_log[1]); }}   // forward worker console up
+        // A thread this worker spawned: create it here (or relay further up).
+        // Its stack and TLS are already allocated in the shared memory.
+        else if (m && m.__wl_spawn_req) {{ __wl_spawn_at(...m.__wl_spawn_req); }}
         else {{                                                                   // \"done\"
             globalThis.__wl_worker_done = (globalThis.__wl_worker_done || 0) + 1;
             __wl_workers.delete(w);
@@ -411,6 +436,18 @@ for (const __l of [\"log\", \"error\", \"warn\", \"info\"]) {{
     const __orig = console[__l] ? console[__l].bind(console) : function () {{}};
     console[__l] = (...a) => {{ __orig(...a); self.postMessage({{ __wl_log: [__l, a.join(\" \")] }}); }};
 }}
+
+// This handler is `async`, so anything it throws becomes an *unhandled
+// rejection* — which does not reach the parent's `onerror` and is therefore
+// invisible from the outside. These listeners are the only way a failure
+// between \"worker started\" and \"closure running\" gets reported at all.
+self.addEventListener(\"error\", (ev) => {{
+    self.postMessage({{ __wl_log: [\"error\", \"wasm_lite: worker error: \" + (ev.message || ev)] }});
+}});
+self.addEventListener(\"unhandledrejection\", (ev) => {{
+    const r = ev.reason;
+    self.postMessage({{ __wl_log: [\"error\", \"wasm_lite: worker failed to start: \" + ((r && (r.stack || r.message)) || r)] }});
+}});
 
 self.onmessage = async (e) => {{
     const {{ module, memory, work, stackPtr, stackTop, stackSize, tlsPtr, tlsSize }} = e.data;
