@@ -360,6 +360,18 @@ function __wl_spawn(work) {{
     const tlsPtr = tlsSize ? __wl_instance.exports.__wl_thread_alloc(tlsSize) : 0;
     const w = new Worker(new URL(\"./wl_worker.js\", import.meta.url), {{ type: \"module\" }});
     __wl_workers.add(w);
+    // A worker that fails to start — a fetch the page's COEP rejects, a syntax
+    // error in the bootstrap, a nested-worker restriction — reports through
+    // `onerror` and nowhere else. Without this it is perfectly silent: the
+    // spawn appears to succeed and the thread simply never runs.
+    w.onerror = (e) => {{
+        __wl_sink_log(\"error\", \"wasm_lite: spawned worker failed to start: \" +
+            ((e && (e.message || e.filename)) ? ((e.message || \"\") + \" @ \" + (e.filename || \"?\") + \":\" + (e.lineno || 0)) : String(e)));
+    }};
+    w.onmessageerror = (e) => {{
+        __wl_sink_log(\"error\", \"wasm_lite: spawned worker could not deserialize its start message \" +
+            \"(a WebAssembly.Module or SharedArrayBuffer needs a cross-origin-isolated page): \" + String(e));
+    }};
     w.onmessage = (e) => {{
         const m = e.data;
         if (m && m.__wl_log) {{ __wl_sink_log(m.__wl_log[0], m.__wl_log[1]); }}   // forward worker console up

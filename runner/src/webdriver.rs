@@ -40,17 +40,85 @@ impl Kind {
         }
     }
 
-    fn capabilities(&self) -> &'static str {
+    fn capabilities(&self) -> String {
+        let extra = extra_args();
         match self {
             Kind::Firefox => {
-                r#"{"capabilities":{"alwaysMatch":{"browserName":"firefox","moz:firefoxOptions":{"args":["-headless"]}}}}"#
+                let args = join_args(&["-headless"], &extra);
+                format!(
+                    r#"{{"capabilities":{{"alwaysMatch":{{"browserName":"firefox","moz:firefoxOptions":{{"args":[{args}]}}}}}}}}"#
+                )
             }
             Kind::Chrome => {
-                r#"{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":{"args":["--headless=new","--disable-gpu","--no-sandbox","--disable-dev-shm-usage"]}}}}"#
+                // `--disable-gpu` is right for a suite that only touches the
+                // DOM and wrong for one that touches WebGPU: with it,
+                // `navigator.gpu.requestAdapter()` resolves to null and every
+                // graphics test fails for a reason that looks like a bug in the
+                // code under test. `WASM_LITE_GPU=1` swaps it for SwiftShader,
+                // which gives headless Chrome a real (software) adapter.
+                let base: &[&str] = if gpu_requested() {
+                    &[
+                        "--headless=new",
+                        "--enable-unsafe-swiftshader",
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                    ]
+                } else {
+                    &[
+                        "--headless=new",
+                        "--disable-gpu",
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                    ]
+                };
+                let args = join_args(base, &extra);
+                format!(
+                    r#"{{"capabilities":{{"alwaysMatch":{{"browserName":"chrome","goog:chromeOptions":{{"args":[{args}]}}}}}}}}"#
+                )
             }
-            Kind::Safari => r#"{"capabilities":{"alwaysMatch":{"browserName":"safari"}}}"#,
+            Kind::Safari => {
+                r#"{"capabilities":{"alwaysMatch":{"browserName":"safari"}}}"#.to_string()
+            }
         }
     }
+}
+
+/// Did the caller ask for a GPU-capable browser (`WASM_LITE_GPU`)?
+fn gpu_requested() -> bool {
+    std::env::var_os("WASM_LITE_GPU").is_some()
+}
+
+/// Extra browser arguments from `WASM_LITE_BROWSER_ARGS`, split on whitespace.
+///
+/// An escape hatch for the flag this runner has not thought of — a particular
+/// ANGLE backend, a feature flag, a device-scale factor.
+fn extra_args() -> Vec<String> {
+    std::env::var("WASM_LITE_BROWSER_ARGS")
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Render arguments as a JSON array body (without the brackets).
+///
+/// Arguments are browser flags, so they contain no quotes or backslashes to
+/// escape; anything that does is rejected rather than emitted, since a
+/// half-escaped string would corrupt the whole capabilities document.
+fn join_args(base: &[&str], extra: &[String]) -> String {
+    base.iter()
+        .map(|s| s.to_string())
+        .chain(extra.iter().cloned())
+        .filter(|a| {
+            let clean = !a.contains('"') && !a.contains('\\');
+            if !clean {
+                eprintln!("warning: ignoring browser argument with a quote or backslash: {a}");
+            }
+            clean
+        })
+        .map(|a| format!("\"{a}\""))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// A WebDriver session, possibly shared across runner invocations.
@@ -86,7 +154,7 @@ impl Browser {
         // terminate it, so bailing here would leak a driver process (holding
         // its port) on every failed attempt.
         let session = wait_ready(port)
-            .and_then(|()| new_session(port, kind.capabilities()))
+            .and_then(|()| new_session(port, &kind.capabilities()))
             .inspect_err(|_| {
                 let _ = driver.kill();
                 let _ = driver.wait();
@@ -125,7 +193,7 @@ impl Browser {
         // file is written on this path, so `--stop-browser` could never find
         // the orphan.
         let session = wait_ready(port)
-            .and_then(|()| new_session(port, kind.capabilities()))
+            .and_then(|()| new_session(port, &kind.capabilities()))
             .inspect_err(|_| {
                 let _ = driver.kill();
                 let _ = driver.wait();
