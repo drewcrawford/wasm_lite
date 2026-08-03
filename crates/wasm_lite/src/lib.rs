@@ -342,7 +342,7 @@ pub mod interop;
 
 pub use closure::Closure;
 pub use future::JsFuture;
-pub use value::JsValue;
+pub use value::{AsJsValue, JsValue};
 pub use wasm_lite_macro::{export, import, js_class, wasm_lite_test};
 
 /// Install a panic hook that reports the panic message via `console.error`.

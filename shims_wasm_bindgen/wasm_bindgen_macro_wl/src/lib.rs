@@ -445,6 +445,13 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
             }
         }
 
+        // `JsValue::from(&x)` for this type. The blanket impl lives in
+        // wasm_lite, since only the owning crate may implement `From` for
+        // `JsValue`; this is the hook it keys on.
+        impl #impl_g ::wasm_bindgen::__rt::AsJsValue for #name #ty_g #where_g {
+            fn as_js_value(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
+        }
+
         // The conversions upstream code expects on every binding type.
         impl #impl_g ::core::convert::AsRef<::wasm_bindgen::__rt::JsValue> for #name #ty_g #where_g {
             fn as_ref(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
@@ -564,6 +571,15 @@ fn crosses_directly(ty: &Type) -> bool {
             let Some(seg) = p.path.segments.last() else {
                 return true;
             };
+            // `Option<T>` is not itself a handle: `import!` flattens it to a
+            // discriminant plus `T`'s parameters, so it crosses exactly when
+            // `T` does.
+            if seg.ident == "Option"
+                && let syn::PathArguments::AngleBracketed(ab) = &seg.arguments
+                && let Some(syn::GenericArgument::Type(inner)) = ab.args.first()
+            {
+                return crosses_directly(inner);
+            }
             matches!(
                 seg.ident.to_string().as_str(),
                 "f32"
@@ -752,6 +768,16 @@ fn unpack_arg(ty: &Type, i: usize) -> TokenStream2 {
         match seg.ident.to_string().as_str() {
             "bool" => return quote! { #slot.as_bool().unwrap_or_default() },
             "String" => return quote! { #slot.as_string().unwrap_or_default() },
+            // Exact, not via `as_f64`: a JS number is a double and these
+            // ranges exceed it.
+            "i64" | "u64" | "i128" | "u128" => {
+                return quote! {
+                    <#ty as ::core::convert::TryFrom<::wasm_bindgen::__rt::JsValue>>::try_from(
+                        #slot.clone(),
+                    )
+                    .unwrap_or_default()
+                };
+            }
             n if matches!(
                 n,
                 "f32" | "f64" | "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "usize" | "isize"
@@ -822,6 +848,18 @@ fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<(TokenStre
         if n == "String" {
             return Ok((
                 quote! { ::core::option::Option::Some(::wasm_bindgen::JsValue::from_str(&#call)) },
+                false,
+            ));
+        }
+        if n == "Vec" {
+            // A run of handles becomes a JS array, which is what the JS caller
+            // of the callback expects to receive.
+            return Ok((
+                quote! {
+                    ::core::option::Option::Some(
+                        ::wasm_bindgen::JsValue::from_handles(&#call),
+                    )
+                },
                 false,
             ));
         }

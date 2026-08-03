@@ -147,6 +147,15 @@ impl JsValue {
         JsValue::__wl_from_abi(unsafe { unop(2, self.idx) })
     }
 
+    /// A JS array holding the values these handles denote.
+    ///
+    /// The run already crosses as an array (that is what a `&[JsValue]`
+    /// argument is), so `Array.from` just gives it an independent identity to
+    /// hand back.
+    pub fn from_handles(values: &[JsValue]) -> JsValue {
+        __array::from(values)
+    }
+
     /// The decimal text of a JS number or `BigInt`, or `None` for anything
     /// else.
     ///
@@ -221,6 +230,39 @@ impl JsValue {
 /// So that a `JsValue` can stand in wherever a binding takes
 /// `impl AsRef<JsValue>`, which is how generated code accepts either a handle
 /// or one of the newtypes wrapping one.
+mod __array {
+    use super::JsValue;
+    crate::import! {
+        "Array" {
+            /// `Array.from(values)`
+            fn from(values: &[JsValue]) -> JsValue;
+        }
+    }
+}
+
+/// A type that wraps a [`JsValue`] handle.
+///
+/// Its purpose is the blanket `From<&T>` below. A binding layer built on top of
+/// wasm_lite needs `JsValue::from(&some_wrapper)` to work for *its* types, and
+/// only this crate can implement `From` for `JsValue` — so the trait lives
+/// here and the wrapper types implement it.
+pub trait AsJsValue {
+    /// The handle this value wraps.
+    fn as_js_value(&self) -> &JsValue;
+}
+
+impl<T: AsJsValue> From<&T> for JsValue {
+    fn from(v: &T) -> JsValue {
+        v.as_js_value().clone()
+    }
+}
+
+impl AsJsValue for JsValue {
+    fn as_js_value(&self) -> &JsValue {
+        self
+    }
+}
+
 impl AsRef<JsValue> for JsValue {
     fn as_ref(&self) -> &JsValue {
         self

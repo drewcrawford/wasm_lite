@@ -44,6 +44,7 @@ pub use wasm_lite::JsValue;
 
 pub mod closure;
 pub mod error;
+pub mod views;
 pub use closure::Closure;
 pub use error::JsError;
 
@@ -173,9 +174,10 @@ impl JsCast for JsValue {
 /// Not a stable API.
 #[doc(hidden)]
 pub mod __rt {
+    pub use crate::views::wbg_cast;
     pub use wasm_lite::{
-        __wl_free, __wl_malloc, Closure, FromSretPayload, JsFuture, JsValue, descriptor_bytes,
-        export, import, js_class, set_panic_hook,
+        __wl_free, __wl_malloc, AsJsValue, Closure, FromSretPayload, JsFuture, JsValue,
+        descriptor_bytes, export, import, js_class, set_panic_hook,
     };
 }
 
