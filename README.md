@@ -139,7 +139,12 @@ glue.
 * A Rust toolchain and the wasm target:
   `rustup target add wasm32-unknown-unknown`.
 * A WebDriver-capable browser on `PATH`: Firefox + `geckodriver`, or Chrome +
-  `chromedriver`. The runner drives a *real* browser.
+  `chromedriver`. The runner drives a *real* browser, and defaults to **Firefox**
+  — `WASM_LITE_BROWSER=chrome` switches, which anything using **WebGPU** needs
+  (Firefox has none headless), along with `WASM_LITE_GPU=1`. See
+  [configure the runner](docs/testing.md#configure-the-runner) for that and the
+  rest; several of the defaults suit a small DOM test rather than a real
+  application.
 
 ### Run an example
 
