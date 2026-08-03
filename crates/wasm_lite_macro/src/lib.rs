@@ -498,6 +498,8 @@ fn build_return(
         return Ok((
             quote! { -> i64 },
             "str".into(),
+            // `#[export]` takes no crate-path override, so this stays absolute.
+            // Only `import!` is reached from a crate that may be `no_std`.
             pack_buffer(call, quote! { ::std::string::String }),
             false,
         ));

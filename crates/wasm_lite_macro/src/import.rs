@@ -75,7 +75,8 @@ impl KindAttr {
     fn from_ident(id: &Ident) -> Option<Self> {
         let (tag, spelled, arity, returns, receiver) = match () {
             _ if id == "getter" => ("g", "getter", 1, Some(true), true),
-            _ if id == "setter" => ("s", "setter", 2, Some(false), true),
+            // A setter may return `Result<(), E>` when the assignment can throw.
+            _ if id == "setter" => ("s", "setter", 2, None, true),
             // A constructor's argument count is whatever the JS class takes.
             _ if id == "constructor" => ("n", "constructor", usize::MAX, Some(true), false),
             _ if id == "indexing_getter" => ("ig", "indexing_getter", 2, Some(true), true),
@@ -510,18 +511,18 @@ fn build_return(
     }
     if is_ident(ty, "String") {
         return Ok(Return {
-            wrapper_ret: quote! { -> ::std::string::String },
+            wrapper_ret: quote! { -> #krate::__String },
             extern_decl: scalar_extern(quote! { -> i64 }),
-            body: unpack_buffer(&call, quote! { ::std::string::String::from_raw_parts }),
+            body: unpack_buffer(&call, quote! { #krate::__String::from_raw_parts }),
             ret_tag: "str".into(),
             needs_malloc: true,
         });
     }
     if vec_u8(ty) {
         return Ok(Return {
-            wrapper_ret: quote! { -> ::std::vec::Vec<u8> },
+            wrapper_ret: quote! { -> #krate::__Vec<u8> },
             extern_decl: scalar_extern(quote! { -> i64 }),
-            body: unpack_buffer(&call, quote! { ::std::vec::Vec::from_raw_parts }),
+            body: unpack_buffer(&call, quote! { #krate::__Vec::from_raw_parts }),
             ret_tag: "bytes".into(),
             needs_malloc: true,
         });
@@ -573,6 +574,50 @@ fn build_return(
             needs_malloc: true,
         });
     }
+    // `Result<Option<T>, E>`: three outcomes in one discriminant word.
+    if let Some((ok_ty, err_ty)) = generic2(ty, "Result")
+        && let Some(inner) = generic1(ok_ty, "Option")
+    {
+        let ok_tag = payload_tag(inner).ok_or_else(|| {
+            Error::new_spanned(
+                inner,
+                format!(
+                    "import!: unsupported Result<Option<_>, _> Ok type `{}`",
+                    type_string(inner)
+                ),
+            )
+        })?;
+        let err_tag = payload_tag(err_ty).ok_or_else(|| {
+            Error::new_spanned(
+                err_ty,
+                format!(
+                    "import!: unsupported Result Err type `{}`",
+                    type_string(err_ty)
+                ),
+            )
+        })?;
+        let body = quote! {
+            let mut __buf = [0u8; 16];
+            unsafe { #sret_call };
+            match u32::from_le_bytes([__buf[0], __buf[1], __buf[2], __buf[3]]) {
+                0 => ::core::result::Result::Ok(::core::option::Option::Some(unsafe {
+                    <#inner as #krate::FromSretPayload>::__wl_read(__buf.as_ptr())
+                })),
+                2 => ::core::result::Result::Ok(::core::option::Option::None),
+                _ => ::core::result::Result::Err(unsafe {
+                    <#err_ty as #krate::FromSretPayload>::__wl_read(__buf.as_ptr())
+                }),
+            }
+        };
+        return Ok(Return {
+            wrapper_ret: quote! { -> ::core::result::Result<#ok_ty, #err_ty> },
+            extern_decl: sret_extern,
+            body,
+            ret_tag: format!("resopt:{ok_tag}:{err_tag}"),
+            needs_malloc: true,
+        });
+    }
+
     if let Some((ok_ty, err_ty)) = generic2(ty, "Result") {
         let ok_tag = payload_tag(ok_ty).ok_or_else(|| {
             Error::new_spanned(

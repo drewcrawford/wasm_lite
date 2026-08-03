@@ -1059,6 +1059,36 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                 "    imports[{ns}][{import_name}] = ({shim_params}) => {{ {body} }};"
             );
         }
+        // As `Ret::Res`, plus a third outcome: `null`/`undefined` from a
+        // successful call means `Ok(None)`.
+        Ret::ResOpt(ok, err) => {
+            let shim_params = if params.is_empty() {
+                "__retp".to_string()
+            } else {
+                format!("__retp, {params}")
+            };
+            let (ok_prep, ok_set) = write_payload(*ok, "__retp + 8", "__r");
+            let (err_prep, err_set) = write_payload(*err, "__retp + 8", "__e");
+            let body = format!(
+                "try {{ const __r = {call}; \
+                 if (__r === null || __r === undefined) {{ \
+                     new DataView(__wl_memory.buffer).setUint32(__retp, 2, true); \
+                 }} else {{ \
+                     {ok_prep} const __dv = new DataView(__wl_memory.buffer); \
+                     __dv.setUint32(__retp, 0, true); {ok_set} \
+                 }} }} \
+                 catch (__e) {{ {err_prep} const __dv = new DataView(__wl_memory.buffer); \
+                 __dv.setUint32(__retp, 1, true); {err_set} }}",
+                ok_prep = ok_prep.join(" "),
+                ok_set = ok_set.join(" "),
+                err_prep = err_prep.join(" "),
+                err_set = err_set.join(" "),
+            );
+            let _ = writeln!(
+                js,
+                "    imports[{ns}][{import_name}] = ({shim_params}) => {{ {body} }};"
+            );
+        }
         // A wasm i64 result must be a BigInt in range. `BigInt(..)` is a no-op
         // on a value that already is one and rescues a JS API that hands back a
         // Number, which would otherwise be a TypeError at the boundary;

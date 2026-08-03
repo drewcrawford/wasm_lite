@@ -20,16 +20,22 @@ pub(crate) fn unraw(ident: &Ident) -> String {
     s.strip_prefix("r#").map(str::to_string).unwrap_or(s)
 }
 
-/// The ident of a bare path type with no generics (e.g. `JsValue`, `bool`).
+/// The final ident of a path type with no generics — `JsValue`, `bool`, and
+/// also `::alloc::string::String`.
+///
+/// The *last* segment rather than a single one: generated binding surfaces
+/// spell types fully qualified (web-sys writes `::alloc::string::String`
+/// throughout), and refusing those would reject most of a real binding crate
+/// over spelling. The cost is that a user type coincidentally named `String`
+/// in some other module would be taken for the real one, which is the same
+/// trade wasm-bindgen makes.
 pub(crate) fn simple_ident(ty: &Type) -> Option<&Ident> {
     if let Type::Path(tp) = ty
         && tp.qself.is_none()
-        && tp.path.segments.len() == 1
+        && let Some(seg) = tp.path.segments.last()
+        && seg.arguments.is_empty()
     {
-        let seg = &tp.path.segments[0];
-        if seg.arguments.is_empty() {
-            return Some(&seg.ident);
-        }
+        return Some(&seg.ident);
     }
     None
 }

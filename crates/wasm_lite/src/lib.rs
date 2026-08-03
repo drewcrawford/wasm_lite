@@ -343,6 +343,17 @@ pub mod interop;
 pub use closure::Closure;
 pub use future::JsFuture;
 pub use value::{AsJsValue, JsValue};
+
+/// `String` and `Vec`, re-exported for generated code.
+///
+/// Emitted code cannot say `::std::string::String`: a `no_std` binding crate
+/// (web-sys is one) has no `std` in its crate root. Routing through the
+/// configured crate path means the generated code names something that always
+/// resolves, whichever crate it lands in.
+#[doc(hidden)]
+pub use std::string::String as __String;
+#[doc(hidden)]
+pub use std::vec::Vec as __Vec;
 pub use wasm_lite_macro::{export, import, js_class, wasm_lite_test};
 
 /// Install a panic hook that reports the panic message via `console.error`.

@@ -176,8 +176,8 @@ impl JsCast for JsValue {
 pub mod __rt {
     pub use crate::views::wbg_cast;
     pub use wasm_lite::{
-        __wl_free, __wl_malloc, AsJsValue, Closure, FromSretPayload, JsFuture, JsValue,
-        descriptor_bytes, export, import, js_class, set_panic_hook,
+        __String, __Vec, __wl_free, __wl_malloc, AsJsValue, Closure, FromSretPayload, JsFuture,
+        JsValue, descriptor_bytes, export, import, js_class, set_panic_hook,
     };
 }
 

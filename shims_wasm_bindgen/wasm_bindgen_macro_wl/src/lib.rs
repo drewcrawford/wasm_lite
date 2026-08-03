@@ -1031,6 +1031,23 @@ fn extern_fn(f: ForeignItemFn, declared: &[Ident]) -> syn::Result<TokenStream2> 
             continue;
         }
 
+        // `Option<&Element>` is a nullable *handle*: `import!` takes
+        // `Option<&JsValue>`, so only the element type needs converting.
+        if let Some(inner) = generic_inner(ty, "Option")
+            && matches!(classify(deref_ty(inner)), Cross::Handle)
+        {
+            shim_params.push(quote! { #orig_ident: ::core::option::Option<&JsValue> });
+            let borrowed = if matches!(inner, Type::Reference(_)) {
+                quote! { #orig_ident }
+            } else {
+                quote! { #orig_ident.as_ref() }
+            };
+            call_args.push(quote! {
+                #borrowed.map(::wasm_bindgen::JsObject::as_js)
+            });
+            continue;
+        }
+
         match classify(deref_ty(ty)) {
             Cross::Direct => {
                 shim_params.push(quote! { #orig_ident: #ty });

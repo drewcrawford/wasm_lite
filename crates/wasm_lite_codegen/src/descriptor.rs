@@ -94,6 +94,11 @@ pub enum Ret {
     Opt(Payload),
     /// `Result<T, E>` via sret: success vs. a caught JS exception.
     Res(Payload, Payload),
+    /// `Result<Option<T>, E>` via sret. Three outcomes in one discriminant
+    /// word — 0 `Ok(Some)`, 1 `Err`, 2 `Ok(None)` — because a nullable
+    /// fallible getter is common enough in a generated binding surface that
+    /// refusing it rejects a large slice of one.
+    ResOpt(Payload, Payload),
     /// A primitive returned directly (the tag is kept for documentation).
     Value(String),
 }
@@ -345,7 +350,9 @@ fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Res
         // `delete` yields a bool, but discarding it is normal, so the return
         // is checked separately below rather than required here.
         Kind::IndexDelete => None,
-        Kind::Setter => Some((2, false)),
+        // A setter's arity is fixed, but its return is checked below: a
+        // property assignment that can throw is bound as `Result<(), E>`.
+        Kind::Setter => None,
         Kind::IndexGet => Some((2, true)),
         Kind::IndexSet => Some((3, false)),
         Kind::Function | Kind::Method | Kind::Constructor => None,
@@ -362,6 +369,21 @@ fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Res
         }
         if !returns_value && *ret != Ret::Void {
             return Err(format!("{kind:?} {import_name:?} must not return a value"));
+        }
+    }
+
+    if kind == Kind::Setter {
+        if args.len() != 2 {
+            return Err(format!(
+                "Setter {import_name:?} takes exactly 2 arguments, got {}",
+                args.len()
+            ));
+        }
+        // Nothing, or a `Result<(), E>` for an assignment that can throw.
+        if !matches!(ret, Ret::Void | Ret::Res(Payload::Unit, _)) {
+            return Err(format!(
+                "setter {import_name:?} must return nothing or Result<(), E>, got {ret:?}"
+            ));
         }
     }
 
@@ -408,6 +430,14 @@ fn parse_ret(tag: &str) -> Result<Ret, String> {
         let p =
             Payload::from_tag(inner).ok_or_else(|| format!("bad Option payload tag {tag:?}"))?;
         return Ok(Ret::Opt(p));
+    }
+    if let Some(rest) = tag.strip_prefix("resopt:") {
+        let (ok, err) = rest
+            .split_once(':')
+            .ok_or_else(|| format!("bad Result<Option<_>, _> tag {tag:?}"))?;
+        let ok = Payload::from_tag(ok).ok_or_else(|| format!("bad ResOpt Ok tag {tag:?}"))?;
+        let err = Payload::from_tag(err).ok_or_else(|| format!("bad ResOpt Err tag {tag:?}"))?;
+        return Ok(Ret::ResOpt(ok, err));
     }
     if let Some(rest) = tag.strip_prefix("res:") {
         let (ok, err) = rest
