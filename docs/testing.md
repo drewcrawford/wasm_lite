@@ -254,6 +254,18 @@ drags the truth. The spread is the full range rather than a standard deviation
 so those interruptions stay *visible* — a suspiciously wide `+/-` says the
 machine was busy, not that the code is variable.
 
+That is not hypothetical. The allocating benchmark in `examples/bench-demo`
+regularly reports something like:
+
+```text
+test arith::allocate_a_vec ... bench:          71 ns/iter (+/- 575)
+```
+
+A spread eight times the median, on a body whose real cost is stable — one
+sample met the garbage collector. The median is still the number you want; the
+`+/-` is what tells you not to trust a *single* run of anything else in that
+suite. A standard deviation would have quietly absorbed it.
+
 The honest limitation: every figure is a batch average, so this measures
 throughput and cannot see per-iteration variance below the batch. It is the
 right tool for "did this change make it faster" and the wrong one for tail
