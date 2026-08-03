@@ -30,11 +30,12 @@
 //! `shims_wasm_bindgen/consumer-demo` exercises all of that in a browser from a
 //! crate whose only dependency is this one.
 //!
+//! [`JsCast`] is generated per type, so `dyn_into`/`dyn_ref`/`is_instance_of`
+//! work.
+//!
 //! Not yet handled — each an explicit error rather than silently wrong glue:
 //! `variadic`, `module`/`raw_module`/`inline_js`, `start`, and multi-segment
-//! `js_namespace`. Nor is there a `JsCast` implementation, so downcasting is
-//! unavailable even though the `instanceof` primitive underneath it exists.
-//! `js-sys` and `web-sys` have not been tried.
+//! `js_namespace`. `js-sys` and `web-sys` have not been tried.
 
 #![deny(missing_docs)]
 
@@ -54,6 +55,10 @@ pub trait JsObject {
     fn from_js(obj: JsValue) -> Self
     where
         Self: Sized;
+    /// Take the handle out, consuming the wrapper.
+    fn into_js(self) -> JsValue
+    where
+        Self: Sized;
 }
 
 impl JsObject for JsValue {
@@ -62,6 +67,77 @@ impl JsObject for JsValue {
     }
     fn from_js(obj: JsValue) -> JsValue {
         obj
+    }
+    fn into_js(self) -> JsValue {
+        self
+    }
+}
+
+/// Checked and unchecked downcasting between JS types.
+///
+/// The same shape as wasm-bindgen's trait of this name, because the point is
+/// that upstream code calling `dyn_into`/`dyn_ref`/`is_instance_of` compiles
+/// unchanged. `instanceof` is generated per type from the `#[instanceof]`
+/// binding kind.
+///
+/// # Invariant
+///
+/// The reference conversions ([`JsCast::dyn_ref`], [`JsCast::unchecked_ref`])
+/// reinterpret `&Self` as `&T`. That is sound only because every implementor is
+/// `#[repr(transparent)]` over the same [`JsValue`] — which holds for the types
+/// `#[wasm_bindgen]` generates, and is the same bargain wasm-bindgen makes.
+/// Hand-writing an implementation for a type of a different shape breaks it.
+pub trait JsCast: JsObject + Sized {
+    /// Is this handle an instance of `Self`'s JS class?
+    fn instanceof(val: &JsValue) -> bool;
+
+    /// Wrap without checking.
+    fn unchecked_from_js(val: JsValue) -> Self;
+
+    /// Checked downcast, giving the original back on failure.
+    fn dyn_into<T: JsCast>(self) -> Result<T, Self> {
+        if T::instanceof(self.as_js()) {
+            Ok(T::unchecked_from_js(self.into_js()))
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Checked downcast by reference.
+    fn dyn_ref<T: JsCast>(&self) -> Option<&T> {
+        if T::instanceof(self.as_js()) {
+            // SAFETY: see the trait's invariant.
+            Some(unsafe { &*(self as *const Self as *const T) })
+        } else {
+            None
+        }
+    }
+
+    /// Is this value an instance of `T`?
+    fn is_instance_of<T: JsCast>(&self) -> bool {
+        T::instanceof(self.as_js())
+    }
+
+    /// Unchecked downcast by value.
+    fn unchecked_into<T: JsCast>(self) -> T {
+        T::unchecked_from_js(self.into_js())
+    }
+
+    /// Unchecked downcast by reference.
+    fn unchecked_ref<T: JsCast>(&self) -> &T {
+        // SAFETY: see the trait's invariant.
+        unsafe { &*(self as *const Self as *const T) }
+    }
+}
+
+impl JsCast for JsValue {
+    /// Every JS value is a `JsValue`, so this is the one type the check is
+    /// unconditionally true for.
+    fn instanceof(_val: &JsValue) -> bool {
+        true
+    }
+    fn unchecked_from_js(val: JsValue) -> JsValue {
+        val
     }
 }
 
@@ -93,12 +169,12 @@ impl JsObject for JsValue {
 #[doc(hidden)]
 pub mod __rt {
     pub use wasm_lite::{
-        Closure, FromSretPayload, JsFuture, JsValue, __wl_free, __wl_malloc, descriptor_bytes,
+        __wl_free, __wl_malloc, Closure, FromSretPayload, JsFuture, JsValue, descriptor_bytes,
         export, import, js_class, set_panic_hook,
     };
 }
 
 /// The names wasm-bindgen users expect from `wasm_bindgen::prelude::*`.
 pub mod prelude {
-    pub use crate::{JsObject, JsValue, wasm_bindgen};
+    pub use crate::{JsCast, JsObject, JsValue, wasm_bindgen};
 }

@@ -113,6 +113,41 @@ mod websys_grammar {
         let err: Result<JsValue, JsValue> = json_parse("{definitely not json");
         assert!(err.is_err(), "malformed JSON must be Err, not a trap");
     }
+
+    /// `JsCast` is how web-sys code narrows a handle. It reduces to the
+    /// `#[instanceof]` binding kind, generated once per extern type.
+    #[wasm_lite_test]
+    fn dyn_into_narrows_only_when_the_class_matches() {
+        use wasm_bindgen::{JsCast, JsObject};
+
+        let url = Url::new("https://example.com/");
+        let as_value: JsValue = url.into_js();
+
+        // Wrong class: refused, and the original handed back.
+        let refused = as_value.dyn_into::<JsArray>();
+        let as_value = refused.expect_err("a URL is not an Array");
+
+        // Right class: accepted.
+        let back = as_value
+            .dyn_into::<Url>()
+            .unwrap_or_else(|_| panic!("a URL is a URL"));
+        assert_eq!(back.pathname(), "/");
+    }
+
+    #[wasm_lite_test]
+    fn dyn_ref_and_is_instance_of() {
+        use wasm_bindgen::JsCast;
+
+        let arr = JsArray::of2(1.0, 2.0);
+        assert!(arr.is_instance_of::<JsArray>());
+        assert!(!arr.is_instance_of::<Url>());
+
+        // Borrowed narrowing keeps the original usable.
+        assert!(arr.dyn_ref::<Url>().is_none());
+        let same: &JsArray = arr.dyn_ref::<JsArray>().expect("an Array is an Array");
+        assert_eq!(same.length(), 2.0);
+        assert_eq!(arr.length(), 2.0);
+    }
 }
 
 wasm_lite::test_main!();

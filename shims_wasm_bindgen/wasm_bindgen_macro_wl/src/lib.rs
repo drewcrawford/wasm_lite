@@ -263,6 +263,12 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
         }
     });
 
+    // The JS class this type names, for `instanceof`. web-sys renames freely
+    // (`pub type HtmlElement` ↔ `HTMLElement`), so `js_name` wins.
+    let js_class = opts.js_name.clone().unwrap_or_else(|| name.to_string());
+    let js_class_lit = LitStr::new(&js_class, name.span());
+    let cast_mod = format_ident!("__wb_instanceof_{}", name);
+
     Ok(quote! {
         #(#docs)*
         #[repr(transparent)]
@@ -274,6 +280,26 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
         impl ::wasm_bindgen::JsObject for #name {
             fn as_js(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
             fn from_js(obj: ::wasm_bindgen::__rt::JsValue) -> Self { #name { obj } }
+            fn into_js(self) -> ::wasm_bindgen::__rt::JsValue { self.obj }
+        }
+
+        #[allow(non_snake_case, unused_imports)]
+        mod #cast_mod {
+            use ::wasm_bindgen::__rt::JsValue;
+            ::wasm_bindgen::__rt::import! {
+                crate = ::wasm_bindgen::__rt;
+                #js_class_lit {
+                    #[instanceof]
+                    fn shim(this: &JsValue) -> bool as #js_class_lit;
+                }
+            }
+        }
+
+        impl ::wasm_bindgen::JsCast for #name {
+            fn instanceof(val: &::wasm_bindgen::__rt::JsValue) -> bool {
+                #cast_mod::shim(val)
+            }
+            fn unchecked_from_js(obj: ::wasm_bindgen::__rt::JsValue) -> Self { #name { obj } }
         }
 
         #deref
@@ -300,8 +326,23 @@ fn crosses_directly(ty: &Type) -> bool {
             };
             matches!(
                 seg.ident.to_string().as_str(),
-                "f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
-                    | "usize" | "isize" | "bool" | "str" | "String" | "JsValue" | "Vec"
+                "f32"
+                    | "f64"
+                    | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "usize"
+                    | "isize"
+                    | "bool"
+                    | "str"
+                    | "String"
+                    | "JsValue"
+                    | "Vec"
             )
         }
         _ => true,
@@ -397,10 +438,12 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
     // is absent, which is what wasm-bindgen does.
     let js_name = opts.js_name.clone().unwrap_or_else(|| {
         if opts.constructor {
-            opts.js_class.clone().unwrap_or_else(|| match &f.sig.output {
-                ReturnType::Type(_, ty) => type_ident(constructed_ty(ty)),
-                ReturnType::Default => name.to_string(),
-            })
+            opts.js_class
+                .clone()
+                .unwrap_or_else(|| match &f.sig.output {
+                    ReturnType::Type(_, ty) => type_ident(constructed_ty(ty)),
+                    ReturnType::Default => name.to_string(),
+                })
         } else {
             name.to_string().trim_start_matches("r#").to_string()
         }
@@ -431,7 +474,10 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
 
     for (i, arg) in f.sig.inputs.iter().enumerate() {
         let FnArg::Typed(PatType { pat, ty, .. }) = arg else {
-            return Err(Error::new_spanned(arg, "#[wasm_bindgen]: unexpected `self`"));
+            return Err(Error::new_spanned(
+                arg,
+                "#[wasm_bindgen]: unexpected `self`",
+            ));
         };
         let Pat::Ident(pi) = &**pat else {
             return Err(Error::new_spanned(

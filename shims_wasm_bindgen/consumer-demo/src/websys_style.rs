@@ -15,11 +15,17 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
     /// A JS object, the root of the little hierarchy below.
+    ///
+    /// `js_name` is the JS class, which the Rust name need not match — web-sys
+    /// renames constantly (`HtmlElement` ↔ `HTMLElement`). It is also what
+    /// `JsCast` tests against, so omitting it makes every `instanceof` look up
+    /// a global that does not exist and answer `false`.
+    #[wasm_bindgen(js_name = Object)]
     pub type JsObjectBase;
 
     /// `URL`, deriving from [`JsObjectBase`] — the `extends` chain web-sys
     /// builds for every Web IDL interface.
-    #[wasm_bindgen(extends = JsObjectBase)]
+    #[wasm_bindgen(extends = JsObjectBase, js_name = URL)]
     pub type Url;
 
     /// `new URL(spec)`
@@ -46,7 +52,7 @@ extern "C" {
 #[wasm_bindgen]
 extern "C" {
     /// `Array`.
-    #[wasm_bindgen(extends = JsObjectBase)]
+    #[wasm_bindgen(extends = JsObjectBase, js_name = Array)]
     pub type JsArray;
 
     /// `Array.of(a, b)` — a static method, i.e. hung off the class rather than
