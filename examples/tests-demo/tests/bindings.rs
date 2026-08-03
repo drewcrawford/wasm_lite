@@ -57,6 +57,15 @@ wasm_lite::import! {
         #[getter]
         fn length(this: &JsValue) -> f64;
 
+        /// `Array.of(...values)` — the slice is *spread* into the call, so a
+        /// three-element slice becomes three arguments rather than one.
+        #[variadic]
+        fn of_many(values: &[JsValue]) -> JsValue as "of";
+
+        /// The same call without the spread, for contrast: one argument that
+        /// happens to be an array.
+        fn of_one_array(values: &[JsValue]) -> JsValue as "of";
+
         /// `x instanceof Array`
         #[instanceof]
         fn is_array(this: &JsValue) -> bool as "Array";
@@ -418,6 +427,34 @@ fn indexing_deleter_removes_the_element() {
     assert_eq!(at(&arr, 0), 10.0);
     assert_eq!(at(&arr, 2), 30.0);
     assert_eq!(render(&arr), "10,,30", "the middle slot is now a hole");
+}
+
+/// A `&[JsValue]` crosses as a run of table indices, which JS reads back as the
+/// objects they denote.
+#[wasm_lite_test]
+fn a_slice_of_handles_becomes_an_array_of_objects() {
+    let items = [parse("1"), parse("\"two\""), parse("[3]")];
+    let arr = of_one_array(&items);
+
+    // Not spread: one argument, so `Array.of` wraps it once.
+    assert_eq!(length(&arr), 1.0);
+    assert_eq!(render(&arr), "1,two,3");
+}
+
+/// `#[variadic]` spreads that slice into the call. The distinction is visible
+/// in the result's length, which is what makes this testable at all.
+#[wasm_lite_test]
+fn variadic_spreads_the_final_argument() {
+    let items = [parse("1"), parse("2"), parse("3")];
+    let arr = of_many(&items);
+
+    assert_eq!(length(&arr), 3.0, "three arguments, not one array");
+    assert_eq!(at(&arr, 0), 1.0);
+    assert_eq!(at(&arr, 2), 3.0);
+
+    // An empty slice spreads to no arguments at all.
+    let empty: [JsValue; 0] = [];
+    assert_eq!(length(&of_many(&empty)), 0.0);
 }
 
 wasm_lite::test_main!();

@@ -75,6 +75,19 @@ pub(crate) fn vec_u8(ty: &Type) -> bool {
 /// would be the other direction — the host allocating through `__wl_malloc`,
 /// which is align-1 — and a `Float32Array` cannot view an unaligned offset, so
 /// that direction needs an aligned allocator first.
+/// `&[JsValue]` → a run of table indices.
+///
+/// Sound because `JsValue` is `#[repr(transparent)]` over its `u32` index, so
+/// the slice is already the layout JS reads.
+pub(crate) fn is_handle_slice(ty: &Type) -> bool {
+    if let Type::Reference(r) = ty
+        && let Type::Slice(s) = &*r.elem
+    {
+        return is_jsvalue(&s.elem);
+    }
+    false
+}
+
 pub(crate) fn numeric_slice(ty: &Type) -> Option<String> {
     let Type::Reference(r) = ty else { return None };
     let Type::Slice(s) = &*r.elem else {

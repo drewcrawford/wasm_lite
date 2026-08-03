@@ -751,6 +751,13 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
             AbiArg::I64 => next_param(&mut params),
             // ...and for u64 the same bits need reading unsigned.
             AbiArg::U64 => format!("BigInt.asUintN(64, {})", next_param(&mut params)),
+            // A run of table indices in wasm memory, read out as the objects
+            // they denote. The view is transient, like the other slices.
+            AbiArg::Handles => {
+                let ptr = next_param(&mut params);
+                let len = next_param(&mut params);
+                format!("Array.from(new Uint32Array(__wl_memory.buffer, {ptr}, {len}), __wl_obj)")
+            }
             AbiArg::Bool => format!("Boolean({})", next_param(&mut params)),
             AbiArg::Num => next_param(&mut params),
             // The wasm i32 param surfaces as a signed Number; reinterpret.
@@ -789,6 +796,13 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
         } else {
             js_args.push(marshalled);
         }
+    }
+
+    // `variadic` spreads the last marshalled argument into the call.
+    if d.variadic
+        && let Some(last) = js_args.last_mut()
+    {
+        *last = format!("...{last}");
     }
 
     let params = params.join(", ");
@@ -964,6 +978,7 @@ mod tests {
             js_name: js.into(),
             args,
             ret,
+            variadic: false,
         }
     }
 
@@ -1055,6 +1070,7 @@ mod tests {
             js_name: "push".into(),
             args: vec![AbiArg::Handle, AbiArg::Num],
             ret: Ret::Value("f64".into()),
+            variadic: false,
         }];
         let js = generate_glue(&descriptors, &[], None);
         assert!(
@@ -1070,6 +1086,7 @@ mod tests {
             js_name: js.into(),
             args,
             ret,
+            variadic: false,
         }
     }
 

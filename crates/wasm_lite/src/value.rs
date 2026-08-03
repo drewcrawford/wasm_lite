@@ -17,6 +17,10 @@ use core::marker::PhantomData;
 /// thread (worker) that created it — sending it elsewhere would index a
 /// *different* table. The `PhantomData<*const ()>` makes `JsValue` `!Send` and
 /// `!Sync` so the type system forbids that.
+///
+/// `repr(transparent)` is load-bearing, not decoration: it is what lets a
+/// `&[JsValue]` be handed to JS as a run of table indices without copying.
+#[repr(transparent)]
 pub struct JsValue {
     idx: u32,
     _not_thread_safe: PhantomData<*const ()>,

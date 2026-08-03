@@ -45,7 +45,7 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote};
+use quote::{ToTokens, format_ident, quote};
 use syn::{
     Error, FnArg, ForeignItem, ForeignItemFn, ForeignItemType, Ident, Item, LitStr, Pat, PatType,
     Path, ReturnType, Type,
@@ -165,6 +165,7 @@ struct Opts {
     indexing_getter: bool,
     indexing_setter: bool,
     indexing_deleter: bool,
+    variadic: bool,
     js_name: Option<String>,
     js_class: Option<String>,
     js_namespace: Option<String>,
@@ -233,7 +234,8 @@ impl Opts {
                     }
                     // Refused rather than ignored: silently dropping these
                     // generates glue that calls the wrong thing.
-                    other @ ("variadic" | "module" | "raw_module" | "inline_js" | "start") => {
+                    "variadic" => o.variadic = true,
+                    other @ ("module" | "raw_module" | "inline_js" | "start") => {
                         return Err(m.error(format!(
                             "#[wasm_bindgen({other})] is not supported by the wasm_lite shim yet"
                         )));
@@ -484,7 +486,9 @@ enum Cross {
 fn crosses_directly(ty: &Type) -> bool {
     match ty {
         Type::Reference(r) => crosses_directly(&r.elem),
-        Type::Slice(_) => true,
+        // A slice of scalars is a typed-array view; a slice of anything else is
+        // a run of handles, which needs the conversion below.
+        Type::Slice(s) => crosses_directly(&s.elem),
         Type::Path(p) => {
             let Some(seg) = p.path.segments.last() else {
                 return true;
@@ -923,6 +927,23 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
                 shim_params.push(quote! { #orig_ident: #ty });
                 call_args.push(quote! { #orig_ident });
             }
+            // A slice of newtypes: every element is `#[repr(transparent)]`
+            // over a `JsValue`, so the run is already the layout `import!`
+            // wants and only the element type has to be reinterpreted.
+            Cross::Handle if matches!(deref_ty(ty), Type::Slice(_)) => {
+                shim_params.push(quote! { #orig_ident: &[JsValue] });
+                call_args.push(quote! {
+                    // SAFETY: `T` is one of the `#[repr(transparent)]`
+                    // newtypes this macro generates, so `[T]` and `[JsValue]`
+                    // have the same layout.
+                    unsafe {
+                        ::core::slice::from_raw_parts(
+                            #orig_ident.as_ptr() as *const ::wasm_bindgen::__rt::JsValue,
+                            #orig_ident.len(),
+                        )
+                    }
+                });
+            }
             Cross::Handle => {
                 // Handles are always *lent* to an import, so the shim takes a
                 // reference whether the declared parameter was one or not —
@@ -986,6 +1007,7 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
         ),
     };
 
+    let variadic_attr = opts.variadic.then(|| quote!(#[variadic]));
     let cfgs = cfg_attrs(&f.attrs);
     let shim_mod = quote! {
         #(#cfgs)*
@@ -996,13 +1018,15 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
                 crate = ::wasm_bindgen::__rt;
                 #ns_lit {
                     #kind_attr
+                    #variadic_attr
                     fn shim( #(#shim_params),* ) #shim_ret as #js_lit;
                 }
             }
         }
     };
 
-    let (generics, where_clause) = wrapper_generics(&f.sig.generics);
+    let (impl_generics, fn_generics) = split_generics(&f.sig.generics, impl_target.as_ref());
+    let (generics, where_clause) = wrapper_generics(&fn_generics);
     let wrapper = quote! {
         #(#attrs)*
         #[allow(non_snake_case, clippy::too_many_arguments)]
@@ -1013,15 +1037,61 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
     };
 
     Ok(match impl_target {
-        Some(t) => quote! {
-            #shim_mod
-            impl #t { #wrapper }
-        },
+        Some(t) => {
+            let (ig, _, _) = impl_generics.split_for_impl();
+            quote! {
+                #shim_mod
+                impl #ig #t { #wrapper }
+            }
+        }
         None => quote! {
             #shim_mod
             #wrapper
         },
     })
+}
+
+/// Does `ty` mention the type parameter `name` anywhere?
+fn mentions(ty: &Type, name: &Ident) -> bool {
+    // Token comparison rather than a full visitor: these are extern-block
+    // signatures, so the types are shallow and a parameter name cannot be
+    // shadowed by anything that would make this wrong.
+    ty.to_token_stream()
+        .into_iter()
+        .any(|t| matches!(&t, proc_macro2::TokenTree::Ident(i) if i == name))
+        || matches!(ty, Type::Path(p) if p.path.segments.iter().any(|seg| {
+            matches!(&seg.arguments, syn::PathArguments::AngleBracketed(ab)
+                if ab.args.iter().any(|a| matches!(a, syn::GenericArgument::Type(t) if mentions(t, name))))
+        }))
+}
+
+/// Split a binding's generics between the `impl` and the function.
+///
+/// A parameter the impl target mentions has to be declared on the *impl* —
+/// `impl<T> Array<T>`, not `impl Array<T>` — while the rest stay on the
+/// function. Getting this wrong is not subtle: `T` simply does not resolve,
+/// and every use of the type cascades.
+fn split_generics(g: &syn::Generics, target: Option<&Type>) -> (syn::Generics, syn::Generics) {
+    let mut on_impl = syn::Generics::default();
+    let mut on_fn = syn::Generics::default();
+    for p in &g.params {
+        let goes_on_impl = match (&target, p) {
+            (Some(t), syn::GenericParam::Type(tp)) => mentions(t, &tp.ident),
+            _ => false,
+        };
+        let mut p = p.clone();
+        if let syn::GenericParam::Type(tp) = &mut p {
+            // A default is legal in an extern block but not on a real function.
+            tp.eq_token = None;
+            tp.default = None;
+        }
+        if goes_on_impl {
+            on_impl.params.push(p);
+        } else {
+            on_fn.params.push(p);
+        }
+    }
+    (on_impl, on_fn)
 }
 
 /// A function's generics with any type-parameter *defaults* stripped.

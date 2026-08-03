@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! The descriptor format written by the `import!` macro.
 //!
-//! Each import is one line: `kind|namespace|import_name|js_name|argtags|rettag\n`,
+//! Each import is one line:
+//! `kind|namespace|import_name|js_name|argtags|rettag|variadic\n`,
 //! where `argtags` is a comma-separated list (possibly empty) and `rettag` is
 //! empty for a binding that returns nothing. `kind` is one of:
 //!
@@ -113,6 +114,11 @@ pub struct Descriptor {
     pub args: Vec<AbiArg>,
     /// How the return value is marshalled.
     pub ret: Ret,
+    /// Spread the final argument into the call — `f(a, ...rest)`.
+    ///
+    /// A property of the *call*, not of a type, so it is a flag rather than a
+    /// [`Kind`]: any of the calling kinds can be variadic.
+    pub variadic: bool,
 }
 
 /// How an argument crosses the wasm boundary.
@@ -143,6 +149,9 @@ pub enum AbiArg {
     /// A `u64`: one wasm `i64` param; JS sees it *signed*, so the shim must
     /// reinterpret with `BigInt.asUintN(64, ..)`.
     U64,
+    /// `&[JsValue]`: two wasm params `(ptr, len)` over a run of table
+    /// indices, presented to JS as an array of the objects they denote.
+    Handles,
     /// `&[T]` for a numeric `T` other than `u8`: two wasm params
     /// `(ptr, len_in_elements)`, presented to JS as a typed-array view over
     /// wasm memory. Borrowed for the duration of the call, like [`AbiArg::Bytes`].
@@ -200,7 +209,7 @@ impl AbiArg {
     /// Number of wasm-level parameters this argument occupies.
     pub fn param_count(self) -> usize {
         match self {
-            AbiArg::Str | AbiArg::Bytes | AbiArg::Slice(_) => 2,
+            AbiArg::Str | AbiArg::Bytes | AbiArg::Slice(_) | AbiArg::Handles => 2,
             AbiArg::Bool
             | AbiArg::Num
             | AbiArg::U32
@@ -220,6 +229,7 @@ impl AbiArg {
             "bytes" => AbiArg::Bytes,
             "bool" => AbiArg::Bool,
             "handle" => AbiArg::Handle,
+            "handles" => AbiArg::Handles,
             // Everything that fits a wasm i32/f32/f64 parameter and reaches JS
             // as a Number with the right value already. Signed types arrive
             // sign-extended; u8/u16 can only hold positive values in an i32.
@@ -261,6 +271,8 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
         let js_name = fields.next().unwrap_or_default();
         let arg_tags = fields.next().unwrap_or_default();
         let ret_tag = fields.next().unwrap_or_default();
+        // A 7th field, absent in descriptors that predate it.
+        let variadic = fields.next().unwrap_or_default() == "1";
 
         if namespace.is_empty() || import_name.is_empty() || js_name.is_empty() {
             return Err(format!("malformed descriptor line: {line:?}"));
@@ -298,6 +310,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
             js_name: js_name.to_string(),
             args,
             ret,
+            variadic,
         });
     }
 
@@ -419,6 +432,7 @@ mod tests {
                     js_name: "log".into(),
                     args: vec![AbiArg::Str],
                     ret: Ret::Void,
+                    variadic: false,
                 },
                 Descriptor {
                     kind: Kind::Function,
@@ -427,6 +441,7 @@ mod tests {
                     js_name: "parse".into(),
                     args: vec![AbiArg::Str],
                     ret: Ret::Handle,
+                    variadic: false,
                 },
                 Descriptor {
                     kind: Kind::Method,
@@ -435,6 +450,7 @@ mod tests {
                     js_name: "push".into(),
                     args: vec![AbiArg::Handle, AbiArg::Num],
                     ret: Ret::Value("f64".into()),
+                    variadic: false,
                 },
             ]
         );

@@ -43,6 +43,8 @@ struct ImportFn {
     /// The explicit `#[getter]`/`#[setter]`/… kind, if one was given. `None`
     /// means "infer a call", which is the `m`/`f` split on the receiver.
     kind: Option<KindAttr>,
+    /// Spread the final argument into the call.
+    variadic: bool,
     name: Ident,
     params: Vec<(Ident, Type)>,
     ret: Option<Type>,
@@ -155,9 +157,15 @@ impl Parse for ImportFn {
         // attribute took effect.
         let mut doc_attrs = Vec::new();
         let mut kind: Option<KindAttr> = None;
+        let mut variadic = false;
         for a in attrs {
             if a.path().is_ident("doc") {
                 doc_attrs.push(a);
+                continue;
+            }
+            // Orthogonal to the kind: any calling kind can be variadic.
+            if a.path().is_ident("variadic") {
+                variadic = true;
                 continue;
             }
             let found = a.path().get_ident().and_then(KindAttr::from_ident);
@@ -167,7 +175,7 @@ impl Parse for ImportFn {
                     "import!: only doc comments and the binding-kind attributes \
                      (#[getter], #[setter], #[constructor], #[indexing_getter], \
                      #[indexing_setter], #[indexing_deleter], #[instanceof], \
-                     #[static_getter]) are supported on imported \
+                     #[static_getter], #[variadic]) are supported on imported \
                      functions; other \
                      attributes (including #[cfg]) are not honored here — apply them to \
                      the surrounding import! invocation or module instead",
@@ -221,6 +229,7 @@ impl Parse for ImportFn {
         Ok(ImportFn {
             doc_attrs,
             kind,
+            variadic,
             name,
             params,
             ret,
@@ -291,6 +300,12 @@ fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream
             call_args.push(quote! { #pname.as_ptr() });
             call_args.push(quote! { #pname.len() });
             arg_tags.push("bytes".into());
+        } else if is_handle_slice(ty) {
+            extern_params.push(quote! { _: *const u8 });
+            extern_params.push(quote! { _: usize });
+            call_args.push(quote! { #pname.as_ptr() as *const u8 });
+            call_args.push(quote! { #pname.len() });
+            arg_tags.push("handles".into());
         } else if let Some(elem) = numeric_slice(ty) {
             // `(ptr, len)` in *elements*, matching `slice::len()`; the shim
             // makes a typed-array view of that many elements, so neither side
@@ -410,10 +425,11 @@ fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream
     };
 
     let arg_tags = arg_tags.join(",");
+    let variadic_tag = if f.variadic { "1" } else { "" };
     let frag = quote! {
         concat!(
             #kind, "|", #ns, "|", concat!(module_path!(), "::", #fname_str), "|",
-            #js_name, "|", #arg_tags, "|", #ret_tag, "\n"
+            #js_name, "|", #arg_tags, "|", #ret_tag, "|", #variadic_tag, "\n"
         )
     };
 
