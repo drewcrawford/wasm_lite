@@ -171,7 +171,21 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
 /// Run a plain `bin`: success is `main` completing without a trap.
 fn run_main(browser: &Browser, port: u16) -> Result<i32, String> {
     browser.goto(&format!("http://127.0.0.1:{port}/"))?;
-    wait_done(browser)?;
+    // A hang is a failure of this program, not of the runner, so report what it
+    // logged before it stopped. Without this a timeout says only "timed out",
+    // which is the least informative thing we know about it.
+    if let Err(err) = wait_done(browser) {
+        eprintln!("error: {err}");
+        let console = browser.eval_string(CONSOLE_JOIN)?;
+        if console.is_empty() {
+            eprintln!("(the program logged nothing before it stopped)");
+        } else {
+            eprintln!("--- console output before the timeout ---");
+            eprintln!("{console}");
+        }
+        println!("test result: FAILED");
+        return Ok(1);
+    }
 
     if browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
         surface_worker_panics(browser)?;
@@ -250,6 +264,11 @@ fn run_suite(
             failed += 1;
             println!("test {name} ... FAILED");
             println!("    {err}");
+            // Same reasoning as `run_main`: what it logged before hanging is
+            // usually the only clue to where it hung.
+            for line in browser.eval_string(CONSOLE_JOIN)?.lines() {
+                println!("    {line}");
+            }
             continue;
         }
 
@@ -308,6 +327,9 @@ fn run_bench_suite(
             failed += 1;
             println!("test {name} ... FAILED");
             println!("    {err}");
+            for line in browser.eval_string(CONSOLE_JOIN)?.lines() {
+                println!("    {line}");
+            }
             continue;
         }
 
@@ -402,15 +424,32 @@ fn thousands(value: f64) -> String {
     out
 }
 
+/// How long a single page load may take before it is called a hang.
+///
+/// 30 s suits a test. It does not suit a large release-less module that
+/// instantiates itself on several workers before it logs anything, so
+/// `WASM_LITE_TIMEOUT_SECS` raises it. An unparseable value is ignored rather
+/// than fatal — a typo in an env var should not stop the suite.
+fn timeout_secs() -> u64 {
+    std::env::var("WASM_LITE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30)
+}
+
 /// Poll until the page records a result (or time out).
 fn wait_done(browser: &Browser) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs());
     loop {
         if browser.eval_bool("return !!globalThis.__wl_done;")? {
             return Ok(());
         }
         if Instant::now() > deadline {
-            return Err("timed out waiting for the program to finish".to_string());
+            return Err(format!(
+                "timed out after {}s waiting for the program to finish \
+                 (raise WASM_LITE_TIMEOUT_SECS if it just needs longer)",
+                timeout_secs()
+            ));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
