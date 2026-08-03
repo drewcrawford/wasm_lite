@@ -28,6 +28,11 @@ wasm_lite::import! {
 Each binding gets a unique wasm import symbol (via `module_path!()`), so the
 same JS function can be bound from many crates/modules without link conflicts.
 
+An `as` name may be a **path**: `as "prototype.set.call"` resolves each dotted
+segment in turn, which is how a method is borrowed off a prototype and applied
+to something else. A `&mut [T]` argument is the same view as `&[T]`, but says
+JS may write back through it.
+
 **Operations that aren't calls** — a JS binding surface needs property access,
 `new`, and computed indexing as well. None of these can be inferred from a Rust
 signature (`fn tag_name(this: &JsValue) -> String` reads identically to a

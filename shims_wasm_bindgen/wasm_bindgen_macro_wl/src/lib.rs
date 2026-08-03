@@ -305,11 +305,24 @@ fn namespace(m: &syn::meta::ParseNestedMeta) -> syn::Result<String> {
 /// well. Most of the errors this shim reported against js-sys were that
 /// cascade rather than distinct problems.
 fn extern_block(fm: syn::ItemForeignMod) -> syn::Result<TokenStream2> {
+    // The types this block declares. A namespaced free function whose
+    // namespace *is* one of them is reached as an associated function —
+    // js-sys writes `Uint8Array::copy_to_slice(..)` for a binding declared
+    // with `js_namespace = Uint8Array`.
+    let declared: Vec<Ident> = fm
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            ForeignItem::Type(t) => Some(t.ident.clone()),
+            _ => None,
+        })
+        .collect();
+
     let mut out = Vec::new();
     for item in fm.items {
         let expanded = match item {
             ForeignItem::Type(t) => extern_type(t),
-            ForeignItem::Fn(f) => extern_fn(f),
+            ForeignItem::Fn(f) => extern_fn(f, &declared),
             ForeignItem::Static(st) => extern_static(st),
             other => Err(Error::new_spanned(
                 other,
@@ -863,7 +876,7 @@ fn to_js_value(ty: &Type, value: TokenStream2) -> TokenStream2 {
 /// `constructor`/`static_method_of` become associated functions — because that
 /// is what wasm-bindgen produces, and it is why callers write
 /// `element.tag_name()` rather than `tag_name(&element)`.
-fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
+fn extern_fn(f: ForeignItemFn, declared: &[Ident]) -> syn::Result<TokenStream2> {
     let opts = Opts::parse(&f.attrs)?;
     let name = &f.sig.ident;
     let vis = &f.vis;
@@ -1040,6 +1053,10 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
             ReturnType::Type(_, ty) => Some(constructed_ty(ty).clone()),
             ReturnType::Default => None,
         }
+    } else if let Some(ns) = &opts.js_namespace
+        && let Some(id) = declared.iter().find(|d| *d == ns)
+    {
+        Some(syn::parse_quote!(#id))
     } else {
         None
     };

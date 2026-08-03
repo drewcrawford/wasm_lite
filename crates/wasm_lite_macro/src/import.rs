@@ -312,6 +312,8 @@ fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream
             // has to know the element size.
             extern_params.push(quote! { _: *const u8 });
             extern_params.push(quote! { _: usize });
+            // `as_ptr` on a `&mut [T]` reborrows immutably, which is fine: the
+            // pointer is only a base address, and the JS view is what writes.
             call_args.push(quote! { #pname.as_ptr() as *const u8 });
             call_args.push(quote! { #pname.len() });
             arg_tags.push(format!("slice:{elem}"));

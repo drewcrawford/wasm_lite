@@ -796,7 +796,6 @@ fn write_payload(p: Payload, off: &str, val: &str) -> (Vec<String>, Vec<String>)
 fn emit_shim(js: &mut String, d: &Descriptor) {
     let ns = js_string(&d.namespace);
     let import_name = js_string(&d.import_name);
-    let js_name = js_string(&d.js_name);
 
     // Build the wasm-level parameter list and the marshalled JS arguments. For a
     // method, the first (handle) argument is peeled off as the receiver.
@@ -919,13 +918,25 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
     // The expression whose *value* is what the import yields. For calls that is
     // a call; for a property write it is an assignment, which in JS evaluates
     // to the assigned value — harmless, since setters are Ret::Void.
+    // `js_name` may be a *path* — js-sys binds `Uint8Array.prototype.set.call`
+    // — so each dotted segment becomes another lookup.
+    let member = |base: &str| {
+        d.js_name.split('.').fold(base.to_string(), |acc, seg| {
+            format!("{acc}[{}]", js_string(seg))
+        })
+    };
+
     let call = match d.kind {
-        Kind::Function => format!("globalThis[{ns}][{js_name}]({})", js_args.join(", ")),
-        Kind::Method => format!("{}[{js_name}]({})", recv(), js_args.join(", ")),
-        Kind::Getter => format!("{}[{js_name}]", recv()),
-        Kind::Setter => format!("{}[{js_name}] = {}", recv(), arg(0)),
-        Kind::Constructor => format!("new globalThis[{js_name}]({})", js_args.join(", ")),
-        Kind::StaticGetter => format!("globalThis[{ns}][{js_name}]"),
+        Kind::Function => format!(
+            "{}({})",
+            member(&format!("globalThis[{ns}]")),
+            js_args.join(", ")
+        ),
+        Kind::Method => format!("{}({})", member(&recv()), js_args.join(", ")),
+        Kind::Getter => member(&recv()),
+        Kind::Setter => format!("{} = {}", member(&recv()), arg(0)),
+        Kind::Constructor => format!("new {}({})", member("globalThis"), js_args.join(", ")),
+        Kind::StaticGetter => member(&format!("globalThis[{ns}]")),
         Kind::IndexGet => format!("{}[{}]", recv(), arg(0)),
         Kind::IndexDelete => format!("delete {}[{}]", recv(), arg(0)),
         Kind::IndexSet => format!("{}[{}] = {}", recv(), arg(0), arg(1)),
@@ -933,10 +944,13 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
         // not a constructor, which is exactly what happens when the class is
         // missing from this engine. A downcast test should answer "no", not
         // kill the instance.
-        Kind::InstanceOf => format!(
-            "(typeof globalThis[{js_name}] === \"function\" && {} instanceof globalThis[{js_name}])",
-            recv()
-        ),
+        Kind::InstanceOf => {
+            let class = member("globalThis");
+            format!(
+                "(typeof {class} === \"function\" && {} instanceof {class})",
+                recv()
+            )
+        }
     };
 
     // `imports[ns] ||= {}` then assign the shim, keyed on the wasm import name.

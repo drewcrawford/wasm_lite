@@ -51,6 +51,11 @@ pub(crate) fn is_str(ty: &Type) -> bool {
     matches!(ty, Type::Reference(r) if is_ident(&r.elem, "str"))
 }
 
+/// `&[u8]` or `&mut [u8]`.
+///
+/// Mutability is accepted because the JS side sees a *view* over wasm memory
+/// either way; a `&mut` slice simply means JS may write back through it, which
+/// is how `TypedArray.prototype.set` fills a Rust buffer.
 pub(crate) fn is_byte_slice(ty: &Type) -> bool {
     if let Type::Reference(r) = ty
         && let Type::Slice(s) = &*r.elem

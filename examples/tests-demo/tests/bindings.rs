@@ -116,6 +116,13 @@ wasm_lite::import! {
         fn render(v: &JsValue) -> String as "String";
     }
 
+    "Uint8Array" {
+        /// `Uint8Array.prototype.set.call(dst, src)` — a *dotted* JS name, and
+        /// a destination JS writes into. `set` is borrowed off the prototype
+        /// so it can be applied to a view Rust owns.
+        fn set_into(dst: &mut [u8], src: &JsValue) as "prototype.set.call";
+    }
+
     "Math" {
         /// `Math.PI` — a namespaced property, not a call. `Math.PI()` throws.
         #[static_getter]
@@ -632,6 +639,20 @@ fn type_predicates_and_loose_equality() {
 fn exponentiation() {
     let two = JsValue::from_f64(2.0);
     assert_eq!(two.pow(&JsValue::from_f64(10.0)).as_f64(), Some(1024.0));
+}
+
+/// A dotted `js_name` is a *path*, not a property whose name contains dots —
+/// and the destination slice is a view JS writes back through.
+#[wasm_lite_test]
+fn a_dotted_js_name_resolves_and_writes_back() {
+    let mut buf = [0u8; 3];
+    set_into(&mut buf, &parse("[10, 20, 30]"));
+    assert_eq!(buf, [10, 20, 30], "JS wrote into Rust's buffer");
+
+    // A second call overwrites, so the view is fresh each time rather than a
+    // snapshot taken once.
+    set_into(&mut buf, &parse("[1, 2, 3]"));
+    assert_eq!(buf, [1, 2, 3]);
 }
 
 wasm_lite::test_main!();
