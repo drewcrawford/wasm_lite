@@ -350,4 +350,43 @@ fn the_primitive_singletons_stay_distinct() {
     }
 }
 
+/// Reading a primitive back out of a handle. The presence flag is separate from
+/// the value, which is what keeps a genuine `NaN` or `""` distinguishable from
+/// "wrong type".
+#[wasm_lite_test]
+fn primitives_read_back_out_of_handles() {
+    assert_eq!(JsValue::from_f64(1.5).as_f64(), Some(1.5));
+    assert_eq!(JsValue::from(-7i32).as_f64(), Some(-7.0));
+    assert_eq!(JsValue::from_bool(true).as_bool(), Some(true));
+    assert_eq!(JsValue::from_bool(false).as_bool(), Some(false));
+    assert_eq!(JsValue::from_str("hi").as_string().as_deref(), Some("hi"));
+
+    // Values parsed from JS, not just ones Rust made.
+    assert_eq!(parse("41").as_f64(), Some(41.0));
+    assert_eq!(parse("true").as_bool(), Some(true));
+    assert_eq!(parse("\"text\"").as_string().as_deref(), Some("text"));
+}
+
+#[wasm_lite_test]
+fn reading_the_wrong_type_is_none_not_a_wrong_answer() {
+    let s = JsValue::from_str("not a number");
+    assert_eq!(s.as_f64(), None);
+    assert_eq!(s.as_bool(), None);
+
+    let n = JsValue::from_f64(1.0);
+    assert_eq!(n.as_string(), None);
+    assert_eq!(n.as_bool(), None, "1 is truthy but it is not a boolean");
+
+    assert_eq!(JsValue::null().as_f64(), None);
+    assert_eq!(JsValue::undefined().as_bool(), None);
+
+    // The edge cases the presence flag exists for.
+    assert!(
+        JsValue::from_f64(f64::NAN)
+            .as_f64()
+            .is_some_and(f64::is_nan)
+    );
+    assert_eq!(JsValue::from_str("").as_string().as_deref(), Some(""));
+}
+
 wasm_lite::test_main!();

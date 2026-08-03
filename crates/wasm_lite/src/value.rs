@@ -48,6 +48,12 @@ unsafe extern "C" {
     fn make_prim(kind: u32) -> u32;
     #[link_name = "__wl_str_val"]
     fn make_str(ptr: *const u8, len: usize) -> u32;
+    #[link_name = "__wl_as_f64"]
+    fn as_f64_out(idx: u32, out: *mut f64) -> i32;
+    #[link_name = "__wl_as_bool"]
+    fn as_bool_out(idx: u32, out: *mut i32) -> i32;
+    #[link_name = "__wl_as_str"]
+    fn as_str_out(idx: u32, out: *mut u32) -> i32;
 }
 
 impl JsValue {
@@ -81,6 +87,37 @@ impl JsValue {
     /// A handle to JS `undefined`.
     pub fn undefined() -> JsValue {
         JsValue::__wl_from_abi(unsafe { make_prim(1) })
+    }
+
+    /// The number this handle holds, or `None` if it is not a JS number.
+    ///
+    /// The presence flag is separate from the value, so a genuine `NaN` is
+    /// `Some(NaN)` rather than indistinguishable from "not a number".
+    pub fn as_f64(&self) -> Option<f64> {
+        let mut out = 0.0f64;
+        let ok = unsafe { as_f64_out(self.idx, &mut out) };
+        (ok != 0).then_some(out)
+    }
+
+    /// The boolean this handle holds, or `None` if it is not a JS boolean.
+    pub fn as_bool(&self) -> Option<bool> {
+        let mut out = 0i32;
+        let ok = unsafe { as_bool_out(self.idx, &mut out) };
+        (ok != 0).then_some(out != 0)
+    }
+
+    /// The string this handle holds, or `None` if it is not a JS string.
+    ///
+    /// The empty string is `Some("")`; only a non-string is `None`.
+    pub fn as_string(&self) -> Option<String> {
+        let mut out = [0u32; 2];
+        let ok = unsafe { as_str_out(self.idx, out.as_mut_ptr()) };
+        if ok == 0 {
+            return None;
+        }
+        // The host allocated with `__wl_malloc` and transferred ownership.
+        let (ptr, len) = (out[0] as usize as *mut u8, out[1] as usize);
+        Some(unsafe { String::from_utf8_unchecked(Vec::from_raw_parts(ptr, len, len)) })
     }
 }
 
