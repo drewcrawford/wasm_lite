@@ -232,4 +232,43 @@ mod websys_grammar {
     }
 }
 
+/// `link_to!` embeds a JS file and yields a URL for it. Verified by actually
+/// starting a worker from that URL and getting a message back — compiling
+/// proves only that the macro expanded.
+mod snippets {
+    use wasm_bindgen::JsValue;
+    use wasm_lite::wasm_lite_test;
+
+    wasm_bindgen::__rt::import! {
+        crate = ::wasm_bindgen::__rt;
+        "Worker" {
+            #[constructor]
+            fn new_worker(url: &str) -> JsValue as "Worker";
+            fn terminate(this: &JsValue) as "terminate";
+        }
+        "globalThis" {
+            fn render(v: &JsValue) -> String as "String";
+        }
+    }
+
+    #[wasm_lite_test]
+    fn a_linked_snippet_is_a_usable_worker_url() {
+        let url = wasm_bindgen::link_to!(module = "/src/js/echo_worker.js");
+
+        // A blob URL, not a path — which is the whole point of the
+        // implementation, so assert the shape rather than just non-emptiness.
+        assert!(url.starts_with("blob:"), "got {url}");
+
+        // The real test: the browser accepts it as a worker script. An invalid
+        // or empty URL throws here.
+        let worker = new_worker(&url);
+        assert!(
+            render(&worker).contains("Worker"),
+            "got {}",
+            render(&worker)
+        );
+        terminate(&worker);
+    }
+}
+
 wasm_lite::test_main!();
