@@ -415,7 +415,7 @@ pub use backend::{task_begin, task_finished};
 pub use guard::Guard;
 pub use hooks::{clear_spawn_hooks, register_spawn_hook, remove_spawn_hook};
 pub use mutex::{Mutex, NotAvailable};
-pub use sleep::{SleepAsync, sleep_async};
+pub use sleep::{MAX_TIMEOUT, SleepAsync, sleep_async};
 
 const CONSOLE_REDIRECT_HOOK_NAME: &str = "wasm_lite_std::println_eprintln_console_redirect";
 
