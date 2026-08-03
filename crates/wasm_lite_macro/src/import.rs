@@ -676,6 +676,12 @@ fn unpack_buffer(call: &TokenStream2, from_raw_parts: TokenStream2) -> TokenStre
 
 /// Flatten an `Option<inner>` argument (import direction): a discriminant param
 /// plus `inner`'s lowering, read conditionally from the `Copy` option.
+/// The flattened parameters, call arguments and descriptor tag for an
+/// `Option<T>` argument.
+///
+/// The string and slice cases go through `as_deref` rather than consuming the
+/// option: they contribute three arguments (discriminant, pointer, length), and
+/// `Option<&mut [u8]>` is not `Copy`, so using it directly moves it twice over.
 fn option_arg(
     pname: &Ident,
     inner: &Type,
@@ -689,8 +695,8 @@ fn option_arg(
             ],
             vec![
                 quote! { #pname.is_some() as i32 },
-                quote! { #pname.map_or(::core::ptr::null(), |__s| __s.as_ptr()) },
-                quote! { #pname.map_or(0, |__s| __s.len()) },
+                quote! { #pname.as_deref().map_or(::core::ptr::null(), |__s| __s.as_ptr()) },
+                quote! { #pname.as_deref().map_or(0, |__s| __s.len()) },
             ],
             "str".into(),
         ));
@@ -704,8 +710,8 @@ fn option_arg(
             ],
             vec![
                 quote! { #pname.is_some() as i32 },
-                quote! { #pname.map_or(::core::ptr::null(), |__s| __s.as_ptr()) },
-                quote! { #pname.map_or(0, |__s| __s.len()) },
+                quote! { #pname.as_deref().map_or(::core::ptr::null(), |__s| __s.as_ptr()) },
+                quote! { #pname.as_deref().map_or(0, |__s| __s.len()) },
             ],
             "bytes".into(),
         ));
