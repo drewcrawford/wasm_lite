@@ -58,6 +58,41 @@ runner = "path/to/runner"
 Then `cargo test` runs headless and exits, while `cargo run` serves a bin
 interactively in the browser — the runner distinguishes them by path.
 
+## Configure the runner
+
+Everything below is an environment variable, because it is set per-invocation
+rather than per-project.
+
+| variable | what it changes |
+|---|---|
+| `WASM_LITE_BROWSER` | `chrome` / `chromium` / `safari`; default **firefox** |
+| `WASM_LITE_GPU` | give headless Chrome a real (software) WebGPU adapter |
+| `WASM_LITE_BROWSER_ARGS` | extra browser flags, space-separated |
+| `WASM_LITE_SERVE_DIR` | serve a directory alongside the program |
+| `WASM_LITE_TIMEOUT_SECS` | per-page deadline; default 30 |
+| `WASM_LITE_RUN_SECONDS` | watch a long-running `bin` for N seconds |
+| `WASM_LITE_REUSE_BROWSER` | keep one browser across invocations (`--stop-browser` ends it) |
+| `WASM_LITE_NO_OPEN` | serve without launching a browser |
+
+Three of these exist because their defaults produce a *plausible wrong answer*
+rather than an error, which is much harder to notice:
+
+* **`WASM_LITE_GPU`.** Chrome is otherwise launched with `--disable-gpu`, so
+  `navigator.gpu.requestAdapter()` resolves to `null` and every graphics test
+  fails in a way indistinguishable from a bug in the code under test. Firefox
+  has no headless WebGPU at all, so anything graphical also wants
+  `WASM_LITE_BROWSER=chrome`.
+* **`WASM_LITE_SERVE_DIR`.** Without it the runner serves only the program's own
+  files, so a fetch for a texture or a shader 404s and the program concludes its
+  assets are missing — which they are, but not for the reason it will report.
+* **`WASM_LITE_RUN_SECONDS`.** `cargo test` mode declares success the instant
+  `main` returns and then discards the console. For a doctest that is right; for
+  an application whose work lives on the event loop — a render loop, an executor
+  — it means the program "passes" immediately and prints nothing. This keeps the
+  page alive and always prints the log.
+
+A **timeout** dumps the captured console, so a hang tells you where it hung.
+
 ## Write a test
 
 Mark a function with `#[wasm_lite_test]`; it is recorded in `__wasm_lite_tests`
