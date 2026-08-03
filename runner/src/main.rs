@@ -408,7 +408,77 @@ fn handle(mut stream: TcpStream, routes: &[Route]) -> std::io::Result<()> {
 
     match routes.iter().find(|r| r.path == path) {
         Some(route) => respond(&mut stream, 200, route.content_type, &route.body),
-        None => respond(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
+        None => match static_file(&path) {
+            Some((content_type, body)) => respond(&mut stream, 200, content_type, &body),
+            None => respond(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
+        },
+    }
+}
+
+/// Serve a file from `WASM_LITE_SERVE_DIR`, if one is set and the path is in it.
+///
+/// A real program wants more than its own module: textures, shaders, fonts, a
+/// data file it fetches at startup. Without this the runner answers 404 for all
+/// of them, and the program fails in a way that looks like a bug in its asset
+/// code rather than a missing server.
+///
+/// Deliberately narrow: the generated routes always win, so nothing on disk can
+/// shadow `program.wasm` or the glue.
+fn static_file(path: &str) -> Option<(&'static str, Vec<u8>)> {
+    let root = PathBuf::from(std::env::var_os("WASM_LITE_SERVE_DIR")?);
+    // Reject anything that could climb out of the root. `..` is the obvious
+    // case; an absolute component or a Windows prefix would also escape, so
+    // accept only plain names. This server is local, but it is pointed at a
+    // directory the user names and reached by a browser, and "local" is not the
+    // same as "only reachable by things I trust".
+    let mut full = root.clone();
+    for part in path.trim_start_matches('/').split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if !Path::new(part)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return None;
+        }
+        full.push(part);
+    }
+    let full = full.canonicalize().ok()?;
+    // Canonicalize both sides: a symlink inside the root can still point out of
+    // it, and the component check above cannot see through one.
+    if !full.starts_with(root.canonicalize().ok()?) {
+        return None;
+    }
+    let body = std::fs::read(&full).ok()?;
+    Some((content_type_for(&full), body))
+}
+
+/// Guess a Content-Type from the extension.
+///
+/// Only what a wasm program is likely to fetch. Anything else is served as
+/// `application/octet-stream`, which is correct for `fetch`/`arrayBuffer` and
+/// wrong only for a browser asked to display it directly.
+fn content_type_for(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "wasm" => "application/wasm",
+        "json" => "application/json; charset=utf-8",
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "txt" | "" => "text/plain; charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "wgsl" | "glsl" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
     }
 }
 
