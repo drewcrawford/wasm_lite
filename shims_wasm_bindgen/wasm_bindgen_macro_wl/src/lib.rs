@@ -646,22 +646,30 @@ fn unpack_arg(ty: &Type, i: usize) -> TokenStream2 {
 }
 
 /// Convert the callback's result into what the trampoline returns.
-fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<TokenStream2> {
+///
+/// `(body, fallible)`. A fallible body produces
+/// `Result<Option<JsValue>, JsValue>`, which the trampoline turns into a thrown
+/// JS exception; an infallible one produces `Option<JsValue>`.
+fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<(TokenStream2, bool)> {
     let Some(ty) = ret else {
-        return Ok(quote! { { #call; ::core::option::Option::None } });
+        return Ok((quote! { { #call; ::core::option::Option::None } }, false));
     };
     if matches!(ty, Type::Tuple(t) if t.elems.is_empty()) {
-        return Ok(quote! { { #call; ::core::option::Option::None } });
+        return Ok((quote! { { #call; ::core::option::Option::None } }, false));
     }
-    if generic_pair(ty, "Result").is_some() {
-        // A Rust closure cannot throw a JS exception, so there is nowhere for
-        // the `Err` to go. Refusing is better than silently unwrapping it into
-        // a panic that surfaces as a dead instance.
-        return Err(Error::new_spanned(
-            ty,
-            "#[wasm_bindgen]: a callback returning `Result` is not supported by the \
-             wasm_lite shim — the error would have to become a thrown JS exception, \
-             and a Rust closure cannot throw",
+    if let Some((ok, err)) = generic_pair(ty, "Result") {
+        // The `Err` becomes a thrown JS exception, which is how the JS API
+        // being bound reports failure in the first place.
+        let (ok_body, _) = pack_result(Some(ok), quote!(__ok))?;
+        let err_body = to_js_value(err, quote!(__err));
+        return Ok((
+            quote! {
+                match #call {
+                    ::core::result::Result::Ok(__ok) => ::core::result::Result::Ok(#ok_body),
+                    ::core::result::Result::Err(__err) => ::core::result::Result::Err(#err_body),
+                }
+            },
+            true,
         ));
     }
     if let Type::Path(p) = ty
@@ -682,17 +690,54 @@ fn pack_result(ret: Option<&Type>, call: TokenStream2) -> syn::Result<TokenStrea
                 | "usize"
                 | "isize"
         ) {
-            return Ok(
+            return Ok((
                 quote! { ::core::option::Option::Some(::wasm_bindgen::JsValue::from(#call)) },
-            );
+                false,
+            ));
         }
         if n == "String" {
-            return Ok(
+            return Ok((
                 quote! { ::core::option::Option::Some(::wasm_bindgen::JsValue::from_str(&#call)) },
-            );
+                false,
+            ));
         }
     }
-    Ok(quote! { ::core::option::Option::Some(::wasm_bindgen::JsObject::into_js(#call)) })
+    Ok((
+        quote! { ::core::option::Option::Some(::wasm_bindgen::JsObject::into_js(#call)) },
+        false,
+    ))
+}
+
+/// Lower a value of type `ty` to a `JsValue`, for the thrown-error path.
+fn to_js_value(ty: &Type, value: TokenStream2) -> TokenStream2 {
+    if let Type::Path(p) = ty
+        && let Some(seg) = p.path.segments.last()
+    {
+        let n = seg.ident.to_string();
+        if n == "JsValue" {
+            return value;
+        }
+        if n == "String" {
+            return quote! { ::wasm_bindgen::JsValue::from_str(&#value) };
+        }
+        if matches!(
+            n.as_str(),
+            "bool"
+                | "f32"
+                | "f64"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "usize"
+                | "isize"
+        ) {
+            return quote! { ::wasm_bindgen::JsValue::from(#value) };
+        }
+    }
+    quote! { ::wasm_bindgen::JsObject::into_js(#value) }
 }
 
 // ---------------------------------------------------------------------------
@@ -786,7 +831,13 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
         // the call.
         if let Some(cb) = callback_signature(ty) {
             let unpacked = cb.inputs.iter().enumerate().map(|(i, t)| unpack_arg(t, i));
-            let body = pack_result(cb.output.as_ref(), quote! { __f( #(#unpacked),* ) })?;
+            let (body, fallible) =
+                pack_result(cb.output.as_ref(), quote! { __f( #(#unpacked),* ) })?;
+            let ctor = if fallible {
+                quote!(new_variadic_fallible)
+            } else {
+                quote!(new_variadic)
+            };
             let closure_ident = format_ident!("__cb_{}", orig_ident);
             let static_ty = cb.static_ty();
             prelude.push(quote! {
@@ -795,7 +846,7 @@ fn extern_fn(f: ForeignItemFn) -> syn::Result<TokenStream2> {
                     // function, before the caller's borrow ends, so the
                     // 'static bound it requires is never actually observed.
                     let __f: #static_ty = unsafe { ::core::mem::transmute(#orig_ident) };
-                    ::wasm_bindgen::__rt::Closure::new_variadic(
+                    ::wasm_bindgen::__rt::Closure::#ctor(
                         move |__args: &[::wasm_bindgen::__rt::JsValue]| #body,
                     )
                 };

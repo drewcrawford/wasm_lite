@@ -185,12 +185,15 @@ function __wl_closure_new(id, arity) {
             const ptr = __wl_instance.exports.__wl_malloc(n * 4);
             const view = new Uint32Array(__wl_memory.buffer, ptr, n);
             for (let i = 0; i < n; i++) view[i] = __wl_add(args[i]);
-            const r = __wl_instance.exports.__wl_closure_call_n(id, n, ptr);
+            const r = __wl_instance.exports.__wl_closure_call_n(id, n, ptr) >>> 0;
             __wl_instance.exports.__wl_free(ptr, n * 4);
-            // The result is the handle plus one, so 0 can mean: returned nothing.
+            // 0 is: returned nothing. Otherwise the low bits are the handle
+            // plus one, and the high bit means throw it rather than return it.
             if (r === 0) return undefined;
-            const out = __wl_obj(r - 1);
-            __wl_drop(r - 1);
+            const h = (r & 0x7fffffff) - 1;
+            const out = __wl_obj(h);
+            __wl_drop(h);
+            if (r & 0x80000000) throw out;
             return out;
         };
     }

@@ -105,7 +105,7 @@ impl<T> Registry<T> {
 
 type Fn0 = Box<dyn FnMut()>;
 type Fn1 = Box<dyn FnMut(JsValue)>;
-type FnN = Box<dyn FnMut(&[JsValue]) -> Option<JsValue>>;
+type FnN = Box<dyn FnMut(&[JsValue]) -> Result<Option<JsValue>, JsValue>>;
 
 thread_local! {
     static ZERO_ARG: RefCell<Registry<Fn0>> = const { RefCell::new(Registry::new()) };
@@ -154,8 +154,15 @@ pub extern "C" fn __wl_closure_call_1(id: u32, arg: u32) {
 /// `__wl_malloc`, and frees it after the call. Ownership of each handle
 /// transfers to Rust here, matching the one-argument trampoline.
 ///
-/// The result is the handle **plus one**, so that `0` can mean "no value"
-/// without colliding with table index 0.
+/// The result encodes three outcomes in one `u32`, because table index 0 is a
+/// real index and cannot double as "nothing":
+///
+/// * `0` — returned nothing;
+/// * `1 ..= 0x7FFF_FFFF` — the handle, plus one;
+/// * high bit set — *throw* the handle in the low bits, minus one.
+///
+/// The high bit is safe to steal: table indices are allocated densely from
+/// zero, so a live one never approaches 2^31.
 ///
 /// # Safety
 /// `args_ptr` must point at `argc` consecutive `u32` table indices.
@@ -172,13 +179,22 @@ pub unsafe extern "C" fn __wl_closure_call_n(id: u32, argc: u32, args_ptr: u32) 
     let result = f(&args);
     ANY_ARGS.with(|r| r.borrow_mut().give_back(id, f));
 
-    match result {
+    let (value, throwing) = match result {
+        Ok(Some(v)) => (Some(v), false),
+        Ok(None) => (None, false),
+        Err(e) => (Some(e), true),
+    };
+    match value {
         // `+ 1` so 0 stays free to mean "returned nothing".
         Some(v) => {
             let idx = v.__wl_abi();
             // JS takes ownership of the slot from here.
             core::mem::forget(v);
-            idx + 1
+            if throwing {
+                (idx + 1) | 0x8000_0000
+            } else {
+                idx + 1
+            }
         }
         None => 0,
     }
@@ -293,9 +309,24 @@ impl Closure {
     ///
     /// Arguments are owned — dropping the slice frees their table slots — so a
     /// callback that wants to keep one should move it out.
-    pub fn new_variadic<F>(f: F) -> Closure
+    ///
+    /// Use [`Closure::new_variadic_fallible`] for a callback that needs to
+    /// raise a JS exception.
+    pub fn new_variadic<F>(mut f: F) -> Closure
     where
         F: FnMut(&[JsValue]) -> Option<JsValue> + 'static,
+    {
+        Closure::new_variadic_fallible(move |args| Ok(f(args)))
+    }
+
+    /// As [`Closure::new_variadic`], but the callback may fail — and its `Err`
+    /// becomes a **thrown** JS exception at the call site.
+    ///
+    /// This is what a binding needs to be faithful to a JS API that reports
+    /// failure by throwing, since a Rust closure cannot throw by itself.
+    pub fn new_variadic_fallible<F>(f: F) -> Closure
+    where
+        F: FnMut(&[JsValue]) -> Result<Option<JsValue>, JsValue> + 'static,
     {
         #[cfg(target_arch = "wasm32")]
         #[used]

@@ -26,6 +26,11 @@ wasm_lite::import! {
         /// comparator has to return.
         fn number_of(v: f64) -> JsValue as "Number";
     }
+    "JSON" {
+        /// `JSON.stringify(v)` bound as fallible, so a callback's throw can be
+        /// observed as an `Err` rather than killing the instance.
+        fn try_stringify(v: &JsValue) -> Result<String, JsValue> as "stringify";
+    }
     "Array" {
         /// `arr.sort(cmp)` — a callback taking *two* arguments, which is the
         /// shape a per-arity trampoline cannot cover.
@@ -34,6 +39,9 @@ wasm_lite::import! {
         fn map_with(this: &JsValue, f: &JsValue) -> JsValue as "map";
         #[getter]
         fn length_of(this: &JsValue) -> f64 as "length";
+        /// `obj.toJSON = f`
+        #[setter]
+        fn set_to_json(this: &JsValue, f: &JsValue) as "toJSON";
         /// `Array.of(v)` — a one-element array, used both to build argument
         /// lists and to park a JS value somewhere Rust does not own it.
         fn of1(v: f64) -> JsValue as "of";
@@ -214,6 +222,38 @@ fn returning_none_is_undefined_not_handle_zero() {
         "undefined maps to null in JSON"
     );
     assert_eq!(length_of(&mapped), 2.0);
+}
+
+/// A callback's `Err` has to become a **thrown** JS exception, since that is
+/// how a JS API reports failure — and a Rust closure cannot throw by itself.
+#[wasm_lite_test]
+fn a_fallible_closure_throws_into_javascript() {
+    // `JSON.stringify` calls `toJSON` on the value; a throwing replacer is the
+    // easiest way to observe the exception crossing back out.
+    let boom = Closure::new_variadic_fallible(move |_args: &[JsValue]| {
+        Err(JsValue::from_str("callback said no"))
+    });
+    let obj = parse("{}");
+    // Attach the throwing closure as `toJSON`, so stringify calls it.
+    set_to_json(&obj, boom.as_js_value());
+
+    let r = try_stringify(&obj);
+    let err = r.expect_err("the closure's Err must surface as a throw");
+    assert_eq!(err.as_string().as_deref(), Some("callback said no"));
+}
+
+/// ...and the instance must survive it, which is the difference between a
+/// thrown exception the binding catches and a trap.
+#[wasm_lite_test]
+fn throwing_from_a_closure_leaves_the_instance_usable() {
+    let boom =
+        Closure::new_variadic_fallible(move |_args: &[JsValue]| Err(JsValue::from_str("nope")));
+    let obj = parse("{}");
+    set_to_json(&obj, boom.as_js_value());
+    assert!(try_stringify(&obj).is_err());
+
+    // Still alive.
+    assert_eq!(stringify(&parse("[1,2]")), "[1,2]");
 }
 
 wasm_lite::test_main!();

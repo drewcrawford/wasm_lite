@@ -43,7 +43,9 @@ pub use wasm_bindgen_macro_wl::wasm_bindgen;
 pub use wasm_lite::JsValue;
 
 pub mod closure;
+pub mod error;
 pub use closure::Closure;
+pub use error::JsError;
 
 /// The handle behind a generated extern-type newtype.
 ///
@@ -179,5 +181,5 @@ pub mod __rt {
 
 /// The names wasm-bindgen users expect from `wasm_bindgen::prelude::*`.
 pub mod prelude {
-    pub use crate::{JsCast, JsObject, JsValue, wasm_bindgen};
+    pub use crate::{JsCast, JsError, JsObject, JsValue, wasm_bindgen};
 }

@@ -84,6 +84,14 @@ extern "C" {
     /// the first two is fine, since JS ignores extra parameters.
     #[wasm_bindgen(method, js_class = "Array", js_name = "map")]
     pub fn map_each(this: &JsArray, f: &mut dyn FnMut(JsValue, u32) -> f64) -> JsArray;
+
+    /// The same, with a *fallible* callback. Its `Err` becomes a thrown
+    /// exception inside `map`, which `catch` turns back into an `Err` here.
+    #[wasm_bindgen(method, js_class = "Array", js_name = "map", catch)]
+    pub fn try_map_each(
+        this: &JsArray,
+        f: &mut dyn FnMut(JsValue) -> Result<f64, JsError>,
+    ) -> Result<JsArray, JsValue>;
 }
 
 #[wasm_bindgen]

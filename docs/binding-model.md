@@ -104,11 +104,15 @@ nobody unregistered — calls a no-op instead of reading freed memory. Calling a
 closure takes it out of the registry for the duration, so re-entrant calls
 no-op rather than aliasing `&mut` to the captured state.
 
-Three shapes: `Closure::new` (no arguments), `Closure::new_with_arg` (one), and
-`Closure::new_variadic`, which takes `&[JsValue]` and may return one. The
-variadic form is what a general binding layer needs — `Array.prototype.sort`
-passes two arguments and `find` passes three — and it avoids a trampoline per
-(arity × return type) combination.
+Four shapes: `Closure::new` (no arguments), `Closure::new_with_arg` (one),
+`Closure::new_variadic` (takes `&[JsValue]`, may return one), and
+`Closure::new_variadic_fallible`, whose `Err` becomes a **thrown** JS exception
+at the call site — which is how a JS API reports failure, and something a Rust
+closure cannot do by itself.
+
+The variadic forms are what a general binding layer needs —
+`Array.prototype.sort` passes two arguments and `find` passes three — and they
+avoid a trampoline per (arity × return type) combination.
 
 **`JsValue` is `Clone`.** The value table holds references, so cloning
 allocates a table slot rather than copying the object: both handles denote the

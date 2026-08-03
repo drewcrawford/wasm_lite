@@ -180,6 +180,38 @@ mod websys_grammar {
         assert_eq!(stringify_array(&doubled), "[20,40]");
         assert_eq!(*seen.borrow(), vec![(10.0, 0), (20.0, 1)]);
     }
+
+    /// A callback that fails: its `Err` is thrown inside the JS method, and
+    /// `catch` brings it back as an `Err` on this side. Both halves of the
+    /// round trip have to work for this to pass.
+    #[wasm_lite_test]
+    fn a_fallible_callback_propagates_its_error() {
+        use wasm_bindgen::JsError;
+
+        let arr = JsArray::of2(1.0, 2.0);
+
+        // Succeeds for every element.
+        let mut ok = |v: JsValue| Ok(v.as_f64().unwrap_or_default() + 1.0);
+        let mapped = arr.try_map_each(&mut ok).expect("no element fails");
+        assert_eq!(stringify_array(&mapped), "[2,3]");
+
+        // Fails on the second element.
+        let mut boom = |v: JsValue| {
+            let n = v.as_f64().unwrap_or_default();
+            if n > 1.0 {
+                Err(JsError::new("too big"))
+            } else {
+                Ok(n)
+            }
+        };
+        assert!(
+            arr.try_map_each(&mut boom).is_err(),
+            "the callback's Err must reach the caller"
+        );
+
+        // ...and the instance is still usable afterwards.
+        assert_eq!(arr.length(), 2.0);
+    }
 }
 
 wasm_lite::test_main!();
