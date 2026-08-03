@@ -33,10 +33,53 @@ struct Namespace {
 /// `fn name(params) -> ret as "js";`.
 struct ImportFn {
     doc_attrs: Vec<Attribute>,
+    /// The explicit `#[getter]`/`#[setter]`/… kind, if one was given. `None`
+    /// means "infer a call", which is the `m`/`f` split on the receiver.
+    kind: Option<KindAttr>,
     name: Ident,
     params: Vec<(Ident, Type)>,
     ret: Option<Type>,
     js: Option<String>,
+}
+
+/// An explicit binding kind, written as an attribute on the imported `fn`.
+///
+/// These name JS operations that are not calls, so they cannot be inferred
+/// from a Rust signature: `fn tag_name(this: &JsValue) -> String` is
+/// indistinguishable from a zero-argument method until you say which you meant.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct KindAttr {
+    /// The descriptor tag: `g`, `s`, `n`, `ig`, `is`.
+    tag: &'static str,
+    /// The attribute as written, for diagnostics.
+    spelled: &'static str,
+    /// Exact parameter count, including the receiver.
+    arity: usize,
+    /// Whether the binding must have a return type.
+    returns: bool,
+    /// Whether the first parameter must be `this: &JsValue`.
+    receiver: bool,
+}
+
+impl KindAttr {
+    fn from_ident(id: &Ident) -> Option<Self> {
+        let (tag, spelled, arity, returns, receiver) = match () {
+            _ if id == "getter" => ("g", "getter", 1, true, true),
+            _ if id == "setter" => ("s", "setter", 2, false, true),
+            // A constructor's argument count is whatever the JS class takes.
+            _ if id == "constructor" => ("n", "constructor", usize::MAX, true, false),
+            _ if id == "indexing_getter" => ("ig", "indexing_getter", 2, true, true),
+            _ if id == "indexing_setter" => ("is", "indexing_setter", 3, false, true),
+            _ => return None,
+        };
+        Some(KindAttr {
+            tag,
+            spelled,
+            arity,
+            returns,
+            receiver,
+        })
+    }
 }
 
 impl Parse for Import {
@@ -86,19 +129,41 @@ impl Parse for Namespace {
 impl Parse for ImportFn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let attrs = input.call(Attribute::parse_outer)?;
-        // Only doc comments are honored. Anything else — `#[cfg(...)]` in
-        // particular — would be silently discarded while the binding, the wasm
-        // import, and the descriptor line were still emitted unconditionally;
-        // reject it rather than pretend the attribute took effect.
-        if let Some(bad) = attrs.iter().find(|a| !a.path().is_ident("doc")) {
-            return Err(Error::new_spanned(
-                bad,
-                "import!: only doc comments are supported on imported functions; other \
-                 attributes (including #[cfg]) are not honored here — apply them to the \
-                 surrounding import! invocation or module instead",
-            ));
+        // Doc comments and the binding-kind attributes are honored. Anything
+        // else — `#[cfg(...)]` in particular — would be silently discarded
+        // while the binding, the wasm import, and the descriptor line were
+        // still emitted unconditionally; reject it rather than pretend the
+        // attribute took effect.
+        let mut doc_attrs = Vec::new();
+        let mut kind: Option<KindAttr> = None;
+        for a in attrs {
+            if a.path().is_ident("doc") {
+                doc_attrs.push(a);
+                continue;
+            }
+            let found = a.path().get_ident().and_then(KindAttr::from_ident);
+            let Some(k) = found else {
+                return Err(Error::new_spanned(
+                    a,
+                    "import!: only doc comments and the binding-kind attributes \
+                     (#[getter], #[setter], #[constructor], #[indexing_getter], \
+                     #[indexing_setter]) are supported on imported functions; other \
+                     attributes (including #[cfg]) are not honored here — apply them to \
+                     the surrounding import! invocation or module instead",
+                ));
+            };
+            if let Some(prev) = kind {
+                return Err(Error::new_spanned(
+                    a,
+                    format!(
+                        "import!: a binding may have only one kind attribute; \
+                         already saw #[{}]",
+                        prev.spelled
+                    ),
+                ));
+            }
+            kind = Some(k);
         }
-        let doc_attrs = attrs;
         input.parse::<Token![fn]>()?;
         let name: Ident = input.parse()?;
 
@@ -134,6 +199,7 @@ impl Parse for ImportFn {
 
         Ok(ImportFn {
             doc_attrs,
+            kind,
             name,
             params,
             ret,
@@ -223,10 +289,58 @@ fn build_fn(ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream2, TokenStream
         }
     }
 
-    // `m` if the first parameter is `this: &JsValue`, else `f`.
-    let kind = match f.params.first() {
-        Some((n, t)) if n == "this" && is_ref_jsvalue(t) => "m",
-        _ => "f",
+    let has_receiver = matches!(
+        f.params.first(),
+        Some((n, t)) if n == "this" && is_ref_jsvalue(t)
+    );
+
+    // An explicit attribute picks the kind; otherwise it is a call, `m` if the
+    // first parameter is `this: &JsValue` and `f` if not.
+    let kind = match f.kind {
+        None => {
+            if has_receiver {
+                "m"
+            } else {
+                "f"
+            }
+        }
+        Some(k) => {
+            if k.receiver && !has_receiver {
+                return Err(Error::new_spanned(
+                    name,
+                    format!(
+                        "import!: #[{}] operates on a JS object, so its first parameter \
+                         must be the receiver `this: &JsValue`",
+                        k.spelled
+                    ),
+                ));
+            }
+            if k.arity != usize::MAX && f.params.len() != k.arity {
+                return Err(Error::new_spanned(
+                    name,
+                    format!(
+                        "import!: #[{}] takes exactly {} parameter(s) (including \
+                         `this`), found {}",
+                        k.spelled,
+                        k.arity,
+                        f.params.len()
+                    ),
+                ));
+            }
+            if k.returns && f.ret.is_none() {
+                return Err(Error::new_spanned(
+                    name,
+                    format!("import!: #[{}] must have a return type", k.spelled),
+                ));
+            }
+            if !k.returns && f.ret.is_some() {
+                return Err(Error::new_spanned(
+                    name,
+                    format!("import!: #[{}] must not have a return type", k.spelled),
+                ));
+            }
+            k.tag
+        }
     };
 
     // Default JS name: the Rust name minus any `r#` (the raw prefix is

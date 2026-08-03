@@ -2,9 +2,18 @@
 //! The descriptor format written by the `import!` macro.
 //!
 //! Each import is one line: `kind|namespace|import_name|js_name|argtags|rettag\n`,
-//! where `kind` is `f` (namespaced function) or `m` (method on a handle
-//! receiver), `argtags` is a comma-separated list (possibly empty) and `rettag`
-//! is empty for a function that returns nothing.
+//! where `argtags` is a comma-separated list (possibly empty) and `rettag` is
+//! empty for a binding that returns nothing. `kind` is one of:
+//!
+//! | tag | [`Kind`] | JS |
+//! |---|---|---|
+//! | `f` | [`Kind::Function`] | `globalThis[ns][js_name](args)` |
+//! | `m` | [`Kind::Method`] | `receiver[js_name](args)` |
+//! | `g` | [`Kind::Getter`] | `receiver[js_name]` |
+//! | `s` | [`Kind::Setter`] | `receiver[js_name] = value` |
+//! | `n` | [`Kind::Constructor`] | `new globalThis[js_name](args)` |
+//! | `ig` | [`Kind::IndexGet`] | `receiver[index]` |
+//! | `is` | [`Kind::IndexSet`] | `receiver[index] = value` |
 //!
 //! `import_name` is the wasm import symbol (unique per binding — it carries the
 //! crate/module path); `js_name` is the JavaScript function the shim actually
@@ -13,7 +22,17 @@
 
 use crate::exports::Payload;
 
-/// Whether an import is a namespaced free function or a method on a receiver.
+/// What JavaScript operation an import performs.
+///
+/// [`Kind::Function`] and [`Kind::Method`] are calls; the rest are the
+/// non-call operations a JS binding surface needs — property access, `new`,
+/// and computed indexing. They exist because a property is not a
+/// zero-argument method: `el.tagName` and `el.tagName()` are different
+/// programs, and only the first one works.
+///
+/// There is deliberately no separate static-method kind. A static method is
+/// `Klass.method(args)`, which is exactly [`Kind::Function`] with the class as
+/// the namespace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Kind {
@@ -21,6 +40,22 @@ pub enum Kind {
     Function,
     /// `receiver[js_name](args)`, where the first argument is the handle receiver.
     Method,
+    /// `receiver[js_name]` — a property read. One argument (the receiver), and
+    /// a return value, since a getter that discards its result is pointless.
+    Getter,
+    /// `receiver[js_name] = value` — a property write. Two arguments (receiver,
+    /// value) and no return.
+    Setter,
+    /// `new globalThis[js_name](args)` — a constructor. The namespace keys the
+    /// import-object slot only; the class comes from `js_name` so that
+    /// `namespace` stays free to group a class's bindings together.
+    Constructor,
+    /// `receiver[index]` — computed property read. Two arguments (receiver,
+    /// index) and a return value.
+    IndexGet,
+    /// `receiver[index] = value` — computed property write. Three arguments
+    /// (receiver, index, value) and no return.
+    IndexSet,
 }
 
 /// The return marshalling of an import.
@@ -47,7 +82,7 @@ pub enum Ret {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct Descriptor {
-    /// Whether this is a namespaced function or a method call.
+    /// Which JS operation this binding performs.
     pub kind: Kind,
     /// JS namespace, e.g. `console` (unused for methods, but keys the slot).
     pub namespace: String,
@@ -139,6 +174,11 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
         let kind = match kind_tag {
             "f" => Kind::Function,
             "m" => Kind::Method,
+            "g" => Kind::Getter,
+            "s" => Kind::Setter,
+            "n" => Kind::Constructor,
+            "ig" => Kind::IndexGet,
+            "is" => Kind::IndexSet,
             other => return Err(format!("unknown import kind {other:?} in {line:?}")),
         };
 
@@ -150,11 +190,8 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
             })
             .collect::<Result<_, _>>()?;
 
-        if kind == Kind::Method && args.first() != Some(&AbiArg::Handle) {
-            return Err(format!("method {import_name:?} needs a handle receiver"));
-        }
-
         let ret = parse_ret(ret_tag)?;
+        check_shape(kind, &args, &ret, import_name)?;
 
         descriptors.push(Descriptor {
             kind,
@@ -167,6 +204,60 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
     }
 
     Ok(descriptors)
+}
+
+/// Check that a descriptor's arity and return match what its kind can emit.
+///
+/// The generator indexes into `args` positionally — receiver, index, value —
+/// so a descriptor of the wrong shape would either panic there or silently
+/// produce glue that reads the wrong argument. Rejecting it here keeps the
+/// failure at parse time, where the offending line can be named.
+fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Result<(), String> {
+    let needs_receiver = matches!(
+        kind,
+        Kind::Method | Kind::Getter | Kind::Setter | Kind::IndexGet | Kind::IndexSet
+    );
+    if needs_receiver && args.first() != Some(&AbiArg::Handle) {
+        return Err(format!("{kind:?} {import_name:?} needs a handle receiver"));
+    }
+
+    // (exact arity, must return a value) for the fixed-shape kinds.
+    let expect = match kind {
+        Kind::Getter => Some((1, true)),
+        Kind::Setter => Some((2, false)),
+        Kind::IndexGet => Some((2, true)),
+        Kind::IndexSet => Some((3, false)),
+        Kind::Function | Kind::Method | Kind::Constructor => None,
+    };
+    if let Some((arity, returns_value)) = expect {
+        if args.len() != arity {
+            return Err(format!(
+                "{kind:?} {import_name:?} takes exactly {arity} argument(s), got {}",
+                args.len()
+            ));
+        }
+        if returns_value && *ret == Ret::Void {
+            return Err(format!("{kind:?} {import_name:?} must return a value"));
+        }
+        if !returns_value && *ret != Ret::Void {
+            return Err(format!("{kind:?} {import_name:?} must not return a value"));
+        }
+    }
+
+    // A constructor that did not yield the constructed object would be a leak
+    // with no way to reach it.
+    if kind == Kind::Constructor
+        && !matches!(
+            ret,
+            Ret::Handle | Ret::Res(Payload::Handle, _) | Ret::Opt(Payload::Handle)
+        )
+    {
+        return Err(format!(
+            "constructor {import_name:?} must return a handle, got {ret:?}"
+        ));
+    }
+
+    Ok(())
 }
 
 /// Parse a return tag: `opt:<P>` / `res:<P>:<P>` (sret) or a plain scalar tag.
@@ -267,5 +358,51 @@ mod tests {
     fn rejects_method_without_receiver() {
         let section = b"m|Array|c::bad|bad|f64|\n";
         assert!(parse(section).is_err());
+    }
+
+    #[test]
+    fn parses_property_constructor_and_indexing_kinds() {
+        let section = b"g|Element|c::tag_name|tagName|handle|str\n\
+                        s|Element|c::set_scroll|scrollTop|handle,f64|\n\
+                        n|URL|c::new_url|URL|str|handle\n\
+                        ig|Array|c::at|at|handle,u32|handle\n\
+                        is|Array|c::put|put|handle,u32,handle|\n";
+        let got = parse(section).unwrap();
+        let kinds: Vec<Kind> = got.iter().map(|d| d.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                Kind::Getter,
+                Kind::Setter,
+                Kind::Constructor,
+                Kind::IndexGet,
+                Kind::IndexSet
+            ]
+        );
+    }
+
+    /// The generator indexes these kinds' arguments positionally, so a
+    /// wrong-shaped descriptor must not reach it.
+    #[test]
+    fn rejects_misshapen_property_bindings() {
+        let cases: &[(&[u8], &str)] = &[
+            (
+                b"g|E|c::g|p|handle,f64|str\n",
+                "getter with an extra argument",
+            ),
+            (b"g|E|c::g|p|handle|\n", "getter returning nothing"),
+            (b"s|E|c::s|p|handle,f64|f64\n", "setter returning a value"),
+            (b"s|E|c::s|p|handle|\n", "setter with no value argument"),
+            (b"g|E|c::g|p|f64|str\n", "getter without a handle receiver"),
+            (b"ig|E|c::i|p|handle|handle\n", "index get with no index"),
+            (b"is|E|c::i|p|handle,u32|\n", "index set with no value"),
+            (
+                b"n|U|c::n|URL|str|str\n",
+                "constructor not returning a handle",
+            ),
+        ];
+        for (section, what) in cases {
+            assert!(parse(section).is_err(), "should reject {what}");
+        }
     }
 }

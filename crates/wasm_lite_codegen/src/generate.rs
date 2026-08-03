@@ -631,7 +631,11 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
     let mut receiver = None;
 
     for (i, arg) in d.args.iter().enumerate() {
-        let is_receiver = d.kind == Kind::Method && i == 0;
+        let is_receiver = i == 0
+            && matches!(
+                d.kind,
+                Kind::Method | Kind::Getter | Kind::Setter | Kind::IndexGet | Kind::IndexSet
+            );
         let marshalled = match arg {
             AbiArg::Str => {
                 let ptr = next_param(&mut params);
@@ -682,13 +686,30 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
     }
 
     let params = params.join(", ");
-    let js_args = js_args.join(", ");
 
-    let target = match d.kind {
-        Kind::Function => format!("globalThis[{ns}][{js_name}]"),
-        Kind::Method => format!("{}[{js_name}]", receiver.expect("method has a receiver")),
+    // `check_shape` has already fixed the arity of every kind that indexes
+    // positionally here, so these expects are unreachable for any descriptor
+    // that parsed.
+    let recv = || receiver.clone().expect("kind has a receiver");
+    let arg = |n: usize| {
+        js_args
+            .get(n)
+            .cloned()
+            .expect("check_shape fixed this kind's arity")
     };
-    let call = format!("{target}({js_args})");
+
+    // The expression whose *value* is what the import yields. For calls that is
+    // a call; for a property write it is an assignment, which in JS evaluates
+    // to the assigned value — harmless, since setters are Ret::Void.
+    let call = match d.kind {
+        Kind::Function => format!("globalThis[{ns}][{js_name}]({})", js_args.join(", ")),
+        Kind::Method => format!("{}[{js_name}]({})", recv(), js_args.join(", ")),
+        Kind::Getter => format!("{}[{js_name}]", recv()),
+        Kind::Setter => format!("{}[{js_name}] = {}", recv(), arg(0)),
+        Kind::Constructor => format!("new globalThis[{js_name}]({})", js_args.join(", ")),
+        Kind::IndexGet => format!("{}[{}]", recv(), arg(0)),
+        Kind::IndexSet => format!("{}[{}] = {}", recv(), arg(0), arg(1)),
+    };
 
     // `imports[ns] ||= {}` then assign the shim, keyed on the wasm import name.
     let _ = writeln!(js, "    imports[{ns}] = imports[{ns}] || {{}};");
@@ -909,6 +930,115 @@ mod tests {
         let js = generate_glue(&descriptors, &[], None);
         assert!(
             js.contains("imports[\"Array\"][\"push\"] = (p0, p1) => __wl_obj(p0)[\"push\"](p1);")
+        );
+    }
+
+    fn shaped(kind: Kind, js: &str, args: Vec<AbiArg>, ret: Ret) -> Descriptor {
+        Descriptor {
+            kind,
+            namespace: "Element".into(),
+            import_name: "b".into(),
+            js_name: js.into(),
+            args,
+            ret,
+        }
+    }
+
+    /// A property read must not be emitted as a call: `el.tagName` and
+    /// `el.tagName()` are different programs and only the first one works.
+    #[test]
+    fn getter_reads_the_property_without_calling_it() {
+        let js = generate_glue(
+            &[shaped(
+                Kind::Getter,
+                "tagName",
+                vec![AbiArg::Handle],
+                Ret::Str,
+            )],
+            &[],
+            None,
+        );
+        assert!(
+            js.contains("const __r = __wl_obj(p0)[\"tagName\"];"),
+            "{js}"
+        );
+        assert!(!js.contains("[\"tagName\"]()"), "{js}");
+    }
+
+    #[test]
+    fn setter_assigns_the_property() {
+        let js = generate_glue(
+            &[shaped(
+                Kind::Setter,
+                "scrollTop",
+                vec![AbiArg::Handle, AbiArg::Num],
+                Ret::Void,
+            )],
+            &[],
+            None,
+        );
+        assert!(
+            js.contains(
+                "imports[\"Element\"][\"b\"] = (p0, p1) => __wl_obj(p0)[\"scrollTop\"] = p1;"
+            ),
+            "{js}"
+        );
+    }
+
+    #[test]
+    fn constructor_uses_new_on_the_global_class() {
+        let js = generate_glue(
+            &[shaped(
+                Kind::Constructor,
+                "URL",
+                vec![AbiArg::Str],
+                Ret::Handle,
+            )],
+            &[],
+            None,
+        );
+        assert!(
+            js.contains(
+                "imports[\"Element\"][\"b\"] = (p0, p1) => __wl_add(new globalThis[\"URL\"](__wl_str(p0, p1)));"
+            ),
+            "{js}"
+        );
+    }
+
+    #[test]
+    fn indexing_uses_computed_access_on_the_receiver() {
+        let get = generate_glue(
+            &[shaped(
+                Kind::IndexGet,
+                "unused",
+                vec![AbiArg::Handle, AbiArg::U32],
+                Ret::Handle,
+            )],
+            &[],
+            None,
+        );
+        assert!(
+            get.contains(
+                "imports[\"Element\"][\"b\"] = (p0, p1) => __wl_add(__wl_obj(p0)[(p1 >>> 0)]);"
+            ),
+            "{get}"
+        );
+
+        let set = generate_glue(
+            &[shaped(
+                Kind::IndexSet,
+                "unused",
+                vec![AbiArg::Handle, AbiArg::U32, AbiArg::Handle],
+                Ret::Void,
+            )],
+            &[],
+            None,
+        );
+        assert!(
+            set.contains(
+                "imports[\"Element\"][\"b\"] = (p0, p1, p2) => __wl_obj(p0)[(p1 >>> 0)] = __wl_obj(p2);"
+            ),
+            "{set}"
         );
     }
 

@@ -28,6 +28,33 @@ wasm_lite::import! {
 Each binding gets a unique wasm import symbol (via `module_path!()`), so the
 same JS function can be bound from many crates/modules without link conflicts.
 
+**Operations that aren't calls** — a JS binding surface needs property access,
+`new`, and computed indexing as well. None of these can be inferred from a Rust
+signature (`fn tag_name(this: &JsValue) -> String` reads identically to a
+zero-argument method), so each is requested with an attribute:
+
+```rust
+wasm_lite::import! {
+    "URL" {
+        #[constructor] fn new_url(spec: &str) -> JsValue as "URL";  // new URL(spec)
+        #[getter]      fn pathname(this: &JsValue) -> String;       // url.pathname
+        #[setter]      fn set_hash(this: &JsValue, v: &str) as "hash";  // url.hash = v
+    }
+    "Array" {
+        #[indexing_getter] fn at(this: &JsValue, i: u32) -> f64;       // arr[i]
+        #[indexing_setter] fn put(this: &JsValue, i: u32, v: f64);     // arr[i] = v
+    }
+}
+```
+
+Getting this wrong is not a subtle mismatch: emitting `el.tagName()` for a
+property read throws, so the shapes are checked in the macro *and* in the
+descriptor parser — a getter takes only the receiver and must return; a setter
+takes receiver plus value and must not; a constructor must return a handle.
+
+There is deliberately no static-method kind: `Klass.method(args)` is already a
+namespaced function with the class as the namespace.
+
 **Export Rust to JS** — `#[export]`:
 
 ```rust

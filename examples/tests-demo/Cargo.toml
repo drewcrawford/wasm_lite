@@ -15,4 +15,8 @@ harness = false
 name = "passing"
 harness = false
 
+[[test]]
+name = "bindings"
+harness = false
+
 [workspace]
