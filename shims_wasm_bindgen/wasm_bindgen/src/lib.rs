@@ -297,6 +297,21 @@ impl<T, E: core::fmt::Debug> UnwrapThrowExt<T> for Result<T, E> {
     }
 }
 
+/// The module's `WebAssembly.Memory`, as wasm-bindgen spells it.
+pub fn memory() -> JsValue {
+    JsValue::wasm_memory()
+}
+
+/// Throw a JS value, never returning.
+pub fn throw_val(value: JsValue) -> ! {
+    let thrower =
+        wasm_lite::Closure::new_variadic_fallible(
+            move |_args| Err(JsObject::as_js(&value).clone()),
+        );
+    call_thrower(thrower.as_js_value());
+    unreachable!("the thrower always raises")
+}
+
 /// Throw a JS `Error` with this message, never returning.
 ///
 /// The throw happens inside a closure JS invokes, which is the only way Rust

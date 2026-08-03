@@ -154,6 +154,15 @@ impl<T: ?Sized> Closure<T> {
         Self::from_inner(f.into_wasm_closure_once())
     }
 
+    /// A one-shot closure handed straight to JS, with nothing kept on the Rust
+    /// side.
+    ///
+    /// The registry entry is never released — the JS function has to stay
+    /// callable and nothing here knows when it has fired.
+    pub fn once_into_js<F: IntoWasmClosureOnce<T>>(f: F) -> JsValue {
+        Self::once(f).into_js_value()
+    }
+
     /// The JS function value, leaving the closure alive for the realm's life.
     ///
     /// wasm-bindgen's spelling for "hand this to JS and stop tracking it".

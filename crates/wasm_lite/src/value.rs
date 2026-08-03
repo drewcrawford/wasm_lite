@@ -76,6 +76,8 @@ unsafe extern "C" {
     fn checked_div_raw(a: u32, b: u32) -> u32;
     #[link_name = "__wl_num_str"]
     fn num_str(idx: u32, out: *mut u32) -> i32;
+    #[link_name = "__wl_memory_obj"]
+    fn memory_obj() -> u32;
 }
 
 /// JavaScript's relational operators.
@@ -145,6 +147,14 @@ impl JsValue {
     /// JS `~` — bitwise complement, distinct from `Not`'s logical `!`.
     pub fn bit_not(&self) -> JsValue {
         JsValue::__wl_from_abi(unsafe { unop(2, self.idx) })
+    }
+
+    /// A handle to the module's `WebAssembly.Memory`.
+    ///
+    /// Threading polyfills hand this to a worker so it can share the same
+    /// linear memory.
+    pub fn wasm_memory() -> JsValue {
+        JsValue::__wl_from_abi(unsafe { memory_obj() })
     }
 
     /// A JS array holding the values these handles denote.
