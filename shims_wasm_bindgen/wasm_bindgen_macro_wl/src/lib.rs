@@ -350,6 +350,17 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
     // `extends = Base` gives the inherited API. One `Deref` target is possible
     // in Rust, so the first `extends` becomes `Deref` (which chains, so the
     // whole ancestry is reachable) and the rest become `AsRef`.
+    // A type with no `extends` derefs to `JsValue`, so every chain bottoms out
+    // there — which is what lets `JsValue::as_ref(&some_deep_type)` resolve.
+    let root_deref = opts.extends.is_empty().then(|| {
+        quote! {
+            impl #impl_g ::core::ops::Deref for #name #ty_g #where_g {
+                type Target = ::wasm_bindgen::__rt::JsValue;
+                fn deref(&self) -> &::wasm_bindgen::__rt::JsValue { &self.obj }
+            }
+        }
+    });
+
     let deref = opts.extends.first().map(|base| {
         quote! {
             impl #impl_g ::core::ops::Deref for #name #ty_g #where_g {
@@ -435,6 +446,7 @@ fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
             fn from(obj: ::wasm_bindgen::__rt::JsValue) -> Self { #name { obj, #phantom_init } }
         }
 
+        #root_deref
         #deref
         #(#as_refs)*
     })

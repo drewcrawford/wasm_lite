@@ -496,4 +496,54 @@ fn handles_compare_by_javascript_equality() {
     assert_ne!(JsValue::NULL, JsValue::UNDEFINED, "=== distinguishes these");
 }
 
+/// The operators are *JavaScript's*, not Rust's. That is the point: a binding
+/// wraps JS types, and they have to behave the way JS does.
+#[wasm_lite_test]
+fn operators_follow_javascript_semantics() {
+    let two = JsValue::from_f64(2.0);
+    let three = JsValue::from_f64(3.0);
+
+    assert_eq!((&two + &three).as_f64(), Some(5.0));
+    assert_eq!((&three - &two).as_f64(), Some(1.0));
+    assert_eq!((&two * &three).as_f64(), Some(6.0));
+    assert_eq!((&three % &two).as_f64(), Some(1.0));
+    assert_eq!((-&two).as_f64(), Some(-2.0));
+
+    // `+` on strings concatenates — Rust would not compile this at all.
+    let hello = JsValue::from_str("he");
+    let rest = JsValue::from_str("llo");
+    assert_eq!((&hello + &rest).as_string().as_deref(), Some("hello"));
+
+    // Division by zero is Infinity, not a panic.
+    let zero = JsValue::from_f64(0.0);
+    assert_eq!((&two / &zero).as_f64(), Some(f64::INFINITY));
+}
+
+#[wasm_lite_test]
+fn bitwise_operators_coerce_to_32_bit_integers() {
+    let a = JsValue::from_f64(12.0); // 1100
+    let b = JsValue::from_f64(10.0); // 1010
+
+    assert_eq!((&a & &b).as_f64(), Some(8.0));
+    assert_eq!((&a | &b).as_f64(), Some(14.0));
+    assert_eq!((&a ^ &b).as_f64(), Some(6.0));
+    assert_eq!((&a << &JsValue::from_f64(1.0)).as_f64(), Some(24.0));
+    assert_eq!((&a >> &JsValue::from_f64(2.0)).as_f64(), Some(3.0));
+
+    // `>>` keeps the sign, `>>>` does not — the distinction Rust has no
+    // operator for.
+    let minus_eight = JsValue::from_f64(-8.0);
+    let one = JsValue::from_f64(1.0);
+    assert_eq!((&minus_eight >> &one).as_f64(), Some(-4.0));
+    assert_eq!(
+        minus_eight.unsigned_shr(&one).as_f64(),
+        Some(2147483644.0),
+        ">>> fills with zeros"
+    );
+
+    // `!` is logical and `~` is bitwise; Rust spells both `!`.
+    assert_eq!((!&JsValue::from_f64(0.0)).as_bool(), Some(true));
+    assert_eq!(a.bit_not().as_f64(), Some(-13.0));
+}
+
 wasm_lite::test_main!();

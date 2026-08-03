@@ -74,6 +74,32 @@ function __wl_num(v) { return __wl_add(v); }
 function __wl_str_val(ptr, len) { return __wl_add(__wl_str(ptr, len)); }
 // JS strict equality between two handles.
 function __wl_eq(a, b) { return __wl_heap[a] === __wl_heap[b] ? 1 : 0; }
+// JS operators on the values two handles denote. One import with an opcode
+// rather than a dozen imports, since they differ only in the operator.
+function __wl_binop(op, a, b) {
+    const x = __wl_heap[a], y = __wl_heap[b];
+    switch (op) {
+        case 0: return __wl_add(x + y);
+        case 1: return __wl_add(x - y);
+        case 2: return __wl_add(x * y);
+        case 3: return __wl_add(x / y);
+        case 4: return __wl_add(x % y);
+        case 5: return __wl_add(x & y);
+        case 6: return __wl_add(x | y);
+        case 7: return __wl_add(x ^ y);
+        case 8: return __wl_add(x << y);
+        case 9: return __wl_add(x >> y);
+        default: return __wl_add(x >>> y);
+    }
+}
+function __wl_unop(op, a) {
+    const x = __wl_heap[a];
+    switch (op) {
+        case 0: return __wl_add(-x);
+        case 1: return __wl_add(!x);
+        default: return __wl_add(~x);
+    }
+}
 // Reading a primitive back out of a handle. Each returns 1/0 for present/absent
 // and writes the value through `out`, so a genuine NaN or empty string is not
 // confused with the wrong type. A fresh DataView per call: a malloc in between
@@ -380,7 +406,7 @@ pub fn generate_glue(
     // to drive the async executor; shared-memory builds also get __wl_spawn for
     // thread spawning. (Unused entries are harmless — the wasm only imports what
     // it references.)
-    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq";
+    let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop";
     if memory.is_some() {
         let _ = writeln!(
             js,
@@ -1006,7 +1032,7 @@ mod tests {
         ));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
-        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq };"));
+        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop };"));
     }
 
     #[test]

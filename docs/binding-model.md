@@ -125,6 +125,16 @@ avoid a trampoline per (arity × return type) combination.
 allocates a table slot rather than copying the object: both handles denote the
 same JS value and each frees only its own slot.
 
+**The JS singletons are constants** — `JsValue::UNDEFINED`/`NULL`/`TRUE`/
+`FALSE` occupy reserved table slots, so naming one costs nothing and they are
+never freed or reallocated.
+
+**`JsValue` supports JavaScript's operators** (`+`, `-`, `*`, `/`, `%`, `&`,
+`|`, `^`, `<<`, `>>`, unary `-`/`!`, plus `unsigned_shr` and `bit_not` for the
+JS-only `>>>` and `~`). These are *JavaScript's* semantics, not Rust's: `+`
+concatenates strings, `/` yields `Infinity`, and the bitwise operators coerce
+to 32-bit integers.
+
 **Primitives cross both ways** — `JsValue::from_f64`/`from_bool`/`from_str`/
 `null()`/`undefined()` (plus `From` impls for the numeric types, `bool` and
 `&str`) make one; `as_f64()`/`as_bool()`/`as_string()` read one back, returning

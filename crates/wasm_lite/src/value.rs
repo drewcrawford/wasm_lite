@@ -58,6 +58,65 @@ unsafe extern "C" {
     fn as_str_out(idx: u32, out: *mut u32) -> i32;
     #[link_name = "__wl_eq"]
     fn strict_eq(a: u32, b: u32) -> i32;
+    #[link_name = "__wl_binop"]
+    fn binop(op: u32, a: u32, b: u32) -> u32;
+    #[link_name = "__wl_unop"]
+    fn unop(op: u32, a: u32) -> u32;
+}
+
+/// The JS operators, applied to the values two handles denote.
+///
+/// These are JavaScript's semantics, not Rust's: `+` concatenates strings,
+/// `/` yields `Infinity` rather than panicking, and the bitwise operators
+/// coerce to 32-bit integers. A binding surface needs them because the JS
+/// types it wraps (`BigInt`, `Number`) are used with operators on the JS side.
+macro_rules! __js_binop {
+    ($($trait:ident, $method:ident, $op:expr;)*) => { $(
+        impl core::ops::$trait for &JsValue {
+            type Output = JsValue;
+            fn $method(self, rhs: &JsValue) -> JsValue {
+                JsValue::__wl_from_abi(unsafe { binop($op, self.idx, rhs.idx) })
+            }
+        }
+    )* };
+}
+__js_binop! {
+    Add, add, 0;
+    Sub, sub, 1;
+    Mul, mul, 2;
+    Div, div, 3;
+    Rem, rem, 4;
+    BitAnd, bitand, 5;
+    BitOr, bitor, 6;
+    BitXor, bitxor, 7;
+    Shl, shl, 8;
+    Shr, shr, 9;
+}
+
+impl core::ops::Neg for &JsValue {
+    type Output = JsValue;
+    fn neg(self) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { unop(0, self.idx) })
+    }
+}
+
+impl core::ops::Not for &JsValue {
+    type Output = JsValue;
+    fn not(self) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { unop(1, self.idx) })
+    }
+}
+
+impl JsValue {
+    /// JS `>>>` — the unsigned right shift, which has no Rust operator.
+    pub fn unsigned_shr(&self, rhs: &JsValue) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { binop(10, self.idx, rhs.idx) })
+    }
+
+    /// JS `~` — bitwise complement, distinct from `Not`'s logical `!`.
+    pub fn bit_not(&self) -> JsValue {
+        JsValue::__wl_from_abi(unsafe { unop(2, self.idx) })
+    }
 }
 
 /// So that a `JsValue` can stand in wherever a binding takes
