@@ -160,7 +160,9 @@ parameter is signed.
 exports), where the scalar return ABI can't carry a discriminant. They use a
 return pointer (sret): a 16-byte buffer holds a discriminant word plus the
 payload at offset 8. `None` ↔ JS `null`; `Err(e)` ↔ a **thrown** JS exception
-(`Ok`/`Some` carry the value). Inner types may be any scalar/string/bytes/handle.
+(`Ok`/`Some` carry the value). Inner types may be any scalar/string/bytes/handle,
+or `()` — `Result<(), E>` is a fallible operation with nothing to hand back, and
+its buffer carries only the discriminant.
 
 `Option<T>` is also supported as an **argument** (a nullable parameter): it
 flattens to a discriminant `i32` plus T's normal parameters. On exports JS

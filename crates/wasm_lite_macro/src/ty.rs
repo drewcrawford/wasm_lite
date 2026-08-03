@@ -116,6 +116,10 @@ pub(crate) fn numeric(ty: &Type) -> Option<String> {
 /// Descriptor tag for a scalar payload / `Option`/`Result` inner type:
 /// `i32`/`u32`/`f64`, `bool`, `JsValue`→`handle`, `String`→`str`, `Vec<u8>`→`bytes`.
 pub(crate) fn payload_tag(ty: &Type) -> Option<String> {
+    // `Result<(), E>` — a fallible operation with nothing to hand back.
+    if matches!(ty, Type::Tuple(t) if t.elems.is_empty()) {
+        return Some("unit".into());
+    }
     if let Some(scalar) = numeric(ty) {
         return Some(scalar);
     }

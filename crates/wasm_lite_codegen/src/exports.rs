@@ -35,6 +35,9 @@ pub enum ExportArg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Payload {
+    /// No value at all — `Result<(), E>`, a fallible operation whose success
+    /// carries nothing. The sret buffer holds only the discriminant.
+    Unit,
     I32,
     U32,
     F64,
@@ -48,6 +51,7 @@ impl Payload {
     /// Number of wasm params this payload occupies (str/bytes are `(ptr, len)`).
     pub(crate) fn param_count(self) -> usize {
         match self {
+            Payload::Unit => 0,
             Payload::Str | Payload::Bytes => 2,
             _ => 1,
         }
@@ -55,6 +59,7 @@ impl Payload {
 
     pub(crate) fn from_tag(tag: &str) -> Option<Self> {
         Some(match tag {
+            "unit" => Payload::Unit,
             "i32" => Payload::I32,
             "u32" => Payload::U32,
             "f64" => Payload::F64,

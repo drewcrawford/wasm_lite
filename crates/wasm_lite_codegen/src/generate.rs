@@ -400,6 +400,8 @@ fn emit_export(js: &mut String, export: &Export) {
                 ));
                 wasm_args.push(format!("__s{i}"));
                 match p {
+                    // `Option<()>` carries nothing beyond its discriminant.
+                    Payload::Unit => {}
                     Payload::I32 | Payload::U32 | Payload::F64 => {
                         wasm_args.push(format!("(__s{i} ? p{i} : 0)"));
                     }
@@ -558,6 +560,9 @@ fn sret_call(name: &str, wasm_args: &[String]) -> String {
 /// value expression. `sfx` disambiguates locals between Ok/Err payloads.
 fn read_payload(p: Payload, off: &str, sfx: &str) -> (Vec<String>, String) {
     match p {
+        // Nothing was written, so there is nothing to read; the discriminant
+        // already carried the whole answer.
+        Payload::Unit => (vec![], "undefined".to_string()),
         Payload::I32 => (vec![], format!("__dv.getInt32({off}, true)")),
         Payload::U32 => (vec![], format!("__dv.getUint32({off}, true)")),
         Payload::F64 => (vec![], format!("__dv.getFloat64({off}, true)")),
@@ -591,6 +596,10 @@ fn read_payload(p: Payload, off: &str, sfx: &str) -> (Vec<String>, String) {
 /// and detach views); `set` runs after a fresh `__dv` DataView is created.
 fn write_payload(p: Payload, off: &str, val: &str) -> (Vec<String>, Vec<String>) {
     match p {
+        // Nothing to store, but the value is still evaluated: for a `Result` it
+        // is the call itself, and skipping it would skip the side effect the
+        // binding exists for.
+        Payload::Unit => (vec![format!("void ({val});")], vec![]),
         Payload::I32 => (vec![], vec![format!("__dv.setInt32({off}, {val}, true);")]),
         Payload::U32 => (vec![], vec![format!("__dv.setUint32({off}, {val}, true);")]),
         Payload::F64 => (
@@ -687,6 +696,9 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
                 // Leading discriminant param, then the inner payload's params.
                 let pres = next_param(&mut params);
                 let payload = match p {
+                    // `Option<()>` occupies no parameter beyond the
+                    // discriminant, so there is nothing to unmarshal.
+                    Payload::Unit => "undefined".to_string(),
                     Payload::I32 | Payload::F64 => next_param(&mut params),
                     // The wasm i32 param surfaces as a signed Number; reinterpret.
                     Payload::U32 => format!("({} >>> 0)", next_param(&mut params)),

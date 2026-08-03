@@ -87,6 +87,17 @@ wasm_lite::import! {
         fn parse_u64(text: &str) -> u64 as "BigInt";
     }
 
+    "Object" {
+        /// `Object.freeze(o)` bound as a fallible *void* operation. It does
+        /// return the object in JS; binding it as `Result<(), _>` discards that
+        /// while keeping the throw-to-`Err` mapping.
+        fn freeze_it(o: &JsValue) -> Result<(), JsValue> as "freeze";
+        fn is_frozen(o: &JsValue) -> bool as "isFrozen";
+        /// Throws on a frozen object, which is the `Err` half.
+        fn define_prop(o: &JsValue, k: &str, d: &JsValue) -> Result<(), JsValue>
+            as "defineProperty";
+    }
+
     "URLTest" {
         /// `x instanceof URL`
         #[instanceof]
@@ -239,6 +250,38 @@ fn sixty_four_bit_integers_come_back() {
     assert_eq!(parse_i64("-9223372036854775808"), i64::MIN);
     assert_eq!(parse_i64("9007199254740993"), 9_007_199_254_740_993);
     assert_eq!(parse_u64("18446744073709551615"), u64::MAX);
+}
+
+/// `Result<(), E>` — a fallible operation with nothing to hand back. The sret
+/// buffer carries only the discriminant.
+#[wasm_lite_test]
+fn a_fallible_void_call_reports_ok_and_still_runs() {
+    let o = parse("{\"a\": 1}");
+    assert!(!is_frozen(&o));
+
+    freeze_it(&o).expect("freezing a plain object succeeds");
+
+    // The point of the assertion: with no payload to store there is nothing
+    // forcing the call to be evaluated, so this is what catches the glue
+    // optimising the side effect away.
+    assert!(is_frozen(&o), "the call must still have happened");
+}
+
+#[wasm_lite_test]
+fn a_fallible_void_call_maps_a_throw_to_err() {
+    let o = parse("{}");
+    freeze_it(&o).expect("freeze succeeds");
+
+    // Defining a property on a frozen object throws; the generated module is
+    // strict, so it is a TypeError rather than a silent no-op.
+    let descriptor = parse("{\"value\": 1}");
+    assert!(
+        define_prop(&o, "x", &descriptor).is_err(),
+        "a throw must become Err, not a trap"
+    );
+
+    // ...and the instance is still alive to say so.
+    assert!(is_frozen(&o));
 }
 
 wasm_lite::test_main!();

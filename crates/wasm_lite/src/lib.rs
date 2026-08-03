@@ -430,6 +430,10 @@ macro_rules! __impl_sret_scalar {
 }
 __impl_sret_scalar!(i32, u32, f64);
 
+impl FromSretPayload for () {
+    unsafe fn __wl_read(_base: *const u8) -> Self {}
+}
+
 impl FromSretPayload for bool {
     unsafe fn __wl_read(base: *const u8) -> Self {
         unsafe { core::ptr::read_unaligned(base.add(8) as *const i32) != 0 }

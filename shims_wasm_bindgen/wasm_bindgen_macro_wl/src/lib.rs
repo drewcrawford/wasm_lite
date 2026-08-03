@@ -427,6 +427,11 @@ enum Cross {
 }
 
 /// Types the ABI carries without a newtype wrapper.
+///
+/// `JsValue` is deliberately *not* here. It is a handle like any other, and
+/// `import!` only ever lends handles (`&JsValue`), so a by-value `JsValue`
+/// argument — which js-sys writes — has to take the same borrow the generated
+/// newtypes do.
 fn crosses_directly(ty: &Type) -> bool {
     match ty {
         Type::Reference(r) => crosses_directly(&r.elem),
@@ -452,7 +457,6 @@ fn crosses_directly(ty: &Type) -> bool {
                     | "bool"
                     | "str"
                     | "String"
-                    | "JsValue"
                     | "Vec"
             )
         }
