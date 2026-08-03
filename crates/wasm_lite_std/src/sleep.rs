@@ -29,9 +29,20 @@ use std::time::Duration;
 /// Resolution is the platform's: browsers clamp nested `setTimeout` to ~4 ms and
 /// throttle background tabs much harder, so treat the duration as a floor rather
 /// than a schedule.
+///
+/// Sleeps longer than [`MAX_TIMEOUT`] are chained across several timeouts,
+/// because a browser truncates the delay to a signed 32-bit integer — a naive
+/// 30-day `setTimeout` fires *immediately*, which is the opposite of what was
+/// asked for.
 pub fn sleep_async(dur: Duration) -> SleepAsync {
     SleepAsync::new(dur)
 }
+
+/// The longest delay a browser will honour: `setTimeout` truncates to `i32`.
+///
+/// Beyond this the delay wraps or clamps and the timer fires at once, so
+/// [`sleep_async`] chains instead.
+pub const MAX_TIMEOUT: Duration = Duration::from_millis(i32::MAX as u64);
 
 /// The future returned by [`sleep_async`].
 pub struct SleepAsync {
@@ -39,21 +50,26 @@ pub struct SleepAsync {
     inner: wasm_impl::Timer,
     #[cfg(not(target_arch = "wasm32"))]
     inner: native_impl::Timer,
+    /// Still to sleep after `inner` fires; non-zero only past [`MAX_TIMEOUT`].
+    remaining: Duration,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn new_timer(dur: Duration) -> wasm_impl::Timer {
+    wasm_impl::Timer::new(dur)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn new_timer(dur: Duration) -> native_impl::Timer {
+    native_impl::Timer::new(dur)
 }
 
 impl SleepAsync {
     fn new(dur: Duration) -> Self {
-        #[cfg(target_arch = "wasm32")]
-        {
-            SleepAsync {
-                inner: wasm_impl::Timer::new(dur),
-            }
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            SleepAsync {
-                inner: native_impl::Timer::new(dur),
-            }
+        let first = dur.min(MAX_TIMEOUT);
+        SleepAsync {
+            inner: new_timer(first),
+            remaining: dur - first,
         }
     }
 }
@@ -61,7 +77,20 @@ impl SleepAsync {
 impl Future for SleepAsync {
     type Output = ();
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.inner).poll(cx)
+        loop {
+            match Pin::new(&mut self.inner).poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(()) => {
+                    if self.remaining.is_zero() {
+                        return Poll::Ready(());
+                    }
+                    // Another leg of a sleep too long for one timeout.
+                    let next = self.remaining.min(MAX_TIMEOUT);
+                    self.remaining -= next;
+                    self.inner = new_timer(next);
+                }
+            }
+        }
     }
 }
 

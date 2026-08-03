@@ -627,6 +627,28 @@ mod suite {
         });
     }
 
+    /// A sleep longer than `setTimeout` can express must not fire immediately.
+    ///
+    /// Browsers truncate the delay to `i32`, so a naive 30-day `setTimeout`
+    /// fires at once. `sleep_async` chains legs instead. Polling it once and
+    /// finding it pending is the whole assertion — actually waiting is not an
+    /// option.
+    #[wasm_lite::wasm_lite_test]
+    fn a_very_long_sleep_does_not_fire_at_once() {
+        use std::future::Future;
+        use std::pin::Pin;
+        use std::task::{Context, Poll, Waker};
+
+        let mut long = Box::pin(wasm_lite_std::sleep_async(Duration::from_secs(
+            60 * 60 * 24 * 30,
+        )));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(
+            matches!(Pin::new(&mut long).poll(&mut cx), Poll::Pending),
+            "a 30-day sleep resolved immediately: the delay was truncated"
+        );
+    }
+
     /// Dropping a pending sleep cancels its timer rather than leaving a callback
     /// to fire into freed state.
     #[wasm_lite::wasm_lite_test]
