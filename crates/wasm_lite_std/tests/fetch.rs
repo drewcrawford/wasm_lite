@@ -182,6 +182,53 @@ mod suite {
         });
     }
 
+    #[wasm_lite::wasm_lite_test]
+    fn a_range_request_gets_partial_content() {
+        wasm_lite::set_panic_hook();
+        wasm_lite_std::async_doctest!(async {
+            let whole = fetch(SELF_WASM, &get())
+                .await
+                .expect("fetch failed")
+                .bytes()
+                .await
+                .expect("body");
+
+            let headers = Headers::new();
+            // HTTP range bounds are inclusive on both ends.
+            headers.set("Range", "bytes=16-47");
+            let init = get();
+            init.set_headers(&headers);
+
+            let response = fetch(SELF_WASM, &init).await.expect("fetch failed");
+            assert_eq!(response.status(), 206, "expected a partial response");
+            assert!(response.ok(), "206 is a success");
+            assert_eq!(
+                response.headers().get("content-range").as_deref(),
+                Some(format!("bytes 16-47/{}", whole.len()).as_str())
+            );
+
+            let part = response.bytes().await.expect("body");
+            assert_eq!(part, &whole[16..48], "the wrong 32 bytes came back");
+        });
+    }
+
+    #[wasm_lite::wasm_lite_test]
+    fn a_range_past_the_end_is_416() {
+        wasm_lite::set_panic_hook();
+        wasm_lite_std::async_doctest!(async {
+            let headers = Headers::new();
+            headers.set("Range", "bytes=999999999-1000000000");
+            let init = get();
+            init.set_headers(&headers);
+
+            let response = fetch(SELF_WASM, &init).await.expect("fetch failed");
+            // A reader walking a file sequentially runs off the end on its last
+            // request; 416 is how it learns to stop.
+            assert_eq!(response.status(), 416);
+            assert!(!response.ok());
+        });
+    }
+
     // --- streaming ----------------------------------------------------------
 
     #[wasm_lite::wasm_lite_test]

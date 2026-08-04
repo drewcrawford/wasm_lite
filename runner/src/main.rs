@@ -401,18 +401,50 @@ fn serve(listener: TcpListener, routes: &[Route]) -> ! {
 
 /// Handle a single HTTP request against the route table.
 fn handle(mut stream: TcpStream, routes: &[Route]) -> std::io::Result<()> {
-    let path = match read_request_target(&mut stream)? {
-        Some(path) => path,
+    let request = match read_request(&mut stream)? {
+        Some(request) => request,
         None => return Ok(()),
     };
 
-    match routes.iter().find(|r| r.path == path) {
-        Some(route) => respond(&mut stream, 200, route.content_type, &route.body),
-        None => match static_file(&path) {
-            Some((content_type, body)) => respond(&mut stream, 200, content_type, &body),
-            None => respond(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
-        },
+    // Generated routes first — nothing on disk may shadow `program.wasm` or
+    // the glue.
+    let found = match routes.iter().find(|r| r.path == request.path) {
+        Some(route) => Some((route.content_type, route.body.clone())),
+        None => static_file(&request.path),
+    };
+    let Some((content_type, body)) = found else {
+        return respond(
+            &mut stream,
+            404,
+            "text/plain; charset=utf-8",
+            b"not found",
+            &request,
+        );
+    };
+    let Some((start, end)) = request.range else {
+        return respond(&mut stream, 200, content_type, &body, &request);
+    };
+
+    // A range starting at or past the end is unsatisfiable. `async_file` reads
+    // this as end-of-file rather than as an error, which is what makes a
+    // sequential read terminate.
+    let len = body.len() as u64;
+    if start >= len {
+        return respond_range(&mut stream, 416, content_type, &[], None, len, &request);
     }
+    // `end` is inclusive, and a client may ask for more than there is — a read
+    // of the last kilobyte of a shorter file is normal, not an error.
+    let last = end.unwrap_or(len - 1).min(len - 1);
+    let slice = &body[start as usize..=last as usize];
+    respond_range(
+        &mut stream,
+        206,
+        content_type,
+        slice,
+        Some((start, last)),
+        len,
+        &request,
+    )
 }
 
 /// Serve a file from `WASM_LITE_SERVE_DIR`, if one is set and the path is in it.
@@ -482,24 +514,40 @@ fn content_type_for(path: &Path) -> &'static str {
     }
 }
 
-/// Read the request line and return its target path; drains remaining headers.
-fn read_request_target(stream: &mut TcpStream) -> std::io::Result<Option<String>> {
+/// What a request asked for: its target path, its method, and any byte range.
+struct Request {
+    path: String,
+    /// True for `HEAD`, whose response carries headers but no body.
+    head: bool,
+    /// The first byte-range of a `Range: bytes=…` header, as `(start, end)`
+    /// with `end` inclusive and `None` meaning "to the end of the resource".
+    range: Option<(u64, Option<u64>)>,
+}
+
+/// Read the request line and headers.
+fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
     let mut reader = BufReader::new(stream);
     let mut request_line = String::new();
     if reader.read_line(&mut request_line)? == 0 {
         return Ok(None);
     }
 
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("GET").to_string();
     // "GET /path?query HTTP/1.1" — match on the path, ignoring any query string.
-    let path = request_line.split_whitespace().nth(1).map(|target| {
+    let Some(path) = parts.next().map(|target| {
         target
             .split(['?', '#'])
             .next()
             .unwrap_or(target)
             .to_string()
-    });
+    }) else {
+        return Ok(None);
+    };
 
-    // Drain headers up to the blank line so the client is satisfied.
+    // Read headers up to the blank line, both to satisfy the client and to
+    // pick up `Range`.
+    let mut range = None;
     let mut header = String::new();
     loop {
         header.clear();
@@ -507,9 +555,46 @@ fn read_request_target(stream: &mut TcpStream) -> std::io::Result<Option<String>
         if n == 0 || header == "\r\n" || header == "\n" {
             break;
         }
+        if let Some(value) = header
+            .split_once(':')
+            .filter(|(name, _)| name.eq_ignore_ascii_case("range"))
+            .map(|(_, value)| value.trim())
+        {
+            range = parse_range(value);
+        }
     }
 
-    Ok(path)
+    Ok(Some(Request {
+        path,
+        head: method.eq_ignore_ascii_case("HEAD"),
+        range,
+    }))
+}
+
+/// Parse the first range of a `Range: bytes=start-end` header.
+///
+/// Only the single-range `bytes` form, which is what a `fetch` with a `Range`
+/// header sends. Multi-range requests (`bytes=0-9,20-29`) would need a
+/// multipart response body; a server that answered one with a single range
+/// would be lying about what it sent, so they are refused (`None`) and served
+/// whole instead.
+fn parse_range(value: &str) -> Option<(u64, Option<u64>)> {
+    let spec = value.strip_prefix("bytes=")?.trim();
+    if spec.contains(',') {
+        return None;
+    }
+    let (start, end) = spec.split_once('-')?;
+    // A suffix range (`bytes=-500`, the last 500 bytes) needs the resource
+    // length to resolve, which this parser does not have. Not needed by
+    // anything here, so it is refused rather than mis-resolved.
+    let start: u64 = start.trim().parse().ok()?;
+    let end = end.trim();
+    let end = if end.is_empty() {
+        None
+    } else {
+        Some(end.parse().ok()?)
+    };
+    Some((start, end))
 }
 
 /// Write a complete HTTP/1.1 response and close the connection.
@@ -518,11 +603,41 @@ fn respond(
     status: u16,
     content_type: &str,
     body: &[u8],
+    request: &Request,
+) -> std::io::Result<()> {
+    let len = body.len() as u64;
+    respond_range(stream, status, content_type, body, None, len, request)
+}
+
+/// As [`respond`], with the `Content-Range`/`Accept-Ranges` a partial response
+/// needs.
+///
+/// `content_range` is `(first, last)` of what is being sent, inclusive;
+/// `complete_len` is the length of the whole resource.
+fn respond_range(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+    content_range: Option<(u64, u64)>,
+    complete_len: u64,
+    request: &Request,
 ) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
+        206 => "Partial Content",
         404 => "Not Found",
+        416 => "Range Not Satisfiable",
         _ => "Unknown",
+    };
+    let range_header = match (status, content_range) {
+        (206, Some((first, last))) => {
+            format!("Content-Range: bytes {first}-{last}/{complete_len}\r\n")
+        }
+        // A 416 says what the resource's length actually is, so a client can
+        // retry with a range that exists.
+        (416, _) => format!("Content-Range: bytes */{complete_len}\r\n"),
+        _ => String::new(),
     };
     // Cross-origin isolation headers: browsers only expose `SharedArrayBuffer`
     // (and thus shared linear memory for `+atomics` builds) to isolated pages.
@@ -531,6 +646,8 @@ fn respond(
         "HTTP/1.1 {status} {reason}\r\n\
          Content-Type: {content_type}\r\n\
          Content-Length: {len}\r\n\
+         Accept-Ranges: bytes\r\n\
+         {range_header}\
          Cross-Origin-Opener-Policy: same-origin\r\n\
          Cross-Origin-Embedder-Policy: require-corp\r\n\
          Connection: close\r\n\
@@ -538,7 +655,13 @@ fn respond(
         len = body.len()
     );
     stream.write_all(header.as_bytes())?;
-    stream.write_all(body)?;
+    // A HEAD response carries the headers a GET would and no body — including
+    // the `Content-Length` the GET would have, which is the whole reason to
+    // send one. Writing the body anyway is what the runner used to do, and it
+    // desyncs a client that trusts the method.
+    if !request.head {
+        stream.write_all(body)?;
+    }
     stream.flush()
 }
 
