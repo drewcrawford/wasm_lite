@@ -5,6 +5,15 @@
 //!
 //! ![logo](https://github.com/drewcrawford/wasm_lite_std/raw/main/art/logo.png)
 //!
+//! # Scope
+//!
+//! This crate absorbs functionality that is **`std`-shaped** and whose **native
+//! implementation is a thin veneer over `std`** — that is the test for whether
+//! something belongs here rather than in a crate above. `std::thread` and
+//! `std::sync` qualified; `std::fs` would. A crate solving a problem `std` never
+//! addressed does not, even when this crate wants what it has. See
+//! [the absorption rule](https://github.com/drewcrawford/wasm_lite/blob/main/docs/roadmap.md#what-belongs-in-wasm_lite_std--the-absorption-rule).
+//!
 //! This crate provides a unified threading API and synchronization primitives that work across both
 //! WebAssembly and native platforms. In practice, you can treat it as a cross-platform replacement
 //! for much of `std::thread` plus key `std::sync` primitives. Unlike similar crates, it's designed

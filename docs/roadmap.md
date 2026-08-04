@@ -67,6 +67,41 @@ Bindings stay out of core so it remains small; `js_class!` is the primitive all
 upper layers build on (so its constructors + property get/set are the gate for
 `wasm_lite_js`/`wasm_lite_web`).
 
+### What belongs in `wasm_lite_std` — the absorption rule
+
+`wasm_lite_std` grew by absorbing crates (`wasm_safe_thread`, `wasm_safe_mutex`),
+and there is standing pressure to absorb more. The test that has held up:
+
+> **Absorb a crate when it is `std`-shaped *and* its native implementation is a
+> thin veneer over `std`.**
+
+Both halves matter. The first says the API has a `std` counterpart to be judged
+against; the second says the crate exists *because* `std` does not work on wasm —
+which is exactly `wasm_lite_std`'s remit — rather than because it is solving a
+problem `std` never addressed.
+
+| candidate | `std`-shaped? | native impl a `std` veneer? | verdict |
+|---|---|---|---|
+| `wasm_safe_thread`, `wasm_safe_mutex` | yes (`std::thread`, `std::sync`) | yes | **absorbed** |
+| [`async_file`](https://crates.io/crates/async_file) | yes (`std::fs`) | yes — wraps `std::fs` | **qualifies** |
+| [`send_cells`](https://crates.io/crates/send_cells) | **no** — `std` has no `SendCell` | n/a | **no** |
+
+`send_cells` is the instructive rejection. It is tempting, because
+`wasm_lite_std` wants a `Send` wrapper for `!Send` futures (`JsValue` is `!Send`
+by construction) and `send_cells` has one. But its thread-affinity problem is not
+a wasm problem: `app_window` uses `SendCell<HWND>` on Win32. Absorbing it would
+make Windows code depend on a wasm crate.
+
+Two corollaries worth stating, because both came up while deciding this:
+
+* **Reimplementing a two-line primitive beats depending upward.** Taking a
+  dependency to avoid duplicating `unsafe impl<T> Send for Cell<T> {}` costs a
+  feature split, publish-order coupling and a dev-cycle, to save something with no
+  behaviour to drift.
+* **Watch the arrow.** `send_cells` already depends on `wasm_lite_std`. A crate
+  that depends on you cannot become your dependency; if you need what it has,
+  own the primitive and let it consume yours later.
+
 ## Known gaps / roadmap
 
 Roughly in priority order. The threading/async/testing layer is complete and
