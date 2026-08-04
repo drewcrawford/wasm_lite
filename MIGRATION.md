@@ -309,6 +309,62 @@ see [`examples/doctest-demo/src/lib.rs`](./examples/doctest-demo/src/lib.rs); ca
 `wasm_lite::set_panic_hook()` at the top of a doctest so a failure reports its
 panic message.
 
+#### Porting an existing wasm-bindgen test suite
+
+Notes from doing this across eleven crates. The mechanical part is a
+substitution; these are the things that bite.
+
+**Match every spelling.** `#[wasm_bindgen_test]` appears at least four ways, and
+a sweep that catches three leaves a crate half-ported while looking finished:
+
+```rust
+#[wasm_bindgen_test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[wasm_bindgen_test::wasm_bindgen_test]          // fully qualified, bare
+```
+
+**Look in `tests/` and `benches/`, not just `src/`.** Obvious in hindsight; easy
+to miss when the interesting tests are unit tests.
+
+**Pick the crate list from the right question.** If you are also migrating
+threading or the clock, the "crates that use `wasm_safe_thread`" list is *not*
+the same as the "crates that use `wasm_bindgen_test`" list. A crate can have
+neither threads nor a clock and still be full of test annotations.
+
+**`async fn` tests need a different shape.** `#[wasm_lite_test]` refuses them on
+purpose — an unpolled future is a test that cannot fail — so the body becomes a
+sync entry point handing the future to `async_doctest!`:
+
+```rust
+#[wasm_lite::wasm_lite_test]
+fn my_test() {
+    wasm_lite_std::async_doctest!(async { /* … */ });
+}
+```
+
+If a native `main` also drives that `async fn`, keep the async fn and add a
+*separate* wasm entry point rather than changing its shape for both targets.
+
+**Deleting `wasm_bindgen_test_configure!` can leave a dangling `#[cfg]`.** The
+line is often guarded by `#[cfg(target_arch = "wasm32")]`; remove the call and
+that attribute silently applies to whatever follows — usually the next test,
+which then exists *only* on wasm. A cfg'd-out test is absent, not skipped, so
+nothing reports it. Check your native test count before and after.
+
+**There is no `run_in_dedicated_worker` equivalent, and you may not need one.**
+wasm_lite's runner always drives a real browser, so `run_in_browser` just goes
+away. For a *doctest* that blocks (`join`, `park`, `recv_block`), use
+`worker_doctest!`; for a test, `#[wasm_lite_test(worker)]`.
+
+**A crate whose dev-dependency depends back on it must patch itself.** Otherwise
+the dev-cycle resolves to the *published* copy and the two disagree about types:
+
+```toml
+[patch.crates-io]
+my_crate = { path = "." }
+```
+
 ### Threads
 
 There is no threading in wasm-bindgen proper; the usual answer is `wasm_thread`
