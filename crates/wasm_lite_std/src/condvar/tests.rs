@@ -127,41 +127,41 @@ fn test_condvar_wait_sync() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_condvar_wait_async() {
     crate::blocking_async_test_body!(async {
-    let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    let pair_clone = Arc::clone(&pair);
+        let pair = Arc::new((Mutex::new(false), Condvar::new()));
+        let pair_clone = Arc::clone(&pair);
 
-    let (c, r) = continuation();
-    thread::spawn(move || {
-        #[cfg(not(target_arch = "wasm32"))]
-        thread::sleep(Duration::from_millis(10));
+        let (c, r) = continuation();
+        thread::spawn(move || {
+            #[cfg(not(target_arch = "wasm32"))]
+            thread::sleep(Duration::from_millis(10));
 
-        crate::test_executor::spawn(async move {
-            let (mutex, condvar) = &*pair_clone;
-            let mut ready = mutex.lock_async().await;
-            *ready = true;
-            drop(ready);
-            condvar.notify_one();
+            crate::test_executor::spawn(async move {
+                let (mutex, condvar) = &*pair_clone;
+                let mut ready = mutex.lock_async().await;
+                *ready = true;
+                drop(ready);
+                condvar.notify_one();
+            });
+            c.send(()).unwrap();
         });
-        c.send(()).unwrap();
-    });
 
-    // Move the async waiting into a worker thread
-    let (c2, r2) = continuation();
-    thread::spawn(move || {
-        crate::test_executor::spawn(async move {
-            let (mutex, condvar) = &*pair;
-            let mut ready = mutex.lock_async().await;
-            while !*ready {
-                ready = condvar.wait_async(ready).await;
-            }
-            assert!(*ready);
+        // Move the async waiting into a worker thread
+        let (c2, r2) = continuation();
+        thread::spawn(move || {
+            crate::test_executor::spawn(async move {
+                let (mutex, condvar) = &*pair;
+                let mut ready = mutex.lock_async().await;
+                while !*ready {
+                    ready = condvar.wait_async(ready).await;
+                }
+                assert!(*ready);
+            });
+            c2.send(()).unwrap();
         });
-        c2.send(()).unwrap();
-    });
 
-    r.recv().unwrap();
-    r2.recv().unwrap();
-});
+        r.recv().unwrap();
+        r2.recv().unwrap();
+    });
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
@@ -344,32 +344,32 @@ fn test_condvar_wait_sync_while() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_condvar_wait_async_while() {
     crate::async_test_body!(async {
-    let pair = Arc::new((Mutex::new(0), Condvar::new()));
-    let pair_clone = Arc::clone(&pair);
+        let pair = Arc::new((Mutex::new(0), Condvar::new()));
+        let pair_clone = Arc::clone(&pair);
 
-    let (c, r) = continuation();
-    thread::spawn(move || {
-        #[cfg(not(target_arch = "wasm32"))]
-        thread::sleep(Duration::from_millis(10));
+        let (c, r) = continuation();
+        thread::spawn(move || {
+            #[cfg(not(target_arch = "wasm32"))]
+            thread::sleep(Duration::from_millis(10));
 
-        crate::test_executor::spawn(async move {
-            let (mutex, condvar) = &*pair_clone;
-            let mut value = mutex.lock_async().await;
-            *value = 1;
-            drop(value);
-            condvar.notify_one();
-            c.send(()).unwrap();
+            crate::test_executor::spawn(async move {
+                let (mutex, condvar) = &*pair_clone;
+                let mut value = mutex.lock_async().await;
+                *value = 1;
+                drop(value);
+                condvar.notify_one();
+                c.send(()).unwrap();
+            });
         });
+
+        let (mutex, condvar) = &*pair;
+        let guard = mutex.lock_async().await;
+        let guard = condvar.wait_async_while(guard, |value| *value == 0).await;
+        assert_eq!(*guard, 1);
+        drop(guard);
+
+        r.recv().unwrap();
     });
-
-    let (mutex, condvar) = &*pair;
-    let guard = mutex.lock_async().await;
-    let guard = condvar.wait_async_while(guard, |value| *value == 0).await;
-    assert_eq!(*guard, 1);
-    drop(guard);
-
-    r.recv().unwrap();
-});
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
@@ -524,105 +524,105 @@ fn test_condvar_wait_timeout_dispatch() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_condvar_wait_async_timeout() {
     crate::async_test_body!(async {
-    let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    let (mutex, condvar) = &*pair;
+        let pair = Arc::new((Mutex::new(false), Condvar::new()));
+        let (mutex, condvar) = &*pair;
 
-    let mut ready = mutex.lock_async().await;
-    let deadline = Instant::now() + Duration::from_millis(50);
-    let result;
-    (ready, result) = condvar.wait_async_timeout(ready, deadline).await;
-    assert!(result.timed_out());
-    assert!(!*ready);
-});
+        let mut ready = mutex.lock_async().await;
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let result;
+        (ready, result) = condvar.wait_async_timeout(ready, deadline).await;
+        assert!(result.timed_out());
+        assert!(!*ready);
+    });
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_condvar_wait_async_timeout_notified() {
     crate::blocking_async_test_body!(async {
-    let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    let pair_clone = Arc::clone(&pair);
+        let pair = Arc::new((Mutex::new(false), Condvar::new()));
+        let pair_clone = Arc::clone(&pair);
 
-    let (c, r) = continuation();
-    thread::spawn(move || {
-        #[cfg(not(target_arch = "wasm32"))]
-        thread::sleep(Duration::from_millis(50));
+        let (c, r) = continuation();
+        thread::spawn(move || {
+            #[cfg(not(target_arch = "wasm32"))]
+            thread::sleep(Duration::from_millis(50));
 
-        crate::test_executor::spawn(async move {
-            let (mutex, condvar) = &*pair_clone;
-            let mut ready = mutex.lock_async().await;
-            *ready = true;
-            drop(ready);
-            condvar.notify_one();
+            crate::test_executor::spawn(async move {
+                let (mutex, condvar) = &*pair_clone;
+                let mut ready = mutex.lock_async().await;
+                *ready = true;
+                drop(ready);
+                condvar.notify_one();
+            });
+            c.send(()).unwrap();
         });
-        c.send(()).unwrap();
-    });
 
-    let pair_clone2 = Arc::clone(&pair);
-    let (c2, r2) = continuation();
-    thread::spawn(move || {
-        crate::test_executor::spawn(async move {
-            let (mutex, condvar) = &*pair_clone2;
-            let mut ready = mutex.lock_async().await;
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !*ready {
-                let result;
-                (ready, result) = condvar.wait_async_timeout(ready, deadline).await;
-                if result.timed_out() {
-                    panic!("Should not have timed out. Ready is still false.");
+        let pair_clone2 = Arc::clone(&pair);
+        let (c2, r2) = continuation();
+        thread::spawn(move || {
+            crate::test_executor::spawn(async move {
+                let (mutex, condvar) = &*pair_clone2;
+                let mut ready = mutex.lock_async().await;
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !*ready {
+                    let result;
+                    (ready, result) = condvar.wait_async_timeout(ready, deadline).await;
+                    if result.timed_out() {
+                        panic!("Should not have timed out. Ready is still false.");
+                    }
                 }
-            }
-            assert!(*ready);
+                assert!(*ready);
+            });
+            c2.send(()).unwrap();
         });
-        c2.send(()).unwrap();
-    });
 
-    r.recv().unwrap();
-    r2.recv().unwrap();
-});
+        r.recv().unwrap();
+        r2.recv().unwrap();
+    });
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_condvar_wait_async_timeout_while() {
     crate::blocking_async_test_body!(async {
-    let pair = Arc::new((Mutex::new(0), Condvar::new()));
-    let pair_clone = Arc::clone(&pair);
+        let pair = Arc::new((Mutex::new(0), Condvar::new()));
+        let pair_clone = Arc::clone(&pair);
 
-    let (c, r) = continuation();
-    thread::spawn(move || {
-        #[cfg(not(target_arch = "wasm32"))]
-        thread::sleep(Duration::from_millis(50));
+        let (c, r) = continuation();
+        thread::spawn(move || {
+            #[cfg(not(target_arch = "wasm32"))]
+            thread::sleep(Duration::from_millis(50));
 
-        crate::test_executor::spawn(async move {
-            let (mutex, condvar) = &*pair_clone;
-            let mut value = mutex.lock_async().await;
-            *value = 10;
-            drop(value);
-            condvar.notify_one();
+            crate::test_executor::spawn(async move {
+                let (mutex, condvar) = &*pair_clone;
+                let mut value = mutex.lock_async().await;
+                *value = 10;
+                drop(value);
+                condvar.notify_one();
+            });
+            c.send(()).unwrap();
         });
-        c.send(()).unwrap();
-    });
 
-    let pair_clone2 = Arc::clone(&pair);
-    let (c2, r2) = continuation();
-    thread::spawn(move || {
-        crate::test_executor::spawn(async move {
-            let (mutex, condvar) = &*pair_clone2;
-            let guard = mutex.lock_async().await;
-            let deadline = Instant::now() + Duration::from_secs(5);
-            let (guard, result) = condvar
-                .wait_async_timeout_while(guard, deadline, |value| *value < 10)
-                .await;
-            assert!(!result.timed_out());
-            assert_eq!(*guard, 10);
+        let pair_clone2 = Arc::clone(&pair);
+        let (c2, r2) = continuation();
+        thread::spawn(move || {
+            crate::test_executor::spawn(async move {
+                let (mutex, condvar) = &*pair_clone2;
+                let guard = mutex.lock_async().await;
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let (guard, result) = condvar
+                    .wait_async_timeout_while(guard, deadline, |value| *value < 10)
+                    .await;
+                assert!(!result.timed_out());
+                assert_eq!(*guard, 10);
+            });
+            c2.send(()).unwrap();
         });
-        c2.send(()).unwrap();
-    });
 
-    r.recv().unwrap();
-    r2.recv().unwrap();
-});
+        r.recv().unwrap();
+        r2.recv().unwrap();
+    });
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]

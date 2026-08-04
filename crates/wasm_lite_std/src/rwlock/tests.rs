@@ -87,14 +87,14 @@ fn test_lock_block() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_async() {
     crate::async_test_body!(async {
-    let mutex = Arc::new(RwLock::new(0));
-    let lock = mutex.lock_async_read().await;
-    assert_eq!(lock.deref(), &0);
-    drop(lock);
-    let lock = mutex.lock_async_write().await;
-    assert_eq!(lock.deref(), &0);
-    drop(lock);
-});
+        let mutex = Arc::new(RwLock::new(0));
+        let lock = mutex.lock_async_read().await;
+        assert_eq!(lock.deref(), &0);
+        drop(lock);
+        let lock = mutex.lock_async_write().await;
+        assert_eq!(lock.deref(), &0);
+        drop(lock);
+    });
 }
 
 #[test]

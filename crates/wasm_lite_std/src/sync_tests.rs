@@ -151,7 +151,7 @@ fn test_mutex_concurrent_increment() {
 #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_mutex_lock_async() {
-        crate::async_test_body!(async {
+    crate::async_test_body!(async {
         let mutex = Mutex::new(42);
         let guard = mutex.lock_async().await;
         assert_eq!(*guard, 42);
@@ -161,7 +161,7 @@ fn test_mutex_lock_async() {
 #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_mutex_async_contention() {
-        crate::async_test_body!(async {
+    crate::async_test_body!(async {
         let mutex = Arc::new(Mutex::new(0));
 
         let mutex1 = Arc::clone(&mutex);
@@ -340,38 +340,38 @@ fn test_mutex_lock_sync_timeout() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_mutex_lock_async_timeout() {
     crate::blocking_async_test_body!(async {
-    let mutex = Arc::new(Mutex::new(0));
+        let mutex = Arc::new(Mutex::new(0));
 
-    // Test success
-    let deadline = Instant::now() + Duration::from_secs(1);
-    if let Some(guard) = mutex.lock_async_timeout(deadline).await {
-        assert_eq!(*guard, 0);
-    } else {
-        panic!("Failed to acquire free lock");
-    }
+        // Test success
+        let deadline = Instant::now() + Duration::from_secs(1);
+        if let Some(guard) = mutex.lock_async_timeout(deadline).await {
+            assert_eq!(*guard, 0);
+        } else {
+            panic!("Failed to acquire free lock");
+        }
 
-    let mutex_clone = Arc::clone(&mutex);
-    // Lock it in another task
-    let (c, r) = continuation();
+        let mutex_clone = Arc::clone(&mutex);
+        // Lock it in another task
+        let (c, r) = continuation();
 
-    // Spawn a thread to hold the lock, because async tasks on same executor might not run in parallel if we block
-    thread::spawn(move || {
-        crate::test_executor::spawn(async move {
-            let _guard = mutex_clone.lock_async().await;
-            c.send(()).unwrap();
-            // Hold it
-            let start = Instant::now();
-            while start.elapsed() < Duration::from_millis(500) {
-                std::hint::spin_loop();
-            }
+        // Spawn a thread to hold the lock, because async tasks on same executor might not run in parallel if we block
+        thread::spawn(move || {
+            crate::test_executor::spawn(async move {
+                let _guard = mutex_clone.lock_async().await;
+                c.send(()).unwrap();
+                // Hold it
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_millis(500) {
+                    std::hint::spin_loop();
+                }
+            });
         });
+
+        r.recv().unwrap();
+
+        // Try to acquire with short timeout
+        let deadline = Instant::now() + Duration::from_millis(10);
+        let result = mutex.lock_async_timeout(deadline).await;
+        assert!(result.is_none());
     });
-
-    r.recv().unwrap();
-
-    // Try to acquire with short timeout
-    let deadline = Instant::now() + Duration::from_millis(10);
-    let result = mutex.lock_async_timeout(deadline).await;
-    assert!(result.is_none());
-});
 }
