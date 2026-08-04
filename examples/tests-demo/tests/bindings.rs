@@ -740,4 +740,52 @@ fn wide_integers_round_trip_exactly() {
     );
 }
 
+/// `JsValue`'s own rendering — `Display`, and the `to_js_string` behind it.
+///
+/// The local `render` binding above proves the call shape; this proves the
+/// crate ships it, which is what an error path needs to be legible.
+#[wasm_lite_test]
+fn display_renders_the_value() {
+    assert_eq!(JsValue::from_f64(1.5).to_js_string(), "1.5");
+    assert_eq!(JsValue::from_str("hello").to_js_string(), "hello");
+    assert_eq!(JsValue::UNDEFINED.to_js_string(), "undefined");
+    assert_eq!(JsValue::NULL.to_js_string(), "null");
+    assert_eq!(format!("{}", JsValue::TRUE), "true");
+
+    // A Symbol is *not* the exception people expect: `String(sym)` is the one
+    // conversion the spec allows (`"" + sym` is the one that throws).
+    let symbol = symbol_for("s");
+    assert!(symbol.is_symbol());
+    assert_eq!(symbol.to_js_string(), "Symbol(s)");
+
+    // The case the fallback exists for: an object with no prototype has no
+    // `toString`, so converting it throws. This is reached from error paths,
+    // where a trap is least welcome.
+    let bare = object_create(&JsValue::NULL);
+    assert_eq!(
+        bare.to_js_string(),
+        "[JS value whose String() conversion threw]"
+    );
+
+    // An Error renders as its message, which is the whole point.
+    let err = new_type_error("boom");
+    assert_eq!(err.to_js_string(), "TypeError: boom");
+}
+
+wasm_lite::import! {
+    "Symbol" {
+        /// `Symbol.for(key)`.
+        fn symbol_for(key: &str) -> JsValue as "for";
+    }
+    "Object" {
+        /// `Object.create(proto)` — with a `null` proto, an object that cannot
+        /// be converted to a string.
+        fn object_create(proto: &JsValue) -> JsValue as "create";
+    }
+    "TypeError" {
+        #[constructor]
+        fn new_type_error(message: &str) -> JsValue as "TypeError";
+    }
+}
+
 wasm_lite::test_main!();

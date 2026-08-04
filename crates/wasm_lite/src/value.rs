@@ -264,6 +264,51 @@ mod __array {
     }
 }
 
+mod __to_string {
+    use super::JsValue;
+    crate::import! {
+        "globalThis" {
+            /// `String(v)` — JS's own value-to-text conversion.
+            ///
+            /// Fallible because it is not total: an object with a throwing
+            /// `toString`, or none at all (`Object.create(null)`), throws here.
+            /// This is reached from error paths, which is exactly where a trap
+            /// is least welcome.
+            fn to_js_string(v: &JsValue) -> Result<String, JsValue> as "String";
+        }
+    }
+}
+
+impl JsValue {
+    /// The text JS would produce for this value — `String(v)`.
+    ///
+    /// This is what makes a rejected promise legible: a `TypeError` renders as
+    /// `"TypeError: NetworkError when attempting to fetch resource."` rather
+    /// than as a table index. [`as_string`](Self::as_string), by contrast,
+    /// reads a value that *already is* a string and answers `None` for
+    /// anything else.
+    ///
+    /// Never fails: a value whose conversion throws — an object with a
+    /// throwing `toString`, or none at all — reports that instead of trapping.
+    /// A `Symbol` is *not* such a case; `String(sym)` is the one conversion the
+    /// spec permits for one.
+    pub fn to_js_string(&self) -> String {
+        __to_string::to_js_string(self)
+            .unwrap_or_else(|_| "[JS value whose String() conversion threw]".to_string())
+    }
+}
+
+/// The JS text of the value, via [`JsValue::to_js_string`].
+///
+/// `Debug` stays the handle's identity (its table index), because that is the
+/// question a `{:?}` in this crate's own plumbing is asking. `Display` is the
+/// one for a message a human reads.
+impl fmt::Display for JsValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.to_js_string())
+    }
+}
+
 /// A type that wraps a [`JsValue`] handle.
 ///
 /// Its purpose is the blanket `From<&T>` below. A binding layer built on top of
