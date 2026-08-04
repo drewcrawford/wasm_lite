@@ -40,4 +40,22 @@ fn allocate_a_vec(b: &mut Bencher) {
     });
 }
 
+/// An async benchmark that times itself.
+///
+/// `iter_custom_async` exists for work that cannot be driven synchronously —
+/// a `requestAnimationFrame` loop, an awaited GPU submission — and for work
+/// whose setup should be excluded from the measurement. The routine gets the
+/// iteration count and reports the duration it measured.
+#[wasm_lite_bench]
+async fn awaited_yield(b: &mut Bencher) {
+    b.iter_custom_async(|iters| async move {
+        let start = wasm_lite_std::time::Instant::now();
+        for _ in 0..iters {
+            wasm_lite_std::yield_to_event_loop_async().await;
+        }
+        start.elapsed()
+    })
+    .await;
+}
+
 wasm_lite::bench_main!();

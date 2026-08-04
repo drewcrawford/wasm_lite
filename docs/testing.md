@@ -274,6 +274,39 @@ throughput and cannot see per-iteration variance below the batch. It is the
 right tool for "did this change make it faster" and the wrong one for tail
 latency.
 
+### Async benchmarks
+
+Some work cannot be driven synchronously at all — a `requestAnimationFrame`
+loop, an awaited GPU submission — and some work has setup that should not be in
+the measurement. `iter_custom_async` covers both: the routine is handed the
+iteration count, runs them itself, and returns **the duration it measured**.
+
+```rust
+#[wasm_lite_bench]
+async fn awaited_yield(b: &mut Bencher) {
+    b.iter_custom_async(|iters| async move {
+        let start = wasm_lite_std::time::Instant::now();
+        for _ in 0..iters {
+            wasm_lite_std::yield_to_event_loop_async().await;
+        }
+        start.elapsed()
+    }).await;
+}
+```
+
+Calibration and sampling follow the same policy as `iter`; only the measurement
+is delegated. The reported duration is trusted as given — a routine that returns
+something unrelated to the work it did will be believed, which is the price of
+letting it exclude setup.
+
+An `async` benchmark defers its verdict rather than reporting when the entry
+point returns, so a body that never completes fails via the runner's timeout
+instead of publishing whatever the result exports happened to hold. The
+fail-closed rule is unchanged: an async benchmark that never calls
+`iter_custom_async` still **fails**.
+
+Note this needs `wasm_lite_std`, and so nightly plus an `+atomics` build.
+
 ### Benchmarks in CI
 
 `cargo bench` measures; `cargo test --benches` runs each benchmark exactly once

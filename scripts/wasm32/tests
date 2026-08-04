@@ -25,8 +25,11 @@ echo "testing examples/tests-demo binding kinds"
 echo "testing examples/tests-demo closures"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test closures)
 
+# Nightly + atomics because the async benchmark uses wasm_lite_std, which needs
+# shared memory. Unmeasured: a timing taken while the rest of the suite competes
+# for the same cores is worse than none, because it looks like data.
 echo "running examples/bench-demo benchmarks (unmeasured: CI timings are noise)"
-(cd examples/bench-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --benches)
+(cd examples/bench-demo && RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" cargo +nightly test --target wasm32-unknown-unknown -Z build-std=std,panic_abort --benches)
 
 echo "testing shims_wasm_bindgen/consumer-demo (depends only on the shim)"
 (cd shims_wasm_bindgen/consumer-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test bindings)

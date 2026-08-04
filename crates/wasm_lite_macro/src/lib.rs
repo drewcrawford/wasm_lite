@@ -169,20 +169,12 @@ pub fn wasm_lite_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
     let krate = &args.krate;
     let func = parse_macro_input!(item as ItemFn);
 
-    // Fail closed, for the same reasons `#[wasm_lite_test]` does: an `async fn`
-    // body would be dropped unpolled (measuring nothing), and a return value
-    // would be discarded. Both would report a passing benchmark that never ran.
-    if let Some(asyncness) = &func.sig.asyncness {
-        return Error::new_spanned(
-            asyncness,
-            "#[wasm_lite_bench] does not support `async fn`: the future would be \
-             dropped without being polled, so the benchmark would measure only \
-             the cost of constructing it. Drive the future to completion inside \
-             the `iter` body instead.",
-        )
-        .to_compile_error()
-        .into();
-    }
+    // An `async fn` benchmark is supported, but it cannot be *called* like a sync
+    // one — awaiting is the whole point, and a future dropped unpolled would
+    // measure nothing while reporting success. The async arm below therefore
+    // spawns it on the event loop and defers the verdict, exactly as
+    // `async_doctest!` does for tests.
+    let is_async = func.sig.asyncness.is_some();
     if let ReturnType::Type(_, ty) = &func.sig.output
         && !matches!(ty.as_ref(), Type::Tuple(t) if t.elems.is_empty())
     {
@@ -209,6 +201,28 @@ pub fn wasm_lite_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
     let name = &func.sig.ident;
     let entry = format_ident!("__wl_bench_{}", name);
 
+    // A sync benchmark measures and records inline. An async one marks the run
+    // pending, drives the body on the event loop, records when it settles, and
+    // only then passes — so "never completed" fails via the runner's timeout
+    // instead of reporting whatever the exports happened to hold.
+    let body = if is_async {
+        quote! {
+            ::wasm_lite_std::__rt::test_pending();
+            ::wasm_lite_std::spawn_local(async {
+                let mut __wl_b = #krate::Bencher::new();
+                #name(&mut __wl_b).await;
+                __wl_b.__wl_record();
+                ::wasm_lite_std::__rt::test_pass();
+            });
+        }
+    } else {
+        quote! {
+            let mut __wl_b = #krate::Bencher::new();
+            #name(&mut __wl_b);
+            __wl_b.__wl_record();
+        }
+    };
+
     quote! {
         #func
         #[unsafe(export_name = concat!("__wl_bench_", module_path!(), "::", stringify!(#name)))]
@@ -217,9 +231,7 @@ pub fn wasm_lite_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
             // message the runner can report, rather than a bare trap.
             #[cfg(target_arch = "wasm32")]
             #krate::set_panic_hook();
-            let mut __wl_b = #krate::Bencher::new();
-            #name(&mut __wl_b);
-            __wl_b.__wl_record();
+            #body
         }
         const _: () = {
             const __WL_BENCH_NAME_LEN: usize = concat!(module_path!(), "::", stringify!(#name), "\n").len();

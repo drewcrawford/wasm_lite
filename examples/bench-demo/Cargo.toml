@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 wasm_lite = { path = "../../crates/wasm_lite" }
+wasm_lite_std = { path = "../../crates/wasm_lite_std" }
 
 # `harness = false` for the same reason a test target needs it: libtest's own
 # bench harness would otherwise own `main`, and the runner drives each

@@ -121,17 +121,53 @@ impl Bencher {
         let mut samples = Vec::with_capacity(SAMPLES);
         for _ in 0..SAMPLES {
             let ms = time_batch(iters, &mut f);
-            // ms → ns, divided across the batch.
-            samples.push(ms * 1.0e6 / iters as f64);
+            samples.push(ms);
         }
-        samples.sort_by(|a, b| a.partial_cmp(b).expect("timings are never NaN"));
+        self.result = Some(summarize(iters, samples));
+    }
 
-        self.result = Some(Report {
-            iters,
-            median_ns: samples[samples.len() / 2],
-            min_ns: samples[0],
-            max_ns: samples[samples.len() - 1],
-        });
+    /// Measure an **async** body that times itself.
+    ///
+    /// `routine` is handed the iteration count, runs that many iterations, and
+    /// returns the time *it* measured. Two things this buys that
+    /// [`iter`](Bencher::iter) cannot:
+    ///
+    /// * **async** — a `requestAnimationFrame` benchmark cannot be driven
+    ///   synchronously at all; the callback only fires when the event loop
+    ///   turns.
+    /// * **custom timing** — setup inside the loop can be excluded, because the
+    ///   routine decides what the clock covers rather than the harness timing
+    ///   around it.
+    ///
+    /// Calibration and sampling follow exactly the same policy as `iter`
+    /// ([`CALIBRATION_MS`], [`SAMPLES`]); only the measurement is delegated.
+    ///
+    /// The reported duration is trusted as given. A routine that returns
+    /// something unrelated to the work it did will be believed — that is the
+    /// price of letting it exclude setup.
+    pub async fn iter_custom_async<R, Fut>(&mut self, mut routine: R)
+    where
+        R: FnMut(u64) -> Fut,
+        Fut: core::future::Future<Output = std::time::Duration>,
+    {
+        // Calibrate: grow until one round clears CALIBRATION_MS.
+        let mut n: u64 = 1;
+        let mut ms = routine(n).await.as_secs_f64() * 1000.0;
+        while ms < CALIBRATION_MS && n < MAX_ITERS {
+            let grow = if ms > 0.0 {
+                (CALIBRATION_MS / ms).ceil() as u64
+            } else {
+                16
+            };
+            n = n.saturating_mul(grow.clamp(2, 64)).min(MAX_ITERS);
+            ms = routine(n).await.as_secs_f64() * 1000.0;
+        }
+
+        let mut samples = Vec::with_capacity(SAMPLES);
+        for _ in 0..SAMPLES {
+            samples.push(routine(n).await.as_secs_f64() * 1000.0);
+        }
+        self.result = Some(summarize(n, samples));
     }
 
     /// Publish the measurement where the runner can read it.
@@ -201,6 +237,21 @@ pub extern "C" fn __wl_bench_max_ns() -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn __wl_bench_iters() -> f64 {
     LAST.with(|c| c.get().iters as f64)
+}
+
+/// Turn per-round millisecond timings into the reported ns/iter figures.
+///
+/// Shared by the sync and async paths so the two cannot disagree about what
+/// "median" and `+/-` mean.
+fn summarize(iters: u64, mut samples_ms: Vec<f64>) -> Report {
+    samples_ms.sort_by(|a, b| a.partial_cmp(b).expect("timings are never NaN"));
+    let per_iter = |ms: f64| ms * 1.0e6 / iters as f64;
+    Report {
+        iters,
+        median_ns: per_iter(samples_ms[samples_ms.len() / 2]),
+        min_ns: per_iter(samples_ms[0]),
+        max_ns: per_iter(samples_ms[samples_ms.len() - 1]),
+    }
 }
 
 /// Choose a batch size whose timed duration clears [`CALIBRATION_MS`].

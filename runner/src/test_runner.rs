@@ -557,13 +557,26 @@ const bench = params.get("bench");
 try {
     const instance = await instantiate("/program.wasm");
     if (bench !== null) {
+        const read = () => {
+            globalThis.__wl_bench = [
+                instance.exports.__wl_bench_median_ns(),
+                instance.exports.__wl_bench_min_ns(),
+                instance.exports.__wl_bench_max_ns(),
+                instance.exports.__wl_bench_iters(),
+            ].join(",");
+        };
         instance.exports["__wl_bench_" + bench]();
-        globalThis.__wl_bench = [
-            instance.exports.__wl_bench_median_ns(),
-            instance.exports.__wl_bench_min_ns(),
-            instance.exports.__wl_bench_max_ns(),
-            instance.exports.__wl_bench_iters(),
-        ].join(",");
+        // An async benchmark has not measured anything yet when its entry point
+        // returns — it marked the run pending and spawned the body. Reading the
+        // exports now would capture zeros. Wait for the verdict, then read.
+        if (globalThis.__wl_async_pending) {
+            while (!globalThis.__wl_done) {
+                await new Promise(r => setTimeout(r, 10));
+            }
+            read();
+        } else {
+            read();
+        }
     } else {
         instance.exports["__wl_test_" + test]();
     }
