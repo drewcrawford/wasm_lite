@@ -62,9 +62,11 @@ Following the wasm-bindgen ecosystem split (language vs browser):
 * `wasm_lite_js` *(future)* — ECMAScript built-ins (`Object`, `Array`, `Map`,
   `JSON`, `Date`, …) bound with `js_class!`. *Like `js-sys`.*
 * `wasm_lite_web` *(future)* — Web/host APIs (DOM, `fetch`, …). *Like `web-sys`.*
-  **`fetch` landed first, in core** (`wasm_lite::fetch`), because a consumer
-  needed it before the split was worth doing. It moves here when the crate
-  exists; nothing about its API depends on where it lives.
+  **Three of these landed in core first** — `wasm_lite::fetch`,
+  `::websocket` and `::dom` — because consumers needed them before the split was
+  worth doing. They move here when the crate exists; nothing about their APIs
+  depends on where they live. Between them they were enough to take `async_file`,
+  `exfiltrate` and `app_window` off web-sys entirely.
 
 Bindings stay out of core so it remains small; `js_class!` is the primitive all
 upper layers build on (so its constructors + property get/set are the gate for
@@ -143,9 +145,10 @@ browser-validated; the next frontier is the binding crates. Items marked
   plus owned-object args and `instanceof`-checked downcasting — each a new codegen
   shim kind. The prerequisite for `wasm_lite_js`/`wasm_lite_web`.
 * **`wasm_lite_js` / `wasm_lite_web`** — the binding crates (ECMAScript built-ins,
-  then DOM/host APIs), gated on the `js_class!` work above. Note `wasm_lite::fetch`
-  did **not** need it: `import!`'s `#[constructor]`/`#[getter]`/`#[setter]` cover
-  a real binding surface today, with a hand-written newtype per class. What
+  then DOM/host APIs), gated on the `js_class!` work above. Note that `fetch`,
+  `websocket` and `dom` did **not** need it: `import!`'s
+  `#[constructor]`/`#[getter]`/`#[setter]` cover a real binding surface today,
+  with a hand-written newtype per class (the shared `js_handle!` macro). What
   `js_class!` would remove is the boilerplate, not a capability.
 * **Entropy (`crypto.getRandomValues`)** — a wasm-bindgen-free `getrandom` backend.
   Today the `getrandom`/`rand`/`uuid` ecosystem needs `getrandom`'s `js` feature,

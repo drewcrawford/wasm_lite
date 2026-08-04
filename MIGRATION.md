@@ -14,8 +14,9 @@ you will actually hit.
 > a binding's ABI in a custom wasm section, then generate JS glue from the
 > compiled module — but it is **not** a drop-in replacement and it does **not**
 > yet have the broad binding ecosystem (`js-sys`/`web-sys`). It *does* have
-> Promise interop ([`JsFuture`]) and closures-into-JS ([`Closure`]), and a
-> `fetch` binding built on both. Zero runtime dependencies are part of the
+> Promise interop ([`JsFuture`]), closures-into-JS ([`Closure`]), and `fetch`,
+> `websocket` and `dom` bindings built on both — enough to take three real
+> crates off web-sys entirely. Zero runtime dependencies are part of the
 > implementation discipline, not the whole pitch.
 >
 > [`JsFuture`]: https://docs.rs/wasm_lite/latest/wasm_lite/struct.JsFuture.html
@@ -87,7 +88,7 @@ honest version.
 | | Status in wasm_lite |
 |---|---|
 | **`js-sys` (ECMAScript built-ins)** | **Not yet.** Planned as `wasm_lite_js`, gated on `js_class!` constructors + property accessors. You bind what you need by hand with `import!`/`js_class!`. |
-| **`web-sys` (DOM, `WebGL`, …)** | **Mostly not yet.** Planned as `wasm_lite_web`; hand-bind for now. The exception is **`fetch`**, which ships as `wasm_lite::fetch` (Fetch + the response-body slice of Streams). |
+| **`web-sys` (DOM, `WebGL`, …)** | **Partly.** `wasm_lite::fetch` (Fetch + the response-body slice of Streams), `wasm_lite::websocket`, and `wasm_lite::dom` (window, document, elements, CSS, mouse/wheel/keyboard events) all ship. Everything else is hand-bound with `import!`; `wasm_lite_web` will collect them. |
 | **Awaiting a JS `Promise` from Rust** (`JsFuture`, `wasm-bindgen-futures`) | **Supported.** `wasm_lite::JsFuture::new(&promise).await` yields `Result<JsValue, JsValue>`. Needs an executor to drive it — on wasm that is `wasm_lite_std::spawn_local`. |
 | **Passing a Rust closure to JS as a callback** (`Closure<dyn FnMut(...)>`) | **Supported.** `wasm_lite::Closure` in four shapes (nullary, one-arg, variadic, variadic-fallible). JS holds an id into a thread-local registry, so a listener outliving its `Closure` no-ops rather than reading freed memory. |
 | **Rich type marshalling** (`serde-wasm-bindgen`, `Vec<T>` of structs, tuples, enums with data) | Manual *(a serde bridge is on the [roadmap](./docs/roadmap.md))*. The ABI carries numbers, `bool`, strings, bytes, and opaque `JsValue` handles, plus `Option`/`Result` as *returns*. Anything richer you encode yourself (e.g. JSON through a `&str`). |
