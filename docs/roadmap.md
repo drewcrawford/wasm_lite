@@ -62,6 +62,9 @@ Following the wasm-bindgen ecosystem split (language vs browser):
 * `wasm_lite_js` *(future)* — ECMAScript built-ins (`Object`, `Array`, `Map`,
   `JSON`, `Date`, …) bound with `js_class!`. *Like `js-sys`.*
 * `wasm_lite_web` *(future)* — Web/host APIs (DOM, `fetch`, …). *Like `web-sys`.*
+  **`fetch` landed first, in core** (`wasm_lite::fetch`), because a consumer
+  needed it before the split was worth doing. It moves here when the crate
+  exists; nothing about its API depends on where it lives.
 
 Bindings stay out of core so it remains small; `js_class!` is the primitive all
 upper layers build on (so its constructors + property get/set are the gate for
@@ -125,12 +128,9 @@ browser-validated; the next frontier is the binding crates. Items marked
   `spawn_local` selected when the module is not a shared-memory build, so
   single-threaded async needs no `SharedArrayBuffer`. The two coexist behind one
   `spawn_local` surface.
-* **Promise interop (`await` a JS `Promise` from Rust)** — the analogue of
-  `wasm-bindgen-futures`' `JsFuture`. There is no ABI path turning a resolved JS
-  `Promise` into a Rust `Future`, so host async APIs like `fetch(url).await` are
-  not expressible. This is the prerequisite for any `fetch`/streaming/`async` host
-  API in `wasm_lite_web`, and the single biggest behavioral gap vs wasm-bindgen
-  (see the [migration guide](../MIGRATION.md)). *Designed.*
+* ~~**Promise interop (`await` a JS `Promise` from Rust)**~~ — **done**
+  ([`JsFuture`](../crates/wasm_lite/src/future.rs)), and now used in anger:
+  `wasm_lite::fetch` is built on it, streaming response bodies included.
 
 ### Bindings & marshalling
 
@@ -143,7 +143,10 @@ browser-validated; the next frontier is the binding crates. Items marked
   plus owned-object args and `instanceof`-checked downcasting — each a new codegen
   shim kind. The prerequisite for `wasm_lite_js`/`wasm_lite_web`.
 * **`wasm_lite_js` / `wasm_lite_web`** — the binding crates (ECMAScript built-ins,
-  then DOM/host APIs), gated on the `js_class!` work above.
+  then DOM/host APIs), gated on the `js_class!` work above. Note `wasm_lite::fetch`
+  did **not** need it: `import!`'s `#[constructor]`/`#[getter]`/`#[setter]` cover
+  a real binding surface today, with a hand-written newtype per class. What
+  `js_class!` would remove is the boilerplate, not a capability.
 * **Entropy (`crypto.getRandomValues`)** — a wasm-bindgen-free `getrandom` backend.
   Today the `getrandom`/`rand`/`uuid` ecosystem needs `getrandom`'s `js` feature,
   which pulls in wasm-bindgen.

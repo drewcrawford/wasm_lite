@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `wasm_lite::fetch` — the Fetch API plus the slice of the Streams API a
+  response body needs: `fetch`, `origin`, `RequestInit`, `Headers`, `Response`,
+  `ReadableStream`, `ReadableStreamDefaultReader`. Deliberately smaller than the
+  `web-sys` surface it replaces: no `Request` (`fetch` takes a URL string), no
+  `window()`/`WorkerGlobalScope` downcast (`fetch` and `origin` read off
+  `globalThis`, which is both), and chunks arrive as `Vec<u8>` rather than a
+  `Uint8Array`. Browser-tested in Firefox and Chrome
+  (`crates/wasm_lite_std/tests/fetch.rs`).
+- `JsValue::to_js_string()` and `Display for JsValue` — JS's own `String(v)`, so
+  a rejected promise reports `TypeError: …` instead of a value-table index.
+  `Debug` still prints the index. Fallible under the hood with a fallback, since
+  this is reached from error paths and `String()` throws for an object with no
+  `toString`.
+
 - Benchmarking: `#[wasm_lite_bench]`, `Bencher`, and `bench_main!`, driven by the
   runner one page load per benchmark and reported in `cargo bench`'s format.
   `cargo bench` measures; `cargo test --benches` runs each once without
@@ -37,6 +51,15 @@ All notable changes to this project will be documented in this file.
 - The `wasm_lite_std` browser suite now runs in **Chrome as well as Firefox**
   (`scripts/wasm32/tests`), with `a_worker_can_spawn_a_worker` and
   `nesting_composes_to_a_third_level` covering nested worker spawn.
+
+### Changed
+
+- The runner's HTTP server honours the request method and the `Range` header. A
+  `HEAD` now returns headers without a body; `Range: bytes=a-b` returns 206 with
+  `Content-Range`, and an unsatisfiable range returns 416. It previously answered
+  every request with a full 200, which made a range-reading client's primary path
+  untestable. Suffix (`bytes=-500`) and multi-range requests are refused rather
+  than mis-answered.
 
 ### Fixed
 

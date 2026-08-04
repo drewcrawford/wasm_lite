@@ -66,9 +66,10 @@
 //!
 //! The trade-off is intentional. [`wasm_lite`](crate) does **not** yet replace
 //! the broad `js-sys`/`web-sys` ecosystem, TypeScript declaration generation, or
-//! rich serde-style marshalling. Two things it *does* now have: Rust closures
-//! passed into JS ([`Closure`], zero- and one-argument signatures) and awaiting
-//! JS promises ([`JsFuture`]). The `wasm-bindgen` feature
+//! rich serde-style marshalling. Three things it *does* now have: Rust closures
+//! passed into JS ([`Closure`], zero- and one-argument signatures), awaiting
+//! JS promises ([`JsFuture`]), and the [`fetch`] API built on both. The
+//! `wasm-bindgen` feature
 //! supports incremental migration in the direction where `wasm-lite` is the
 //! final codegen step; the reverse direction, where a wasm-bindgen/wasm-pack app
 //! consumes a wasm_lite leaf without running `wasm-lite`, is still roadmap work.
@@ -275,7 +276,7 @@
 //!
 //! | crate | role |
 //! |---|---|
-//! | `crates/wasm_lite` | core: [`import!`], [`export`], [`js_class!`], [`JsValue`], runtime (`__wl_malloc`/`__wl_free`, panic hook), [`thread::spawn`], [`console`]/[`performance`]/[`date`] bindings |
+//! | `crates/wasm_lite` | core: [`import!`], [`export`], [`js_class!`], [`JsValue`], runtime (`__wl_malloc`/`__wl_free`, panic hook), [`thread::spawn`], [`console`]/[`performance`]/[`date`]/[`fetch`] bindings |
 //! | `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): [`import!`], [`export`], [`wasm_lite_test`], [`js_class!`]; shared type-to-ABI dispatch lives in `ty` |
 //! | `crates/wasm_lite_codegen` | host-side: read descriptor sections, generate JS glue |
 //! | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |

@@ -13,9 +13,13 @@ you will actually hit.
 > generated ES-module glue. It reuses the *core idea* of wasm-bindgen — describe
 > a binding's ABI in a custom wasm section, then generate JS glue from the
 > compiled module — but it is **not** a drop-in replacement and it does **not**
-> yet have the broad binding ecosystem (`js-sys`/`web-sys`), Promise interop, or
-> closures-into-JS. Zero runtime dependencies are part of the implementation
-> discipline, not the whole pitch.
+> yet have the broad binding ecosystem (`js-sys`/`web-sys`). It *does* have
+> Promise interop ([`JsFuture`]) and closures-into-JS ([`Closure`]), and a
+> `fetch` binding built on both. Zero runtime dependencies are part of the
+> implementation discipline, not the whole pitch.
+>
+> [`JsFuture`]: https://docs.rs/wasm_lite/latest/wasm_lite/struct.JsFuture.html
+> [`Closure`]: https://docs.rs/wasm_lite/latest/wasm_lite/struct.Closure.html
 
 ---
 
@@ -83,9 +87,9 @@ honest version.
 | | Status in wasm_lite |
 |---|---|
 | **`js-sys` (ECMAScript built-ins)** | **Not yet.** Planned as `wasm_lite_js`, gated on `js_class!` constructors + property accessors. You bind what you need by hand with `import!`/`js_class!`. |
-| **`web-sys` (DOM, `fetch`, `WebGL`, …)** | **Not yet.** Planned as `wasm_lite_web`. Same story — hand-bind for now. |
-| **Awaiting a JS `Promise` from Rust** (`JsFuture`, `wasm-bindgen-futures`) | **Not supported** *(on the [roadmap](./docs/roadmap.md))*. wasm_lite's async is for *thread* coordination, not Promise interop. You cannot `fetch(...).await` today. See [§4 Gotchas](#4-design-trade-offs-and-gotchas). |
-| **Passing a Rust closure to JS as a callback** (`Closure<dyn FnMut(...)>`) | **Not supported** *(on the [roadmap](./docs/roadmap.md))*. `import!` takes scalars/strings/bytes/handles, not function pointers. Event listeners / callbacks must be structured around exports or polled state. |
+| **`web-sys` (DOM, `WebGL`, …)** | **Mostly not yet.** Planned as `wasm_lite_web`; hand-bind for now. The exception is **`fetch`**, which ships as `wasm_lite::fetch` (Fetch + the response-body slice of Streams). |
+| **Awaiting a JS `Promise` from Rust** (`JsFuture`, `wasm-bindgen-futures`) | **Supported.** `wasm_lite::JsFuture::new(&promise).await` yields `Result<JsValue, JsValue>`. Needs an executor to drive it — on wasm that is `wasm_lite_std::spawn_local`. |
+| **Passing a Rust closure to JS as a callback** (`Closure<dyn FnMut(...)>`) | **Supported.** `wasm_lite::Closure` in four shapes (nullary, one-arg, variadic, variadic-fallible). JS holds an id into a thread-local registry, so a listener outliving its `Closure` no-ops rather than reading freed memory. |
 | **Rich type marshalling** (`serde-wasm-bindgen`, `Vec<T>` of structs, tuples, enums with data) | Manual *(a serde bridge is on the [roadmap](./docs/roadmap.md))*. The ABI carries numbers, `bool`, strings, bytes, and opaque `JsValue` handles, plus `Option`/`Result` as *returns*. Anything richer you encode yourself (e.g. JSON through a `&str`). |
 | **TypeScript `.d.ts` generation** | Not generated. The codegen emits plain JS glue. |
 | **`getrandom`/`rand`/`uuid`, `HashMap` with strong seed** | **Not yet.** `getrandom`'s `js` feature pulls in wasm-bindgen; a wasm-bindgen-free `crypto.getRandomValues` backend is on the roadmap. Until then, randomness-dependent crates need work. |
@@ -98,9 +102,9 @@ honest version.
   runner path, worker-heavy workloads, anything where you want threads without
   dragging in the wasm-bindgen stack, and projects that value a small auditable
   binding model.
-- **Wait for now:** DOM-heavy front ends that lean on `web-sys`, anything that
-  `await`s `fetch`/Promises, code that passes closures to JS event listeners, or
-  crates whose dependencies assume `getrandom`'s `js` feature.
+- **Wait for now:** DOM-heavy front ends that lean on `web-sys` beyond `fetch`,
+  or crates whose dependencies assume `getrandom`'s `js` feature. (Awaiting
+  Promises and passing closures to JS both work now.)
 - **Hybrid is supported:** you don't have to choose all-or-nothing. The
   `wasm-bindgen` feature lets a wasm_lite module link a crate that itself uses
   wasm-bindgen, with explicit `.to_wasm_bindgen()` / `.to_wasm_lite()` value
@@ -511,24 +515,32 @@ threading layer: you cannot capture a `JsValue` into a `thread::spawn` closure.
 Move data across threads as plain Rust values (atomics, channels, `Mutex<T>`),
 and re-acquire JS handles on the thread that needs them.
 
-### You cannot `await` a JS Promise (yet)
-This is the single biggest behavioral difference from wasm-bindgen. wasm_lite's
-async executor exists to coordinate **threads** (`join_async`, `lock_async`),
-*not* to await host async APIs. There is no `JsFuture`/Promise→Future bridge in
-the ABI. A thrown JS exception maps to `Err` on a `Result`-returning import, but a
-**resolved Promise does not map to anything** — so `fetch(url).await` is not
-expressible today. Workarounds: do the async on the JS side and call a Rust
-`#[export]` with the result, or hand-roll polling. If your app is built around
-`fetch`/`IndexedDB`/streaming, stay on wasm-bindgen for that part (and consider
-the interop feature for the rest).
+### Awaiting a JS Promise needs an executor you supply
+`wasm_lite::JsFuture::new(&promise).await` resolves to `Result<JsValue, JsValue>`
+— `Ok` fulfilled, `Err` rejected — so `fetch(url).await` *is* expressible, and
+`wasm_lite::fetch` is built on it. (This section used to say the opposite; the
+bridge landed.)
 
-### No closures-into-JS / callbacks
-wasm-bindgen's `Closure<dyn FnMut(...)>` lets JS call back into Rust (event
-listeners, `setTimeout`, Promise `.then`). wasm_lite's `import!` only accepts
-scalar/string/bytes/handle arguments — **not** function pointers. Structure
-callbacks around `#[export]`ed functions that JS invokes, or around polled shared
-state. (An async `setTimeout`-backed timer is on the roadmap, which will give a
-main-thread `sleep_async`, but it is not a general callback mechanism.)
+The part that still differs from wasm-bindgen: nothing drives the future for you.
+`wasm-bindgen-futures::spawn_local` is ambient; here you spawn onto
+`wasm_lite_std::spawn_local` yourself, and in a test you wrap the body in
+`wasm_lite_std::async_doctest!` so a dropped or hung future fails rather than
+passes.
+
+Dropping a pending `JsFuture` is safe: it owns the two `then` callbacks, so
+cancelling removes them and the promise settles with nowhere to report. JS has no
+cancellation, so the underlying work still runs.
+
+### A borrowed `&[u8]` argument does not outlive the call
+A `&[u8]` reaches JS as `new Uint8Array(memory.buffer, ptr, len)` — a **view over
+wasm linear memory**, not a copy. That is what makes the common case cheap, and
+it is a live aliasing hazard for anything that *stores* the argument JS-side (a
+`fetch` request body, an object property, a listener's captured state). Copy
+first — `new Uint8Array(view)` — as `wasm_lite::fetch::RequestInit::set_body`
+does.
+
+Nothing in the Rust signature shows this. The lifetime is respected on the Rust
+side; the dangling happens entirely in JavaScript.
 
 ### Blocking traps on the main thread
 The browser main thread cannot run `Atomics.wait`, so any **blocking** primitive
@@ -612,7 +624,15 @@ directly. The runner is browser-only today (no Node test path).
    `wasm_lite::thread` / `wasm_lite_std` (this is where the dependency-graph win is
    largest). Mind the main-thread blocking rule.
 5. **Hand-bind the host APIs you actually use** with `import!`/`js_class!`,
-   keeping wasm-bindgen only for the parts that need Promises/closures/`web-sys`
-   until `wasm_lite_js`/`wasm_lite_web` land.
+   keeping wasm-bindgen only for the `web-sys` surface that has no wasm_lite
+   equivalent yet. `fetch` already does (`wasm_lite::fetch`), and Promises and
+   closures are no longer a reason to stay.
+
+   `crates/wasm_lite/src/fetch.rs` is the worked example: one private `imp`
+   module of `import!` declarations, one newtype per JS class, and the idiomatic
+   Rust API on top. Measure the surface off *what you need*, not off the web-sys
+   types the old code named — that binding replaced ten web-sys/js-sys types with
+   seven, because `Request`, `global()` and `Reflect` existed only to satisfy
+   web-sys's shape.
 
 See the [roadmap](./docs/roadmap.md) for the order things are expected to fill in.
