@@ -407,11 +407,16 @@ fn handle(mut stream: TcpStream, routes: &[Route]) -> std::io::Result<()> {
     };
 
     // Generated routes first — nothing on disk may shadow `program.wasm` or
-    // the glue.
-    let found = match routes.iter().find(|r| r.path == request.path) {
-        Some(route) => Some((route.content_type, route.body.clone())),
+    // the glue. Both are borrowed: a route body is the whole wasm module, and
+    // copying it per request would be a real cost on every page load.
+    let route = routes.iter().find(|r| r.path == request.path);
+    let file = match route {
+        Some(_) => None,
         None => static_file(&request.path),
     };
+    let found = route
+        .map(|r| (r.content_type, &r.body[..]))
+        .or_else(|| file.as_ref().map(|(ct, body)| (*ct, &body[..])));
     let Some((content_type, body)) = found else {
         return respond(
             &mut stream,
@@ -422,7 +427,7 @@ fn handle(mut stream: TcpStream, routes: &[Route]) -> std::io::Result<()> {
         );
     };
     let Some((start, end)) = request.range else {
-        return respond(&mut stream, 200, content_type, &body, &request);
+        return respond(&mut stream, 200, content_type, body, &request);
     };
 
     // A range starting at or past the end is unsatisfiable. `async_file` reads
