@@ -114,13 +114,6 @@ mod imp {
             /// what actually copies it into wasm memory; `subarray` is just a
             /// no-op call to hang that on.
             fn array_to_vec(this: &JsValue) -> Vec<u8> as "subarray";
-            /// `new Uint8Array(view)`, which **copies**.
-            ///
-            /// A `&[u8]` argument arrives in JS as a view over wasm linear
-            /// memory, valid only for the duration of the call. Anything that
-            /// outlives the call — a request body — needs its own buffer, and
-            /// the copy constructor is what makes one.
-            #[constructor] fn copy_bytes(src: &[u8]) -> JsValue as "Uint8Array";
         }
         "ArrayBuffer" {
             /// `buffer.slice(0)` — a copy of the whole buffer, which the `bytes`
@@ -189,15 +182,15 @@ impl RequestInit {
 
     /// The request body, **copied** into a JS `Uint8Array`.
     ///
-    /// The copy is not an optimization to remove: a borrowed `&[u8]` reaches JS
-    /// as a view over wasm linear memory that is only valid for the duration of
-    /// the call, and the init object outlives it.
+    /// The copy is not an optimization to remove — see
+    /// [`JsValue::from_bytes`]. In short: a borrowed slice is a view over wasm
+    /// memory that is valid only for the call, and in a `+atomics` build it is
+    /// a *shared* view, which `fetch` refuses.
     ///
     /// Bodies that are not bytes (a `FormData`, a stream) need the underlying
     /// object; reach them through [`RequestInit::as_js`].
     pub fn set_body(&self, body: &[u8]) {
-        let owned = imp::copy_bytes(body);
-        imp::set_body(&self.0, &owned);
+        imp::set_body(&self.0, &JsValue::from_bytes(body));
     }
 
     /// `"cors"`, `"no-cors"`, `"same-origin"`, or `"navigate"`.

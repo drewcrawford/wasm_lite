@@ -264,6 +264,73 @@ mod __array {
     }
 }
 
+mod __bytes {
+    use super::JsValue;
+    crate::import! {
+        "ArrayBuffer" {
+            #[instanceof] fn is_array_buffer(this: &JsValue) -> bool as "ArrayBuffer";
+            /// `buffer.slice(0)` — a copy of the whole buffer. The `bytes`
+            /// return tag is what moves it into wasm memory; `slice` is only
+            /// there to hang that on.
+            fn buffer_to_vec(this: &JsValue, begin: u32) -> Vec<u8> as "slice";
+        }
+        "Uint8Array" {
+            #[instanceof] fn is_u8_array(this: &JsValue) -> bool as "Uint8Array";
+            /// `view.subarray()` — the whole view, likewise.
+            fn view_to_vec(this: &JsValue) -> Vec<u8> as "subarray";
+            /// `new Uint8Array(view)`, which copies into a fresh, unshared
+            /// buffer.
+            #[constructor] fn copy_bytes(src: &[u8]) -> JsValue as "Uint8Array";
+        }
+    }
+}
+
+impl JsValue {
+    /// The bytes of an `ArrayBuffer` or a `Uint8Array`, copied into wasm
+    /// memory. `None` for anything else.
+    ///
+    /// Those two, and not "any typed array", on purpose. The boundary's `bytes`
+    /// conversion is `new Uint8Array(value)`, which for a `Uint8Array` copies
+    /// byte for byte and for an `Int32Array` would copy **element for element**
+    /// — four bytes in, one byte out, silently. Reading an arbitrary view as
+    /// bytes needs `new Uint8Array(v.buffer, v.byteOffset, v.byteLength)`,
+    /// which is not one method call; until something needs it, answering `None`
+    /// is better than answering wrongly.
+    pub fn as_bytes(&self) -> Option<Vec<u8>> {
+        if __bytes::is_array_buffer(self) {
+            return Some(__bytes::buffer_to_vec(self, 0));
+        }
+        if __bytes::is_u8_array(self) {
+            return Some(__bytes::view_to_vec(self));
+        }
+        None
+    }
+
+    /// A JS `Uint8Array` owning a **copy** of `data`.
+    ///
+    /// This is what to reach for whenever bytes have to outlive the call, or
+    /// reach an API that will not take a view. Passing `&[u8]` straight to an
+    /// `import!` is cheaper and right for a callee that reads the bytes
+    /// synchronously and keeps nothing; this is for everything else.
+    ///
+    /// Two independent reasons the copy is needed, and the second is the one
+    /// that surprises:
+    ///
+    /// 1. **Lifetime.** A `&[u8]` argument arrives as a view over wasm linear
+    ///    memory, valid only for the duration of that call. Storing it — as a
+    ///    request body, an object property, a captured value — aliases whatever
+    ///    later occupies those addresses.
+    /// 2. **Sharing.** In a `+atomics` build the memory is a
+    ///    `SharedArrayBuffer`, so the view is a *shared* view, and a number of
+    ///    Web APIs reject those outright rather than copying for you —
+    ///    `WebSocket.send` and a `fetch` request body among them. The failure
+    ///    is a `TypeError` at the call, and it appears only in threaded builds,
+    ///    which is exactly where it is least expected.
+    pub fn from_bytes(data: &[u8]) -> JsValue {
+        __bytes::copy_bytes(data)
+    }
+}
+
 mod __to_string {
     use super::JsValue;
     crate::import! {

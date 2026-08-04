@@ -71,6 +71,17 @@ for BROWSER in firefox chrome; do
         --target wasm32-unknown-unknown -Z build-std=std,panic_abort
 done
 
+# `wasm_lite::websocket`, against the runner's own echo endpoint.
+echo "testing wasm_lite::websocket browser suite (firefox, then chrome)"
+for BROWSER in firefox chrome; do
+    RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \
+    RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+    WASM_LITE_BROWSER="$BROWSER" \
+    cargo +nightly test -p wasm_lite_std --test websocket \
+        --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+done
+
 echo "testing wasm_lite_std browser suite"
 if ((${#CARGO_ARGS[@]})); then
     RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \

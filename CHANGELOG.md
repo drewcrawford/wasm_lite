@@ -14,12 +14,21 @@ All notable changes to this project will be documented in this file.
   `globalThis`, which is both), and chunks arrive as `Vec<u8>` rather than a
   `Uint8Array`. Browser-tested in Firefox and Chrome
   (`crates/wasm_lite_std/tests/fetch.rs`).
+- `wasm_lite::websocket` — `WebSocket`, `BinaryType`, `Event`, `MessageEvent`,
+  `CloseEvent`. A message's payload comes back as `Vec<u8>` or `String`
+  (`MessageEvent::data_bytes`/`data_text`) rather than a `JsValue` to downcast,
+  and `onerror` hands back a plain `Event`, which is what browsers actually
+  fire. Round-tripped against the runner's echo endpoint in Firefox and Chrome.
+- `JsValue::as_bytes()` / `JsValue::from_bytes()` — read an `ArrayBuffer` or
+  `Uint8Array` into a `Vec<u8>`, and copy bytes into an unshared `Uint8Array`.
+  The copy is not optional: a borrowed `&[u8]` reaches JS as a view over wasm
+  memory that is valid only for the call, and in a `+atomics` build it is a
+  *shared* view, which `WebSocket.send` and a `fetch` body both reject.
 - `JsValue::to_js_string()` and `Display for JsValue` — JS's own `String(v)`, so
   a rejected promise reports `TypeError: …` instead of a value-table index.
   `Debug` still prints the index. Fallible under the hood with a fallback, since
   this is reached from error paths and `String()` throws for an object with no
   `toString`.
-
 - Benchmarking: `#[wasm_lite_bench]`, `Bencher`, and `bench_main!`, driven by the
   runner one page load per benchmark and reported in `cargo bench`'s format.
   `cargo bench` measures; `cargo test --benches` runs each once without
@@ -54,6 +63,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The runner serves a WebSocket **echo endpoint** at `/__wl_echo`, so bindings
+  to an API that only means anything against a peer can be tested against one.
+  Deliberately minimal: no extensions, no subprotocol negotiation.
 - The runner's HTTP server honours the request method and the `Range` header. A
   `HEAD` now returns headers without a body; `Range: bytes=a-b` returns 206 with
   `Content-Range`, and an unsatisfiable range returns 416. It previously answered

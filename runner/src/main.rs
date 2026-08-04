@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 mod test_runner;
 mod webdriver;
+mod ws_echo;
 
 /// Path under which the HTML shell loads the program (an ES module).
 const PROGRAM_JS: &str = "/program.js";
@@ -406,6 +407,14 @@ fn handle(mut stream: TcpStream, routes: &[Route]) -> std::io::Result<()> {
         None => return Ok(()),
     };
 
+    // The WebSocket echo endpoint takes over the connection entirely: no
+    // response body, no COOP/COEP headers, and the socket stays open.
+    if request.path == ws_echo::PATH
+        && let Some(key) = &request.ws_key
+    {
+        return ws_echo::serve(stream, key);
+    }
+
     // Generated routes first — nothing on disk may shadow `program.wasm` or
     // the glue. Both are borrowed: a route body is the whole wasm module, and
     // copying it per request would be a real cost on every page load.
@@ -527,6 +536,8 @@ struct Request {
     /// The first byte-range of a `Range: bytes=…` header, as `(start, end)`
     /// with `end` inclusive and `None` meaning "to the end of the resource".
     range: Option<(u64, Option<u64>)>,
+    /// The `Sec-WebSocket-Key` of an upgrade request, if this is one.
+    ws_key: Option<String>,
 }
 
 /// Read the request line and headers.
@@ -551,8 +562,9 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
     };
 
     // Read headers up to the blank line, both to satisfy the client and to
-    // pick up `Range`.
+    // pick up `Range` and the WebSocket upgrade key.
     let mut range = None;
+    let mut ws_key = None;
     let mut header = String::new();
     loop {
         header.clear();
@@ -560,12 +572,14 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
         if n == 0 || header == "\r\n" || header == "\n" {
             break;
         }
-        if let Some(value) = header
-            .split_once(':')
-            .filter(|(name, _)| name.eq_ignore_ascii_case("range"))
-            .map(|(_, value)| value.trim())
-        {
+        let Some((name, value)) = header.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("range") {
             range = parse_range(value);
+        } else if name.eq_ignore_ascii_case("sec-websocket-key") {
+            ws_key = Some(value.to_string());
         }
     }
 
@@ -573,6 +587,7 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
         path,
         head: method.eq_ignore_ascii_case("HEAD"),
         range,
+        ws_key,
     }))
 }
 

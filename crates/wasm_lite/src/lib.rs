@@ -339,6 +339,7 @@ pub mod fetch;
 pub mod performance;
 pub mod thread;
 pub mod timer;
+pub mod websocket;
 
 /// Bridge to `wasm_bindgen::JsValue` (enable the `wasm-bindgen` feature).
 #[cfg(feature = "wasm-bindgen")]
