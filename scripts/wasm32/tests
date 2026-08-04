@@ -43,6 +43,21 @@ echo "testing shims_wasm_bindgen/consumer-async (async tests, atomics)"
 echo "testing examples/doctest-demo doctests"
 (cd examples/doctest-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --doc)
 
+# The crate's own lib tests, which until 2026-08-03 did not compile for wasm32
+# at all -- they used #[test_executors::async_test], whose published expansion is
+# #[wasm_bindgen_test]. They now use wasm_lite's macros directly, so the unit
+# tests for condvar, mutex, rwlock, mpsc and spinlock run in a browser rather
+# than natively only.
+echo "testing wasm_lite_std lib tests (firefox, then chrome)"
+for BROWSER in firefox chrome; do
+    RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \
+    RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+    WASM_LITE_BROWSER="$BROWSER" \
+    cargo +nightly test -p wasm_lite_std --lib \
+        --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+done
+
 echo "testing wasm_lite_std browser suite"
 if ((${#CARGO_ARGS[@]})); then
     RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \

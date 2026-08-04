@@ -83,8 +83,10 @@ fn test_lock_block() {
     assert!(time.elapsed() > Duration::from_millis(10));
 }
 
-#[test_executors::async_test]
-async fn test_async() {
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_async() {
+    crate::async_test_body!(async {
     let mutex = Arc::new(RwLock::new(0));
     let lock = mutex.lock_async_read().await;
     assert_eq!(lock.deref(), &0);
@@ -92,6 +94,7 @@ async fn test_async() {
     let lock = mutex.lock_async_write().await;
     assert_eq!(lock.deref(), &0);
     drop(lock);
+});
 }
 
 #[test]

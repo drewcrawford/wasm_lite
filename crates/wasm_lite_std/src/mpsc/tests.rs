@@ -26,9 +26,10 @@ fn test_send_recv_sync() {
     assert_eq!(rx.recv_sync(), Ok(1));
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_send_recv_async() {
-    test_executors::spin_on(async {
+        crate::async_test_body!(async {
         let (tx, mut rx) = channel();
         tx.send_async(1).await.unwrap();
         assert_eq!(rx.recv_async().await, Ok(1));
@@ -121,9 +122,10 @@ fn test_recv_block_timeout() {
     );
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_recv_async_timeout() {
-    test_executors::spin_on(async {
+        crate::async_test_body!(async {
         let (tx, mut rx) = channel();
         tx.send_async(1).await.unwrap();
         assert_eq!(
@@ -196,9 +198,10 @@ fn test_iter_disconnect() {
     assert_eq!(collected, vec![1, 2, 3]);
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_disconnect_async() {
-    test_executors::spin_on(async {
+        crate::async_test_body!(async {
         let (tx, mut rx) = channel();
         tx.send_async(1).await.unwrap();
         drop(tx);

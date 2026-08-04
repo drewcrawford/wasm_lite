@@ -389,6 +389,46 @@ mod sleep;
 pub mod spinlock;
 #[cfg(not(target_arch = "wasm32"))]
 mod stdlib;
+// `#[wasm_lite_test(worker)]` emits absolute `wasm_lite_std::` paths to reach the
+// worker spawn helper, which do not resolve inside wasm_lite_std itself. The
+// alias makes our own name mean us, so the generated code compiles here too.
+#[cfg(test)]
+extern crate self as wasm_lite_std;
+
+/// Runs an async test body on whichever executor the target has.
+///
+/// This crate cannot use `#[test_executors::async_test]`, even though that is
+/// what it expands to elsewhere: `test_executors` depends on `wasm_lite_std`, so
+/// patching it to the local path to get the wasm_lite spelling makes the
+/// lib-test binary link two copies of this crate and collide on its
+/// `#[no_mangle]` executor exports. See the note in the workspace `Cargo.toml`.
+#[cfg(test)]
+macro_rules! async_test_body {
+    ($body:expr) => {{
+        #[cfg(target_arch = "wasm32")]
+        $crate::async_doctest!($body);
+        #[cfg(not(target_arch = "wasm32"))]
+        $crate::test_executor::spawn($body);
+    }};
+}
+#[cfg(test)]
+pub(crate) use async_test_body;
+
+/// Like [`async_test_body`], but for a body that also *blocks* — a
+/// `recv()` on a std channel, a `join()`, a spin wait.
+///
+/// Those trap on the browser's main thread, so the test must carry
+/// `#[wasm_lite_test(worker)]` and drive the future with the blocking poll loop
+/// rather than handing it to the main-thread event loop.
+#[cfg(test)]
+macro_rules! blocking_async_test_body {
+    ($body:expr) => {{
+        $crate::test_executor::spawn($body);
+    }};
+}
+#[cfg(test)]
+pub(crate) use blocking_async_test_body;
+
 #[cfg(test)]
 mod sync_tests;
 #[doc(hidden)]

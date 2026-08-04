@@ -24,8 +24,9 @@ fn test_spinlock_basic() {
     assert_eq!(result, 43);
 }
 
-#[test_executors::async_test]
-async fn test_spinlock_concurrent_access() {
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_spinlock_concurrent_access() {
     let spinlock = Arc::new(Spinlock::new(0));
     let handles: Vec<_> = (0..10)
         .map(|_| {
@@ -54,8 +55,9 @@ fn test_mutex_try_lock_success() {
     assert_eq!(*guard, 42);
 }
 
-#[test_executors::async_test]
-async fn test_mutex_try_lock_contention() {
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_mutex_try_lock_contention() {
     //for the time being, wasm_thread only works in browser
     //see https://github.com/rustwasm/wasm-bindgen/issues/4534,
     //though we also need wasm_thread support.
@@ -85,8 +87,9 @@ fn test_mutex_lock_spin() {
     assert_eq!(*guard, 42);
 }
 
-#[test_executors::async_test]
-async fn test_mutex_lock_block() {
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_mutex_lock_block() {
     //for the time being, wasm_thread only works in browser
     //see https://github.com/rustwasm/wasm-bindgen/issues/4534,
     //though we also need wasm_thread support.
@@ -114,8 +117,9 @@ async fn test_mutex_lock_block() {
     assert_eq!(*guard, 42);
 }
 
-#[test_executors::async_test]
-async fn test_mutex_concurrent_increment() {
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_mutex_concurrent_increment() {
     //for the time being, wasm_thread only works in browser
     //see https://github.com/rustwasm/wasm-bindgen/issues/4534,
     //though we also need wasm_thread support.
@@ -144,18 +148,20 @@ async fn test_mutex_concurrent_increment() {
     assert_eq!(*guard, 1000);
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_mutex_lock_async() {
-    test_executors::spin_on(async {
+        crate::async_test_body!(async {
         let mutex = Mutex::new(42);
         let guard = mutex.lock_async().await;
         assert_eq!(*guard, 42);
     });
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_mutex_async_contention() {
-    test_executors::spin_on(async {
+        crate::async_test_body!(async {
         let mutex = Arc::new(Mutex::new(0));
 
         let mutex1 = Arc::clone(&mutex);
@@ -205,8 +211,9 @@ fn test_mutex_lock_spin_timeout() {
     assert_eq!(*mutex.lock_spin(), 42);
 }
 
-#[test_executors::async_test]
-async fn test_mutex_lock_spin_timeout_fails() {
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_mutex_lock_spin_timeout_fails() {
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
 
@@ -235,8 +242,9 @@ async fn test_mutex_lock_spin_timeout_fails() {
     assert!(result.is_none());
 }
 
-#[test_executors::async_test]
-async fn test_mutex_lock_block_timeout() {
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_mutex_lock_block_timeout() {
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
 
@@ -298,8 +306,9 @@ async fn test_mutex_lock_block_timeout() {
     r3.recv().unwrap();
 }
 
-#[test_executors::async_test]
-async fn test_mutex_lock_sync_timeout() {
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_mutex_lock_sync_timeout() {
     let mutex = Arc::new(Mutex::new(0));
     let mutex_clone = Arc::clone(&mutex);
 
@@ -327,8 +336,10 @@ async fn test_mutex_lock_sync_timeout() {
     assert!(result.is_none());
 }
 
-#[test_executors::async_test]
-async fn test_mutex_lock_async_timeout() {
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_mutex_lock_async_timeout() {
+    crate::blocking_async_test_body!(async {
     let mutex = Arc::new(Mutex::new(0));
 
     // Test success
@@ -345,7 +356,7 @@ async fn test_mutex_lock_async_timeout() {
 
     // Spawn a thread to hold the lock, because async tasks on same executor might not run in parallel if we block
     thread::spawn(move || {
-        test_executors::spin_on(async {
+        crate::test_executor::spawn(async move {
             let _guard = mutex_clone.lock_async().await;
             c.send(()).unwrap();
             // Hold it
@@ -362,4 +373,5 @@ async fn test_mutex_lock_async_timeout() {
     let deadline = Instant::now() + Duration::from_millis(10);
     let result = mutex.lock_async_timeout(deadline).await;
     assert!(result.is_none());
+});
 }
