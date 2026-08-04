@@ -276,7 +276,7 @@
 //!
 //! | crate | role |
 //! |---|---|
-//! | `crates/wasm_lite` | core: [`import!`], [`export`], [`js_class!`], [`JsValue`], runtime (`__wl_malloc`/`__wl_free`, panic hook), [`thread::spawn`], [`console`]/[`performance`]/[`date`]/[`fetch`] bindings |
+//! | `crates/wasm_lite` | core: [`import!`], [`export`], [`js_class!`], [`JsValue`], runtime (`__wl_malloc`/`__wl_free`, panic hook), [`thread::spawn`], [`console`]/[`performance`]/[`date`]/[`fetch`]/[`websocket`]/[`dom`] bindings |
 //! | `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): [`import!`], [`export`], [`wasm_lite_test`], [`js_class!`]; shared type-to-ABI dispatch lives in `ty` |
 //! | `crates/wasm_lite_codegen` | host-side: read descriptor sections, generate JS glue |
 //! | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |
@@ -335,6 +335,8 @@ mod value;
 
 pub mod console;
 pub mod date;
+pub mod dom;
+pub mod event;
 pub mod fetch;
 pub mod performance;
 pub mod thread;

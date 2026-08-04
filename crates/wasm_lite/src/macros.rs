@@ -34,3 +34,54 @@ macro_rules! bench_main {
         fn main() {}
     };
 }
+
+/// Declare a newtype over a [`JsValue`](crate::JsValue) handle.
+///
+/// The binding modules ([`fetch`](crate::fetch), [`websocket`](crate::websocket),
+/// [`dom`](crate::dom)) are each a set of typed wrappers around one handle, and
+/// each wants the same four things: `from_js`/`as_js`/`into_js`,
+/// [`AsJsValue`](crate::AsJsValue), `Debug`, and `Clone`.
+///
+/// Distinct from [`js_class!`](crate::js_class), which also *generates the
+/// methods* by lowering each declaration to a `receiver[name](args)` call. That
+/// covers plain method calls only; a real binding surface needs constructors,
+/// getters and setters, which are written as `import!` declarations by hand.
+/// This macro supplies just the wrapper those hand-written bindings hang off.
+///
+/// `Clone` is a second *reference*, the way a JS variable is: both handles
+/// denote the same object and each frees only its own table slot.
+macro_rules! js_handle {
+    ($($(#[$m:meta])* $name:ident;)*) => { $(
+        $(#[$m])*
+        ///
+        /// A handle wrapper: `Clone` yields a second reference to the *same* JS
+        /// object, not a copy of it.
+        #[derive(Debug, Clone)]
+        pub struct $name($crate::JsValue);
+
+        impl $name {
+            /// Wrap a handle as this type. Unchecked — no `instanceof` test.
+            pub fn from_js(v: $crate::JsValue) -> Self {
+                $name(v)
+            }
+            /// Borrow the underlying handle.
+            pub fn as_js(&self) -> &$crate::JsValue {
+                &self.0
+            }
+            /// Unwrap into the underlying handle.
+            pub fn into_js(self) -> $crate::JsValue {
+                self.0
+            }
+        }
+
+        impl $crate::AsJsValue for $name {
+            fn as_js_value(&self) -> &$crate::JsValue {
+                &self.0
+            }
+        }
+    )* };
+}
+
+// Crate-internal: the binding modules use it, but it is not part of the public
+// API. `pub(crate)` visibility for a `macro_rules!` is spelled this way.
+pub(crate) use js_handle;

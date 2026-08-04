@@ -52,6 +52,9 @@
 //! [WebSocket API]: https://developer.mozilla.org/docs/Web/API/WebSocket
 
 use crate::JsValue;
+use crate::macros::js_handle;
+
+pub use crate::event::Event;
 
 mod imp {
     use crate::JsValue;
@@ -99,9 +102,6 @@ mod imp {
             #[static_getter] fn closing() -> u16 as "CLOSING";
             #[static_getter] fn closed() -> u16 as "CLOSED";
         }
-        "Event" {
-            #[getter] fn event_type(this: &JsValue) -> String as "type";
-        }
         "MessageEvent" {
             #[getter] fn data(this: &JsValue) -> JsValue;
             #[getter] fn origin(this: &JsValue) -> String;
@@ -112,36 +112,6 @@ mod imp {
             #[getter] fn was_clean(this: &JsValue) -> bool as "wasClean";
         }
     }
-}
-
-/// Boilerplate shared by the handle newtypes here.
-macro_rules! js_handle {
-    ($(#[$m:meta])* $name:ident) => {
-        $(#[$m])*
-        #[derive(Debug)]
-        pub struct $name(JsValue);
-
-        impl $name {
-            /// Wrap a handle as this type. Unchecked — no `instanceof` test.
-            pub fn from_js(v: JsValue) -> Self {
-                $name(v)
-            }
-            /// Borrow the underlying handle.
-            pub fn as_js(&self) -> &JsValue {
-                &self.0
-            }
-            /// Unwrap into the underlying handle.
-            pub fn into_js(self) -> JsValue {
-                self.0
-            }
-        }
-
-        impl crate::AsJsValue for $name {
-            fn as_js_value(&self) -> &JsValue {
-                &self.0
-            }
-        }
-    };
 }
 
 /// How binary frames are delivered to `onmessage`.
@@ -170,7 +140,7 @@ js_handle! {
     /// reference into the value table, and the browser keeps the connection as
     /// long as JS can still reach it (a registered handler is enough). Call
     /// [`WebSocket::close`].
-    WebSocket
+    WebSocket;
 }
 
 impl WebSocket {
@@ -315,21 +285,8 @@ impl WebSocket {
 }
 
 js_handle! {
-    /// A plain [`Event`](https://developer.mozilla.org/docs/Web/API/Event) —
-    /// what `onopen` and `onerror` receive.
-    Event
-}
-
-impl Event {
-    /// The event's type (`"open"`, `"error"`, …).
-    pub fn event_type(&self) -> String {
-        imp::event_type(&self.0)
-    }
-}
-
-js_handle! {
     /// One inbound frame.
-    MessageEvent
+    MessageEvent;
 }
 
 impl MessageEvent {
@@ -361,7 +318,7 @@ impl MessageEvent {
 
 js_handle! {
     /// The event delivered when a socket closes.
-    CloseEvent
+    CloseEvent;
 }
 
 impl CloseEvent {

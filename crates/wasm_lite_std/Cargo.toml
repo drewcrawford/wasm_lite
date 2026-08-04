@@ -47,3 +47,8 @@ harness = false
 [[test]]
 name = "websocket"
 harness = false
+
+# `wasm_lite::dom`'s browser suite. Its peer is the test page itself.
+[[test]]
+name = "dom"
+harness = false

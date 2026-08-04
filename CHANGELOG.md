@@ -19,6 +19,14 @@ All notable changes to this project will be documented in this file.
   (`MessageEvent::data_bytes`/`data_text`) rather than a `JsValue` to downcast,
   and `onerror` hands back a plain `Event`, which is what browsers actually
   fire. Round-tripped against the runner's echo endpoint in Firefox and Chrome.
+- `wasm_lite::dom` — `Window`, `Document`, `Element`, `CssStyleDeclaration`,
+  `MouseEvent`, `WheelEvent`, `KeyboardEvent`, and `is_main_thread`. One
+  `Element` type rather than web-sys' `Element`/`HtmlElement`/`HtmlCanvasElement`
+  split, whose practical effect on calling code was a chain of unchecked casts
+  between types with no runtime distinction. `window()` answers `None` on a
+  worker instead of requiring a downcast to find out.
+- `wasm_lite::event::Event` — the DOM event base type, re-exported from both
+  `dom` and `websocket`.
 - `JsValue::as_bytes()` / `JsValue::from_bytes()` — read an `ArrayBuffer` or
   `Uint8Array` into a `Vec<u8>`, and copy bytes into an unshared `Uint8Array`.
   The copy is not optional: a borrowed `&[u8]` reaches JS as a view over wasm

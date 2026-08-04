@@ -40,6 +40,7 @@
 //! * **No `Response::json`.** Nothing here does serde marshalling yet; read
 //!   [`Response::text`] and parse it.
 
+use crate::macros::js_handle;
 use crate::{JsFuture, JsValue};
 
 mod imp {
@@ -123,45 +124,13 @@ mod imp {
     }
 }
 
-/// Boilerplate shared by every newtype here: a handle wrapper with the usual
-/// escape hatches, so a caller who needs an operation this module does not bind
-/// can reach the underlying object.
-macro_rules! js_handle {
-    ($(#[$m:meta])* $name:ident) => {
-        $(#[$m])*
-        #[derive(Debug)]
-        pub struct $name(JsValue);
-
-        impl $name {
-            /// Wrap a handle as this type. Unchecked — no `instanceof` test.
-            pub fn from_js(v: JsValue) -> Self {
-                $name(v)
-            }
-            /// Borrow the underlying handle.
-            pub fn as_js(&self) -> &JsValue {
-                &self.0
-            }
-            /// Unwrap into the underlying handle.
-            pub fn into_js(self) -> JsValue {
-                self.0
-            }
-        }
-
-        impl crate::AsJsValue for $name {
-            fn as_js_value(&self) -> &JsValue {
-                &self.0
-            }
-        }
-    };
-}
-
 js_handle! {
     /// The init object handed to [`fetch`] — the plain JS object web-sys spells
     /// `RequestInit`.
     ///
     /// Every field is optional; `fetch` applies its own defaults for the ones
     /// left unset.
-    RequestInit
+    RequestInit;
 }
 
 impl RequestInit {
@@ -231,7 +200,7 @@ js_handle! {
     ///
     /// Header names are case-insensitive, and the browser normalizes them, so
     /// `get("Content-Length")` and `get("content-length")` are the same lookup.
-    Headers
+    Headers;
 }
 
 impl Headers {
@@ -281,7 +250,7 @@ js_handle! {
     /// The body can be consumed exactly once, by whichever of [`Response::body`],
     /// [`Response::bytes`] or [`Response::text`] is called first; the others
     /// then fail.
-    Response
+    Response;
 }
 
 impl Response {
@@ -356,7 +325,7 @@ impl Response {
 js_handle! {
     /// A response body, as a
     /// [`ReadableStream`](https://developer.mozilla.org/docs/Web/API/ReadableStream).
-    ReadableStream
+    ReadableStream;
 }
 
 impl ReadableStream {
@@ -371,7 +340,7 @@ impl ReadableStream {
 
 js_handle! {
     /// A default reader over a [`ReadableStream`] of bytes.
-    ReadableStreamDefaultReader
+    ReadableStreamDefaultReader;
 }
 
 impl ReadableStreamDefaultReader {
