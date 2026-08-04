@@ -627,6 +627,37 @@ mod suite {
         });
     }
 
+    /// `request_animation_frame` runs its callback, and releases it after.
+    ///
+    /// The closure has to outlive the call — it is what JS will invoke — so it
+    /// is parked in a thread-local rather than forgotten. This checks the
+    /// callback actually fires, and that scheduling the next frame from inside
+    /// it works, which is the case where releasing the slot too eagerly would
+    /// free the closure that just replaced it.
+    #[wasm_lite::wasm_lite_test]
+    fn request_animation_frame_fires_and_chains() {
+        use std::rc::Rc;
+        wasm_lite_std::async_doctest!(async {
+            let hits = Rc::new(std::cell::Cell::new(0));
+            let (tx, rx) = mpsc::channel();
+
+            let h1 = hits.clone();
+            let tx1 = tx.clone();
+            wasm_lite_std::request_animation_frame(move || {
+                h1.set(h1.get() + 1);
+                // Schedule the next frame from inside this one.
+                let h2 = h1.clone();
+                wasm_lite_std::request_animation_frame(move || {
+                    h2.set(h2.get() + 1);
+                    tx1.send_spin(()).unwrap();
+                });
+            });
+
+            rx.recv_async().await.unwrap();
+            assert_eq!(hits.get(), 2, "both frames ran");
+        });
+    }
+
     /// The sleep future must be `Send`.
     ///
     /// It holds a realm-bound `Closure` in spirit, and an executor that cannot

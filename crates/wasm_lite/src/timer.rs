@@ -18,5 +18,14 @@ crate::import! {
         /// `clearTimeout(id)` — cancelling an already-fired or unknown id is
         /// defined to do nothing, so this needs no result.
         fn clear_timeout(id: f64) as "clearTimeout";
+        /// `requestAnimationFrame(callback)` — run the callback before the next
+        /// repaint, and return the id needed to cancel it.
+        ///
+        /// **Main thread only.** A `WorkerGlobalScope` has no
+        /// `requestAnimationFrame`; a worker that wants frame timing needs
+        /// `OffscreenCanvas` instead. Calling this from one throws.
+        fn request_animation_frame(callback: &JsValue) -> f64 as "requestAnimationFrame";
+        /// `cancelAnimationFrame(id)`.
+        fn cancel_animation_frame(id: f64) as "cancelAnimationFrame";
     }
 }

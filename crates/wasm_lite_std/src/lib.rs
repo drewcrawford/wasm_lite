@@ -377,6 +377,7 @@
 
 extern crate alloc;
 
+mod animation;
 mod async_wait;
 pub mod condvar;
 pub mod guard;
@@ -406,6 +407,7 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
+pub use animation::request_animation_frame;
 /// Run a future to completion on the current thread's event loop (wasm only).
 #[cfg(target_arch = "wasm32")]
 pub use backend::spawn_local;
