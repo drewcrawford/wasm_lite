@@ -310,7 +310,7 @@ mod suite {
             // 100 ms raced the same way `mutex_lock_block_timeout` did: the
             // assertion below only means something while the lock is actually
             // held, and a slow wake put the attempt after the release.
-            let (tx, rx) = mpsc::channel();
+            let (tx, mut rx) = mpsc::channel();
             let (release_tx, release_rx) = mpsc::channel();
             let m2 = Arc::clone(&m);
             wasm_lite_std::spawn(move || {
@@ -349,7 +349,7 @@ mod suite {
     #[wasm_lite::wasm_lite_test]
     fn mpsc_send_recv_async() {
         wasm_lite_std::async_doctest!(async {
-            let (tx, rx) = mpsc::channel();
+            let (tx, mut rx) = mpsc::channel();
             tx.send_async(1).await.unwrap();
             assert_eq!(rx.recv_async().await, Ok(1));
         });
@@ -421,7 +421,7 @@ mod suite {
     #[wasm_lite::wasm_lite_test]
     fn mpsc_recv_async_timeout() {
         wasm_lite_std::async_doctest!(async {
-            let (tx, rx) = mpsc::channel();
+            let (tx, mut rx) = mpsc::channel();
             tx.send_async(1).await.unwrap();
             assert_eq!(
                 rx.recv_async_timeout(Instant::now() + Duration::from_secs(1))
@@ -493,7 +493,7 @@ mod suite {
     #[wasm_lite::wasm_lite_test]
     fn mpsc_disconnect_async() {
         wasm_lite_std::async_doctest!(async {
-            let (tx, rx) = mpsc::channel();
+            let (tx, mut rx) = mpsc::channel();
             tx.send_async(1).await.unwrap();
             drop(tx);
             assert_eq!(rx.recv_async().await, Ok(1));
@@ -639,7 +639,7 @@ mod suite {
         use std::rc::Rc;
         wasm_lite_std::async_doctest!(async {
             let hits = Rc::new(std::cell::Cell::new(0));
-            let (tx, rx) = mpsc::channel();
+            let (tx, mut rx) = mpsc::channel();
 
             let h1 = hits.clone();
             let tx1 = tx.clone();
@@ -772,7 +772,7 @@ mod suite {
     #[wasm_lite::wasm_lite_test]
     fn mpsc_cross_thread() {
         wasm_lite_std::async_doctest!(async {
-            let (tx, rx) = mpsc::channel();
+            let (tx, mut rx) = mpsc::channel();
             wasm_lite_std::spawn(move || {
                 tx.send_sync(7).unwrap();
             });

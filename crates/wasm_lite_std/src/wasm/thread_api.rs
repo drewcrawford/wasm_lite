@@ -99,7 +99,7 @@ impl<T> JoinHandle<T> {
     /// This is the async version of [`JoinHandle::join`]. The error type differs
     /// from the synchronous version - panics are converted to `Box<String>` containing
     /// the debug representation of the panic payload.
-    pub async fn join_async(self) -> Result<T, Box<String>> {
+    pub async fn join_async(mut self) -> Result<T, Box<String>> {
         // The result arrives over the channel, which carries Result<T, String>
         // to support panic propagation. (The wasm_lite worker frees its own
         // stack/TLS and self-closes, so there is no separate exit handshake.)

@@ -29,7 +29,7 @@ fn test_send_recv_sync() {
 #[test]
 fn test_send_recv_async() {
     test_executors::spin_on(async {
-        let (tx, rx) = channel();
+        let (tx, mut rx) = channel();
         tx.send_async(1).await.unwrap();
         assert_eq!(rx.recv_async().await, Ok(1));
     });
@@ -124,7 +124,7 @@ fn test_recv_block_timeout() {
 #[test]
 fn test_recv_async_timeout() {
     test_executors::spin_on(async {
-        let (tx, rx) = channel();
+        let (tx, mut rx) = channel();
         tx.send_async(1).await.unwrap();
         assert_eq!(
             rx.recv_async_timeout(Instant::now() + Duration::from_secs(1))
@@ -199,7 +199,7 @@ fn test_iter_disconnect() {
 #[test]
 fn test_disconnect_async() {
     test_executors::spin_on(async {
-        let (tx, rx) = channel();
+        let (tx, mut rx) = channel();
         tx.send_async(1).await.unwrap();
         drop(tx);
         assert_eq!(rx.recv_async().await, Ok(1));

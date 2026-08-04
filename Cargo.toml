@@ -34,3 +34,15 @@ keywords = ["wasm", "webassembly", "javascript", "bindings", "wasm-bindgen"]
 categories = ["wasm", "web-programming", "development-tools::ffi"]
 repository = "https://github.com/drewcrawford/wasm_lite"
 homepage = "https://sealedabstract.com/code/wasm_lite"
+
+# NOTE: no dev-cycle self-patch here, deliberately. Patching test_executors to
+# the local path makes `wasm_lite_std`'s *lib* tests link two copies of
+# wasm_lite_std -- the cfg(test) one and the rlib reached via test_executors,
+# which depends on wasm_lite_std -- and both define #[no_mangle]
+# __wl_async_tick / __wl_executor_idle, so the link fails on duplicate symbols.
+#
+# Consequence: `src/condvar/tests.rs` uses #[test_executors::async_test], whose
+# *published* expansion is #[wasm_bindgen_test], so those tests do not build for
+# wasm32 and never have. The `browser` integration target is unaffected -- it
+# uses #[wasm_lite_test] directly, which is also the fix for condvar/tests.rs.
+# See NEEDS_REVIEW.md in Metropolis, section 29.

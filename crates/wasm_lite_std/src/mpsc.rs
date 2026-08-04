@@ -444,7 +444,7 @@ impl<T> Receiver<T> {
     }
 
     /// Receives a value from the channel asynchronously.
-    pub async fn recv_async(&self) -> Result<T, RecvError> {
+    pub async fn recv_async(&mut self) -> Result<T, RecvError> {
         let mut queue = self.shared.queue.lock_async().await;
         loop {
             if let Some(t) = queue.pop_front() {
@@ -458,7 +458,7 @@ impl<T> Receiver<T> {
     }
 
     /// Receives a value from the channel asynchronously, with a timeout.
-    pub async fn recv_async_timeout(&self, deadline: Instant) -> Result<T, RecvTimeoutError> {
+    pub async fn recv_async_timeout(&mut self, deadline: Instant) -> Result<T, RecvTimeoutError> {
         let mut queue = match self.shared.queue.lock_async_timeout(deadline).await {
             Some(guard) => guard,
             None => return Err(RecvTimeoutError::Timeout),
