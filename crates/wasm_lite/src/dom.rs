@@ -25,6 +25,13 @@
 //!   system; the practical effect on calling code was a chain of unchecked
 //!   casts between types with no runtime distinction. Bind the methods you
 //!   need on one handle instead.
+//!
+//!   The cost is that nothing checks a method exists on the element you have.
+//!   [`Element::style`] is the one to watch: it is defined on `HTMLElement` and
+//!   `SVGElement` but not on a bare `Element`, so on, say, a MathML node it
+//!   reads `undefined` and the next [`CssStyleDeclaration`] call throws. web-sys
+//!   would have refused at compile time. Everything else here is on `Element`,
+//!   `Document`, `Window` or `EventTarget` proper.
 //! * **[`window`] answers `None` on a worker** rather than requiring a
 //!   `dyn_into::<WorkerGlobalScope>()` to find out. [`is_main_thread`] is the
 //!   same question asked directly.
@@ -311,6 +318,10 @@ impl Element {
     }
 
     /// The inline style declaration.
+    ///
+    /// Defined on `HTMLElement` and `SVGElement`, **not** on a bare `Element` —
+    /// see the module docs. For anything `create_element` returns for an HTML
+    /// tag this is always present.
     pub fn style(&self) -> CssStyleDeclaration {
         CssStyleDeclaration(imp::style(&self.0))
     }
