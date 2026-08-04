@@ -71,6 +71,14 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- `WASM_LITE_RUN_SECONDS` now *selects* headless mode, so it works with
+  `cargo run`. It is documented as "watch a long-running bin for N seconds", but
+  it is only read on the headless path, and `cargo run` took the interactive one
+  — which serves forever and prints nothing.
+- A headless run that fails now prints the reason the program recorded
+  (`globalThis.__wl_done.error`). It previously printed the word `FAILED` and
+  nothing else, under a log that can be tens of thousands of lines of a program
+  working normally.
 - The runner serves a WebSocket **echo endpoint** at `/__wl_echo`, so bindings
   to an API that only means anything against a peer can be tested against one.
   Deliberately minimal: no extensions, no subprotocol negotiation.

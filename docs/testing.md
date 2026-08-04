@@ -70,7 +70,7 @@ rather than per-project.
 | `WASM_LITE_BROWSER_ARGS` | extra browser flags, space-separated |
 | `WASM_LITE_SERVE_DIR` | serve a directory alongside the program |
 | `WASM_LITE_TIMEOUT_SECS` | per-page deadline; default 30 |
-| `WASM_LITE_RUN_SECONDS` | watch a long-running `bin` for N seconds |
+| `WASM_LITE_RUN_SECONDS` | watch a long-running `bin` for N seconds (selects headless mode) |
 | `WASM_LITE_REUSE_BROWSER` | keep one browser across invocations (`--stop-browser` ends it) |
 | `WASM_LITE_NO_OPEN` | serve without launching a browser |
 
@@ -93,6 +93,12 @@ rather than an error, which is much harder to notice:
   an application whose work lives on the event loop — a render loop, an executor
   — it means the program "passes" immediately and prints nothing. This keeps the
   page alive and always prints the log.
+
+  Setting it also *selects* headless mode, so it works with `cargo run` — which
+  would otherwise take the interactive path, serve forever and print nothing at
+  all. If the program reports a failure, the reason it recorded is printed too:
+  a bare `FAILED` under 60 000 lines of a program working normally is not a
+  diagnosis.
 
 A **timeout** dumps the captured console, so a hang tells you where it hung.
 

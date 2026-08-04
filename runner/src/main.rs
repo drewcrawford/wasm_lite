@@ -82,6 +82,15 @@ fn is_test_run(args: &Args) -> bool {
         return true;
     }
 
+    // `WASM_LITE_RUN_SECONDS` means "watch this program for N seconds and print
+    // what it logged", which is only the headless path — the interactive server
+    // never exits and never prints. Honour it as a mode selector, so
+    // `WASM_LITE_RUN_SECONDS=60 cargo run --target wasm32-unknown-unknown` does
+    // what its documentation says instead of silently serving forever.
+    if std::env::var_os("WASM_LITE_RUN_SECONDS").is_some() {
+        return true;
+    }
+
     // Cargo puts test artifacts directly in `target/…/deps/`, while `cargo run`
     // bins live in `target/…/debug/`. Check the immediate parent (not a
     // substring): a project checked out under a directory literally named

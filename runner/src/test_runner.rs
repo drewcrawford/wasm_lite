@@ -196,6 +196,18 @@ fn run_main(browser: &Browser, port: u16) -> Result<i32, String> {
         }
         let failed = browser
             .eval_bool("return !!globalThis.__wl_done && globalThis.__wl_done.ok === false;")?;
+        if failed {
+            // Say *what* failed. Without this the whole verdict is the word
+            // "FAILED" under a log that may be tens of thousands of lines of a
+            // program working perfectly well — the failure is usually `main`
+            // itself throwing, which appears nowhere in the console.
+            let error = browser.eval_string("return globalThis.__wl_done.error || \"\";")?;
+            if error.is_empty() {
+                eprintln!("error: the program reported failure but recorded no message");
+            } else {
+                eprintln!("error: {error}");
+            }
+        }
         println!("test result: {}", if failed { "FAILED" } else { "ok" });
         return Ok(if failed { 1 } else { 0 });
     }
