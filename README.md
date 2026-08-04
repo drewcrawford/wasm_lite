@@ -256,7 +256,8 @@ The core crate also exposes these modules:
 | [Threads, async & shared memory](./docs/threads-and-async.md) | `+atomics` builds, `thread::spawn`, `wasm_lite_std` (`Mutex`/`RwLock`/`Condvar`/`mpsc`, sync + async), the `spawn_local` executor, panic surfacing, the `std::time` veneer |
 | [wasm-bindgen interop](./docs/interop.md) | the `wasm-bindgen` feature and `.to_wasm_bindgen()` / `.to_wasm_lite()` conversions |
 | [Crate layering & roadmap](./docs/roadmap.md) | planned `wasm_lite_js`/`wasm_lite_web` split and known gaps |
-| [Design notes](./docs/design-notes.md) | forward-looking strategy for running wasm_lite and wasm-bindgen, including wgpu, in one binary |
+| [**Running wgpu / unmodified wasm-bindgen crates**](./shims_wasm_bindgen/README.md) | the **fake-wasm-bindgen shim**: substitute it graph-wide and unmodified `js-sys`/`web-sys`/`wgpu` compile on wasm_lite |
+| [Design notes](./docs/design-notes.md) | the coexistence options and which have shipped; strategy for wasm_lite and wasm-bindgen in one binary |
 | [wasm-bindgen thread-ownership census](./docs/wasm-thread-ownership-census.md) | db-dump data: about 1% of the wasm-bindgen ecosystem owns wasm threads; backs the interop strategy |
 | [Migration guide](./MIGRATION.md) | moving from wasm-bindgen: pros/cons, rosetta stone, gotchas |
 
@@ -270,6 +271,7 @@ The core crate also exposes these modules:
 | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |
 | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync + async); ported from `wasm_safe_thread`, retargeted off wasm-bindgen onto `wasm_lite` + a `spawn_local` event-loop executor |
 | `runner` | WebDriver runner; serves a bin interactively, or drives tests/doctests headless and exits |
+| `shims_wasm_bindgen/` | separate workspace (it reuses the package name `wasm-bindgen`): wasm-bindgen's API lowered onto wasm_lite, so unmodified `js-sys`/`web-sys`/`wgpu` compile here. Substituted via `[patch.crates-io]`; never published |
 
 ## Examples
 

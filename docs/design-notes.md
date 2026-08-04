@@ -4,19 +4,39 @@
 [interop](./interop.md), [thread-ownership census](./wasm-thread-ownership-census.md),
 [migration guide](../MIGRATION.md).)*
 
-These are forward-looking design notes, not shipped features. They record the
-options we've considered for letting wasm_lite and wasm-bindgen coexist in one
-binary — the hardest open problem, because the realistic large app (one that
-renders with [`wgpu`](https://crates.io/crates/wgpu)) cannot leave wasm-bindgen
-behind in the near term. Today's [interop](./interop.md) is one-directional:
-`wasm-lite` is always the *outer* tool (it runs the wasm-bindgen CLI internally
-and merges both glues). Everything below is about the inverse and adjacent cases.
+These notes record the options for letting wasm_lite and wasm-bindgen coexist in
+one binary. **One of them has since shipped**, so read the status line on each:
+
+| option | status |
+|---|---|
+| [Fake-wasm-bindgen shim](#fake-wasm-bindgen-shim-host-on-wasm_lite) (host on wasm_lite) | **SHIPPED** — [`shims_wasm_bindgen/`](../shims_wasm_bindgen/README.md), exercised by `scripts/wasm32/tests` |
+| [Fake-wasm_lite shim](#fake-wasm_lite-shim-host-on-wasm-bindgen) (host on wasm-bindgen) | design only |
+| [Reverse interop](#reverse-interop-a-wasm_lite-leaf-under-a-wasm-bindgen-app) | design only |
+| [Porting wgpu by hand](#porting-wgpu-off-wasm-bindgen-the-capstone) | design only, and **not required** — the shim covers it |
+
+Today's [interop](./interop.md) is one-directional: `wasm-lite` is always the
+*outer* tool (it runs the wasm-bindgen CLI internally and merges both glues).
+Everything below except the shipped shim is about the inverse and adjacent cases.
 
 ## The forcing case: mixed wasm_lite + wgpu binaries
 
-`wgpu`'s web backend is irreducibly wasm-bindgen/web-sys (WebGPU/WebGL/canvas) and
-cannot be migrated off it in the near term, so any app that renders with wgpu
-(e.g. `images_and_words`) stays a wasm-bindgen-driven build. The goal is to let
+**Largely answered by the shim** — see the status table above. `wgpu`'s web
+backend is irreducibly wasm-bindgen/web-sys, but it does not follow that the app
+"stays a wasm-bindgen-driven build": the shim replaces wasm-bindgen underneath
+unmodified wgpu, so the binary is all-wasm_lite while wgpu's source is untouched.
+Measured 2026-08-04 on Metropolis — a real wgpu application — with
+`[patch.crates-io] wasm-bindgen = { path = ".../shims_wasm_bindgen/wasm_bindgen" }`:
+`cargo check` and `cargo build` for `wasm32-unknown-unknown` both succeed, the lock
+holds one `wasm-bindgen` at 0.2.108 whose macro is `wasm-bindgen-macro-wl`, and no
+real wasm-bindgen remains in the graph. Runtime behaviour was not verified in that
+measurement.
+
+The subordination design below is the *alternative* route, kept for the case where
+an app must host on wasm-bindgen instead. Original framing follows.
+
+`wgpu`'s web backend is irreducibly wasm-bindgen/web-sys (WebGPU/WebGL/canvas), so
+an app that renders with wgpu and does *not* use the shim stays a
+wasm-bindgen-driven build. The goal is to let
 such an app move its **non-graphics** crates (`continue`, `some_executor`,
 `test_executors`, `logwise`, its own glue) onto wasm_lite while wgpu stays on
 wasm-bindgen, in **one** binary.
@@ -73,6 +93,11 @@ other's shim. wgpu-style apps host on wasm-bindgen; all-wasm_lite apps host on
 wasm_lite.
 
 ### Fake-wasm-bindgen shim (host on wasm_lite)
+
+> **SHIPPED.** Lives in [`shims_wasm_bindgen/`](../shims_wasm_bindgen/README.md),
+> which documents the crate graph in detail. Two consumer demos plus a
+> `wasm_bindgen_test` harness run under `scripts/wasm32/tests`. The rest of this
+> section is the original rationale, which still holds.
 
 Instead of reconciling two binding worlds or rewriting wgpu by hand, **replace
 wasm-bindgen itself**: ship a crate that is API-compatible with `wasm-bindgen` but
