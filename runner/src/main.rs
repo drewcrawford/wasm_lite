@@ -448,11 +448,15 @@ fn handle(mut stream: TcpStream, routes: &[Route]) -> std::io::Result<()> {
         return respond(&mut stream, 200, content_type, body, &request);
     };
 
-    // A range starting at or past the end is unsatisfiable. `async_file` reads
-    // this as end-of-file rather than as an error, which is what makes a
-    // sequential read terminate.
+    // Unsatisfiable: a range starting at or past the end, and a backwards one
+    // (`bytes=10-5`). `async_file` reads a 416 as end-of-file rather than as an
+    // error, which is what makes a sequential read terminate.
+    //
+    // The backwards case is not hypothetical politeness — without it the slice
+    // below is `&body[10..=5]`, which panics and kills the connection thread.
     let len = body.len() as u64;
-    if start >= len {
+    let unsatisfiable = start >= len || end.is_some_and(|e| e < start);
+    if unsatisfiable {
         return respond_range(&mut stream, 416, content_type, &[], None, len, &request);
     }
     // `end` is inclusive, and a client may ask for more than there is — a read

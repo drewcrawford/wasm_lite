@@ -89,7 +89,8 @@ All notable changes to this project will be documented in this file.
   `Content-Range`, and an unsatisfiable range returns 416. It previously answered
   every request with a full 200, which made a range-reading client's primary path
   untestable. Suffix (`bytes=-500`) and multi-range requests are refused rather
-  than mis-answered.
+  than mis-answered, and a *backwards* one (`bytes=10-5`) gets a 416 rather than
+  panicking the connection thread on a reversed slice.
 
 ### Fixed
 

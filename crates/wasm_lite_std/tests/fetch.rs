@@ -227,6 +227,23 @@ mod suite {
     }
 
     #[wasm_lite::wasm_lite_test]
+    fn a_backwards_range_is_416_not_a_crash() {
+        wasm_lite::set_panic_hook();
+        wasm_lite_std::async_doctest!(async {
+            let headers = Headers::new();
+            // `end` before `start`. Without an explicit check the server slices
+            // `body[10..=5]`, which panics and takes the connection with it —
+            // the request then fails as a network error rather than a 416.
+            headers.set("Range", "bytes=10-5").unwrap();
+            let init = get();
+            init.set_headers(&headers);
+
+            let response = fetch(SELF_WASM, &init).await.expect("fetch failed");
+            assert_eq!(response.status(), 416);
+        });
+    }
+
+    #[wasm_lite::wasm_lite_test]
     fn a_range_past_the_end_is_416() {
         wasm_lite::set_panic_hook();
         wasm_lite_std::async_doctest!(async {
