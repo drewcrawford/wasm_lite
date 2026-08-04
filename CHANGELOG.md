@@ -12,6 +12,19 @@ All notable changes to this project will be documented in this file.
   measuring. Timing is batch-calibrated because `performance.now()` is coarsened
   to 5 µs even under cross-origin isolation — see
   [docs/testing.md](docs/testing.md#benchmark-in-a-browser).
+- `Bencher::iter_custom_async` and `async fn` support in `#[wasm_lite_bench]`,
+  for work that cannot be driven synchronously (a `requestAnimationFrame` loop,
+  an awaited GPU submission) or whose setup should be excluded from the
+  measurement. Fails closed the same way the sync path does.
+- `wasm_lite_std::sleep_async` (+ `MAX_TIMEOUT`) — non-blocking sleep, usable on
+  the browser main thread where `sleep` traps. Owns its closure, so a dropped
+  sleep cancels its timer, and chains sleeps longer than `setTimeout`'s 32-bit
+  delay.
+- `wasm_lite_std::worker_doctest!` — run a *blocking* doctest on a worker, the
+  counterpart to `async_doctest!`. A doctest otherwise runs on the main thread,
+  where `join`/`park`/`recv_block` trap.
+- `wasm_lite::console::{warn, info, debug, trace}`.
+- `wasm_lite::timer` — `setTimeout`/`clearTimeout`.
 - `wasm_lite::performance::time_origin()` — `performance.timeOrigin`.
 - Runner environment variables, now documented in
   [docs/testing.md](docs/testing.md#configure-the-runner): `WASM_LITE_GPU` (a
