@@ -334,6 +334,7 @@ mod value;
 
 pub mod console;
 pub mod date;
+pub mod fetch;
 pub mod performance;
 pub mod thread;
 pub mod timer;

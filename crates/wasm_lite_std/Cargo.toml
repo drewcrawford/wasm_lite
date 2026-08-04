@@ -34,3 +34,10 @@ test_executors = "0.4.1"
 [[test]]
 name = "browser"
 harness = false
+
+# `wasm_lite::fetch`'s browser suite. It lives here rather than in `wasm_lite`
+# because awaiting needs `spawn_local`, and a dev-dependency pointing the other
+# way would link two copies of a crate with `#[no_mangle]` exports.
+[[test]]
+name = "fetch"
+harness = false

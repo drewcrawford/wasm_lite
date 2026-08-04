@@ -58,6 +58,19 @@ for BROWSER in firefox chrome; do
         --target wasm32-unknown-unknown -Z build-std=std,panic_abort
 done
 
+# `wasm_lite::fetch`, in both browsers — they disagree about whether a HEAD
+# response's body is null or an empty stream, and a Firefox-only run was green
+# on an assertion Chrome rejects.
+echo "testing wasm_lite::fetch browser suite (firefox, then chrome)"
+for BROWSER in firefox chrome; do
+    RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \
+    RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+    WASM_LITE_BROWSER="$BROWSER" \
+    cargo +nightly test -p wasm_lite_std --test fetch \
+        --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+done
+
 echo "testing wasm_lite_std browser suite"
 if ((${#CARGO_ARGS[@]})); then
     RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \
