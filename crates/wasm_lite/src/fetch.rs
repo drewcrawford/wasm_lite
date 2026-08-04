@@ -73,12 +73,18 @@ mod imp {
         "Headers" {
             /// `new Headers()`.
             #[constructor] fn new_headers() -> JsValue as "Headers";
-            fn append(this: &JsValue, name: &str, value: &str);
-            fn set(this: &JsValue, name: &str, value: &str);
-            /// A missing header is `null`, which crosses as `None`.
-            fn get(this: &JsValue, name: &str) -> Option<String>;
-            fn has(this: &JsValue, name: &str) -> bool;
-            fn delete(this: &JsValue, name: &str);
+            // Every one of these throws a `TypeError` for a name that is not a
+            // valid HTTP header token, and a `Result`-less binding would turn
+            // that into a wasm trap — unrecoverable, and taking the whole
+            // module with it. `dom::Element::set_attribute` is fallible for the
+            // same reason; these match it.
+            fn append(this: &JsValue, name: &str, value: &str) -> Result<(), JsValue>;
+            fn set(this: &JsValue, name: &str, value: &str) -> Result<(), JsValue>;
+            /// A missing header is `null`, which crosses as `None`; an invalid
+            /// name is the `Err`.
+            fn get(this: &JsValue, name: &str) -> Result<Option<String>, JsValue>;
+            fn has(this: &JsValue, name: &str) -> Result<bool, JsValue>;
+            fn delete(this: &JsValue, name: &str) -> Result<(), JsValue>;
         }
         "Response" {
             #[getter] fn status(this: &JsValue) -> u16;
@@ -200,6 +206,11 @@ js_handle! {
     ///
     /// Header names are case-insensitive, and the browser normalizes them, so
     /// `get("Content-Length")` and `get("content-length")` are the same lookup.
+    ///
+    /// **Every method is fallible**, which for a literal name is noise and for
+    /// a name built at runtime is the difference between an error and a dead
+    /// module: a name that is not a valid HTTP token throws a `TypeError`, and
+    /// an infallible binding would surface that as a wasm trap.
     Headers;
 }
 
@@ -210,31 +221,34 @@ impl Headers {
     }
 
     /// Add a value, keeping any already set for this name.
-    pub fn append(&self, name: &str, value: &str) {
-        imp::append(&self.0, name, value);
+    ///
+    /// Fails for a name that is not a valid HTTP header token — see the type
+    /// docs.
+    pub fn append(&self, name: &str, value: &str) -> Result<(), JsValue> {
+        imp::append(&self.0, name, value)
     }
 
     /// Set a value, replacing any already set for this name.
-    pub fn set(&self, name: &str, value: &str) {
-        imp::set(&self.0, name, value);
+    pub fn set(&self, name: &str, value: &str) -> Result<(), JsValue> {
+        imp::set(&self.0, name, value)
     }
 
-    /// The value for `name`, or `None` if the header is absent.
+    /// The value for `name`, or `Ok(None)` if the header is absent.
     ///
     /// Multiple values for one name are joined with `", "`, as the spec
-    /// requires.
-    pub fn get(&self, name: &str) -> Option<String> {
+    /// requires. "Absent" and "invalid name" are different answers.
+    pub fn get(&self, name: &str) -> Result<Option<String>, JsValue> {
         imp::get(&self.0, name)
     }
 
     /// Whether `name` is present.
-    pub fn has(&self, name: &str) -> bool {
+    pub fn has(&self, name: &str) -> Result<bool, JsValue> {
         imp::has(&self.0, name)
     }
 
     /// Remove every value for `name`.
-    pub fn delete(&self, name: &str) {
-        imp::delete(&self.0, name);
+    pub fn delete(&self, name: &str) -> Result<(), JsValue> {
+        imp::delete(&self.0, name)
     }
 }
 

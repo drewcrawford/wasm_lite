@@ -8,7 +8,9 @@ All notable changes to this project will be documented in this file.
 
 - `wasm_lite::fetch` — the Fetch API plus the slice of the Streams API a
   response body needs: `fetch`, `origin`, `RequestInit`, `Headers`, `Response`,
-  `ReadableStream`, `ReadableStreamDefaultReader`. Deliberately smaller than the
+  `ReadableStream`, `ReadableStreamDefaultReader`. Every `Headers` method is
+  fallible: an invalid header name throws a `TypeError`, and an infallible
+  binding would surface that as an unrecoverable wasm trap. Deliberately smaller than the
   `web-sys` surface it replaces: no `Request` (`fetch` takes a URL string), no
   `window()`/`WorkerGlobalScope` downcast (`fetch` and `origin` read off
   `globalThis`, which is both), and chunks arrive as `Vec<u8>` rather than a

@@ -69,27 +69,40 @@ mod suite {
     fn headers_roundtrip() {
         wasm_lite::set_panic_hook();
         let h = Headers::new();
-        assert_eq!(h.get("range"), None, "an unset header reads as None");
-        assert!(!h.has("range"));
+        assert_eq!(
+            h.get("range").unwrap(),
+            None,
+            "an unset header reads as None"
+        );
+        assert!(!h.has("range").unwrap());
 
-        h.set("Range", "bytes=0-99");
-        assert!(h.has("range"), "header names are case-insensitive");
-        assert_eq!(h.get("range").as_deref(), Some("bytes=0-99"));
+        h.set("Range", "bytes=0-99").unwrap();
+        assert!(h.has("range").unwrap(), "header names are case-insensitive");
+        assert_eq!(h.get("range").unwrap().as_deref(), Some("bytes=0-99"));
 
         // `append` accumulates where `set` replaces; the spec joins with ", ".
-        h.append("Accept", "text/plain");
-        h.append("Accept", "text/html");
+        h.append("Accept", "text/plain").unwrap();
+        h.append("Accept", "text/html").unwrap();
         assert_eq!(
-            h.get("accept").as_deref(),
+            h.get("accept").unwrap().as_deref(),
             Some("text/plain, text/html"),
             "append should keep both values"
         );
-        h.set("Accept", "text/css");
-        assert_eq!(h.get("accept").as_deref(), Some("text/css"));
+        h.set("Accept", "text/css").unwrap();
+        assert_eq!(h.get("accept").unwrap().as_deref(), Some("text/css"));
 
-        h.delete("Range");
-        assert!(!h.has("range"));
-        assert_eq!(h.get("range"), None);
+        h.delete("Range").unwrap();
+        assert!(!h.has("range").unwrap());
+        assert_eq!(h.get("range").unwrap(), None);
+
+        // An invalid header name is an `Err`, not a trap. This is the whole
+        // reason these are fallible — an infallible binding would take the
+        // module down instead.
+        assert!(h.set("not a valid name", "x").is_err());
+        assert!(h.get("not a valid name").is_err());
+        assert!(h.has("not a valid name").is_err());
+        assert!(h.append("not a valid name", "x").is_err());
+        assert!(h.delete("not a valid name").is_err());
     }
 
     // --- fetch --------------------------------------------------------------
@@ -138,6 +151,7 @@ mod suite {
             let len: usize = response
                 .headers()
                 .get("content-length")
+                .expect("valid header name")
                 .expect("content-length")
                 .parse()
                 .expect("content-length is a number");
@@ -169,7 +183,7 @@ mod suite {
         wasm_lite::set_panic_hook();
         wasm_lite_std::async_doctest!(async {
             let headers = Headers::new();
-            headers.set("Accept", "application/wasm");
+            headers.set("Accept", "application/wasm").unwrap();
             let init = get();
             init.set_headers(&headers);
 
@@ -195,7 +209,7 @@ mod suite {
 
             let headers = Headers::new();
             // HTTP range bounds are inclusive on both ends.
-            headers.set("Range", "bytes=16-47");
+            headers.set("Range", "bytes=16-47").unwrap();
             let init = get();
             init.set_headers(&headers);
 
@@ -203,7 +217,7 @@ mod suite {
             assert_eq!(response.status(), 206, "expected a partial response");
             assert!(response.ok(), "206 is a success");
             assert_eq!(
-                response.headers().get("content-range").as_deref(),
+                response.headers().get("content-range").unwrap().as_deref(),
                 Some(format!("bytes 16-47/{}", whole.len()).as_str())
             );
 
@@ -217,7 +231,7 @@ mod suite {
         wasm_lite::set_panic_hook();
         wasm_lite_std::async_doctest!(async {
             let headers = Headers::new();
-            headers.set("Range", "bytes=999999999-1000000000");
+            headers.set("Range", "bytes=999999999-1000000000").unwrap();
             let init = get();
             init.set_headers(&headers);
 
