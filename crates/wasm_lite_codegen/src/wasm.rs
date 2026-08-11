@@ -4,11 +4,18 @@
 
 /// Return the payload of the custom section named `name`, if present.
 pub fn custom_section<'a>(wasm: &'a [u8], name: &str) -> Result<Option<&'a [u8]>, String> {
+    Ok(custom_sections(wasm, name)?.into_iter().next())
+}
+
+/// Return every custom section named `name`, in module order.
+///
+/// Custom section names are not unique in the wasm format. Descriptor-bearing
+/// sections can therefore be repeated by a linker or another wasm transform;
+/// callers must not silently discard every occurrence after the first one.
+pub fn custom_sections<'a>(wasm: &'a [u8], name: &str) -> Result<Vec<&'a [u8]>, String> {
     let mut r = Reader::new(wasm);
-    if r.take(4)? != b"\0asm" {
-        return Err("not a wasm module (bad magic)".to_string());
-    }
-    let _version = r.take(4)?;
+    r.header()?;
+    let mut matches = Vec::new();
 
     while !r.eof() {
         let id = r.byte()?;
@@ -21,11 +28,11 @@ pub fn custom_section<'a>(wasm: &'a [u8], name: &str) -> Result<Option<&'a [u8]>
             let name_len = br.leb_u32()? as usize;
             let section_name = br.take(name_len)?;
             if section_name == name.as_bytes() {
-                return Ok(Some(&body[br.pos..]));
+                matches.push(&body[br.pos..]);
             }
         }
     }
-    Ok(None)
+    Ok(matches)
 }
 
 /// An imported memory, as produced by linking with `--import-memory`
@@ -52,10 +59,9 @@ pub struct MemoryImport {
 /// the glue can create a matching `WebAssembly.Memory` and supply it.
 pub fn imported_memory(wasm: &[u8]) -> Result<Option<MemoryImport>, String> {
     let mut r = Reader::new(wasm);
-    if r.take(4)? != b"\0asm" {
-        return Err("not a wasm module (bad magic)".to_string());
-    }
-    let _version = r.take(4)?;
+    r.header()?;
+    let mut memory = None;
+    let mut saw_import_section = false;
 
     while !r.eof() {
         let id = r.byte()?;
@@ -63,16 +69,21 @@ pub fn imported_memory(wasm: &[u8]) -> Result<Option<MemoryImport>, String> {
         let body = r.take(size)?;
         // Section id 2 is the import section.
         if id == 2 {
-            return parse_imports_for_memory(body);
+            if saw_import_section {
+                return Err("multiple import sections in wasm module".to_string());
+            }
+            saw_import_section = true;
+            memory = parse_imports_for_memory(body)?;
         }
     }
-    Ok(None)
+    Ok(memory)
 }
 
 /// Scan an import section's body for a memory import.
 fn parse_imports_for_memory(body: &[u8]) -> Result<Option<MemoryImport>, String> {
     let mut r = Reader::new(body);
     let count = r.leb_u32()?;
+    let mut memory = None;
     for _ in 0..count {
         let module = r.name()?;
         let name = r.name()?;
@@ -87,13 +98,16 @@ fn parse_imports_for_memory(body: &[u8]) -> Result<Option<MemoryImport>, String>
             }
             0x02 => {
                 let (initial, maximum, shared) = r.read_limits()?;
-                return Ok(Some(MemoryImport {
+                let found = MemoryImport {
                     module,
                     name,
                     initial,
                     maximum,
                     shared,
-                }));
+                };
+                if memory.replace(found).is_some() {
+                    return Err("multiple imported memories are not supported".to_string());
+                }
             }
             0x03 => {
                 r.byte()?; // valtype
@@ -102,7 +116,10 @@ fn parse_imports_for_memory(body: &[u8]) -> Result<Option<MemoryImport>, String>
             other => return Err(format!("unknown import kind {other} in import section")),
         }
     }
-    Ok(None)
+    if !r.eof() {
+        return Err("trailing bytes in import section".to_string());
+    }
+    Ok(memory)
 }
 
 struct Reader<'a> {
@@ -117,6 +134,16 @@ impl<'a> Reader<'a> {
 
     fn eof(&self) -> bool {
         self.pos >= self.buf.len()
+    }
+
+    fn header(&mut self) -> Result<(), String> {
+        if self.take(4)? != b"\0asm" {
+            return Err("not a wasm module (bad magic)".to_string());
+        }
+        if self.take(4)? != b"\x01\0\0\0" {
+            return Err("unsupported wasm version".to_string());
+        }
+        Ok(())
     }
 
     fn byte(&mut self) -> Result<u8, String> {
@@ -149,16 +176,28 @@ impl<'a> Reader<'a> {
     /// Flags bit 0 = has-max, bit 1 = shared (threads proposal), bit 2 = 64-bit.
     fn read_limits(&mut self) -> Result<(u32, Option<u32>, bool), String> {
         let flags = self.byte()?;
+        if flags & !0x03 != 0 {
+            return Err(format!("unsupported memory limits flags {flags:#x}"));
+        }
         let has_max = flags & 0x01 != 0;
         let shared = flags & 0x02 != 0;
+        if shared && !has_max {
+            return Err("shared memory requires a maximum".to_string());
+        }
         let min = self.leb_u32()?;
         let max = if has_max { Some(self.leb_u32()?) } else { None };
+        if max.is_some_and(|max| max < min) {
+            return Err("memory maximum is smaller than its minimum".to_string());
+        }
         Ok((min, max, shared))
     }
 
     /// Skip a limits descriptor (for table imports we don't care about).
     fn skip_limits(&mut self) -> Result<(), String> {
         let flags = self.byte()?;
+        if flags & !0x01 != 0 {
+            return Err(format!("unsupported table limits flags {flags:#x}"));
+        }
         self.leb_u32()?;
         if flags & 0x01 != 0 {
             self.leb_u32()?;
@@ -195,6 +234,18 @@ impl<'a> Reader<'a> {
 mod tests {
     use super::*;
 
+    fn custom_module(name: &str, payloads: &[&[u8]]) -> Vec<u8> {
+        let mut wasm = b"\0asm\x01\0\0\0".to_vec();
+        for payload in payloads {
+            let body_len = 1 + name.len() + payload.len();
+            assert!(name.len() < 128 && body_len < 128);
+            wasm.extend([0, body_len as u8, name.len() as u8]);
+            wasm.extend(name.as_bytes());
+            wasm.extend(*payload);
+        }
+        wasm
+    }
+
     #[test]
     fn finds_shared_imported_memory() {
         // A module whose only section is an import of `env.memory`, a shared
@@ -224,5 +275,32 @@ mod tests {
     fn no_imported_memory_when_absent() {
         let wasm: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
         assert_eq!(imported_memory(wasm).unwrap(), None);
+    }
+
+    #[test]
+    fn returns_every_matching_custom_section() {
+        let wasm = custom_module("x", &[b"first", b"second"]);
+        assert_eq!(
+            custom_sections(&wasm, "x").unwrap(),
+            [&b"first"[..], &b"second"[..]]
+        );
+    }
+
+    #[test]
+    fn matching_custom_section_does_not_hide_a_malformed_tail() {
+        let mut wasm = custom_module("x", &[b"payload"]);
+        wasm.push(1); // section id without its required size
+        assert!(custom_sections(&wasm, "x").is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_memory_limits() {
+        // Shared memory without a maximum is invalid and cannot be passed to
+        // WebAssembly.Memory's `shared: true` constructor.
+        let wasm: &[u8] = &[
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x02, 0x0f, 0x01, 0x03, b'e', b'n',
+            b'v', 0x06, b'm', b'e', b'm', b'o', b'r', b'y', 0x02, 0x02, 0x01,
+        ];
+        assert!(imported_memory(wasm).is_err());
     }
 }

@@ -269,15 +269,24 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
             continue;
         }
 
-        let mut fields = line.split('|');
-        let kind_tag = fields.next().unwrap_or_default();
-        let namespace = fields.next().unwrap_or_default();
-        let import_name = fields.next().unwrap_or_default();
-        let js_name = fields.next().unwrap_or_default();
-        let arg_tags = fields.next().unwrap_or_default();
-        let ret_tag = fields.next().unwrap_or_default();
-        // A 7th field, absent in descriptors that predate it.
-        let variadic = fields.next().unwrap_or_default() == "1";
+        let fields: Vec<_> = line.split('|').collect();
+        if !(6..=7).contains(&fields.len()) {
+            return Err(format!("malformed descriptor line: {line:?}"));
+        }
+        let kind_tag = fields[0];
+        let namespace = fields[1];
+        let import_name = fields[2];
+        let js_name = fields[3];
+        let arg_tags = fields[4];
+        let ret_tag = fields[5];
+        // A 7th field is absent in descriptors that predate variadic imports.
+        let variadic = match fields.get(6) {
+            None | Some(&"") => false,
+            Some(&"1") => true,
+            Some(other) => {
+                return Err(format!("invalid variadic flag {other:?} in {line:?}"));
+            }
+        };
 
         if namespace.is_empty() || import_name.is_empty() || js_name.is_empty() {
             return Err(format!("malformed descriptor line: {line:?}"));
@@ -299,7 +308,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
 
         let args: Vec<AbiArg> = arg_tags
             .split(',')
-            .filter(|t| !t.is_empty())
+            .filter(|_| !arg_tags.is_empty())
             .map(|t| {
                 AbiArg::from_tag(t).ok_or_else(|| format!("unknown argument tag {t:?} in {line:?}"))
             })
@@ -579,6 +588,17 @@ mod tests {
         ];
         for (section, what) in cases {
             assert!(parse(section).is_err(), "should reject {what}");
+        }
+    }
+
+    #[test]
+    fn rejects_ambiguous_descriptor_fields() {
+        for section in [
+            &b"f|ns|import|call||void|extra|field\n"[..],
+            &b"f|ns|import|call|||not-a-flag\n"[..],
+            &b"f|ns|import|call|i32,,i32||\n"[..],
+        ] {
+            assert!(parse(section).is_err(), "accepted {section:?}");
         }
     }
 }

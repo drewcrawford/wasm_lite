@@ -115,10 +115,11 @@ pub enum ExportRet {
 
 /// Read exported-function descriptors from a compiled wasm module.
 pub fn exports_from_wasm(wasm: &[u8]) -> Result<Vec<Export>, String> {
-    match crate::wasm::custom_section(wasm, "__wl_exports")? {
-        Some(bytes) => parse(bytes),
-        None => Ok(Vec::new()),
+    let mut exports = Vec::new();
+    for bytes in crate::wasm::custom_sections(wasm, "__wl_exports")? {
+        exports.extend(parse(bytes)?);
     }
+    Ok(exports)
 }
 
 fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
@@ -130,21 +131,20 @@ fn parse(bytes: &[u8]) -> Result<Vec<Export>, String> {
         if line.is_empty() {
             continue;
         }
-        let mut fields = line.split('|');
-        let name = fields.next().unwrap_or_default();
-        let arg_tags = fields.next().unwrap_or_default();
-        let ret_tag = fields.next().unwrap_or_default();
-
-        if name.is_empty() {
+        let fields: Vec<_> = line.split('|').collect();
+        if fields.len() != 3 || fields[0].is_empty() {
             return Err(format!("malformed export line: {line:?}"));
         }
+        let [name, arg_tags, ret_tag] = fields.as_slice() else {
+            unreachable!("field count checked above")
+        };
 
         // Unknown tags are a hard error: the macro ABI and this parser must
         // stay in lockstep, and a silent fallback would give the wrapper the
         // wrong wasm-level arity, shifting every subsequent argument.
         let args = arg_tags
             .split(',')
-            .filter(|t| !t.is_empty())
+            .filter(|_| !arg_tags.is_empty())
             .map(|t| match t {
                 "str" => Ok(ExportArg::Str),
                 "bytes" => Ok(ExportArg::Bytes),
@@ -314,5 +314,16 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn rejects_truncated_or_ambiguous_export_fields() {
+        for section in [
+            &b"tick\n"[..],
+            &b"tick|||extra\n"[..],
+            &b"add|i32,,i32|i32\n"[..],
+        ] {
+            assert!(parse(section).is_err(), "accepted {section:?}");
+        }
     }
 }

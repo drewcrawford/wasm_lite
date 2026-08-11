@@ -329,7 +329,7 @@ export async function instantiate(wasmUrl, memory) {{
     __wl_memory = memory || makeMemory();
     __wl_shared = {shared};
     const imports = makeImports();
-    imports[{module}] = imports[{module}] || {{}};
+    imports[{module}] = imports[{module}] || Object.create(null);
     imports[{module}][{name}] = __wl_memory;
     const {{ module: m, instance }} = await WebAssembly.instantiateStreaming(fetch(wasmUrl), imports);
     __wl_module = m;
@@ -510,7 +510,10 @@ pub fn generate_glue(
     memory: Option<&MemoryImport>,
 ) -> String {
     let mut js = String::from(PREAMBLE);
-    js.push_str("export function makeImports() {\n    const imports = {};\n");
+    // Null-prototype objects make wasm import names literal keys. On ordinary
+    // objects, names such as `__proto__` and `constructor` mutate or resolve
+    // through Object.prototype instead of defining the requested import.
+    js.push_str("export function makeImports() {\n    const imports = Object.create(null);\n");
     // Runtime support: Rust calls __wl_drop when a JsValue drops, __wl_schedule
     // to drive the async executor; shared-memory builds also get __wl_spawn for
     // thread spawning. (Unused entries are harmless — the wasm only imports what
@@ -519,12 +522,12 @@ pub fn generate_glue(
     if memory.is_some() {
         let _ = writeln!(
             js,
-            "    imports[\"__wasm_lite\"] = {{ __wl_drop: __wl_drop, __wl_spawn: __wl_spawn, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, {test_rt} }};"
+            "    imports[\"__wasm_lite\"] = Object.assign(Object.create(null), {{ __wl_drop: __wl_drop, __wl_spawn: __wl_spawn, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, {test_rt} }});"
         );
     } else {
         let _ = writeln!(
             js,
-            "    imports[\"__wasm_lite\"] = {{ __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, {test_rt} }};"
+            "    imports[\"__wasm_lite\"] = Object.assign(Object.create(null), {{ __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, {test_rt} }});"
         );
     }
 
@@ -554,15 +557,15 @@ pub fn generate_glue(
         None => js.push_str(INSTANTIATE),
     }
 
-    for export in exports {
-        emit_export(&mut js, export);
+    for (index, export) in exports.iter().enumerate() {
+        emit_export(&mut js, export, index);
     }
     js
 }
 
 /// Emit one export wrapper: a JS function that marshals `&str` args into wasm
 /// memory, forwards to the export shim, frees, and unwraps the return.
-fn emit_export(js: &mut String, export: &Export) {
+fn emit_export(js: &mut String, export: &Export, index: usize) {
     let params: Vec<String> = (0..export.args.len()).map(|i| format!("p{i}")).collect();
 
     let mut lines = Vec::new();
@@ -645,9 +648,9 @@ fn emit_export(js: &mut String, export: &Export) {
         }
     }
 
+    let wasm_name = js_string(&format!("__wl_export_{}", export.name));
     let call = format!(
-        "__wl_instance.exports.__wl_export_{}({})",
-        export.name,
+        "__wl_instance.exports[{wasm_name}]({})",
         wasm_args.join(", ")
     );
 
@@ -708,7 +711,7 @@ fn emit_export(js: &mut String, export: &Export) {
         // sret returns: Rust wrote a discriminant at __ret and a payload at
         // __ret+8. The buffer is the export's leading argument.
         ExportRet::Opt(p) => {
-            let sret_call = sret_call(&export.name, &wasm_args);
+            let sret_call = sret_call(&wasm_name, &wasm_args);
             lines.push("const __ret = __wl_instance.exports.__wl_malloc(16);".into());
             lines.push(format!("{sret_call};"));
             lines.extend(frees);
@@ -725,7 +728,7 @@ fn emit_export(js: &mut String, export: &Export) {
             lines.push("return __result;".into());
         }
         ExportRet::Res(ok, err) => {
-            let sret_call = sret_call(&export.name, &wasm_args);
+            let sret_call = sret_call(&wasm_name, &wasm_args);
             lines.push("const __ret = __wl_instance.exports.__wl_malloc(16);".into());
             lines.push(format!("{sret_call};"));
             lines.extend(frees);
@@ -751,23 +754,24 @@ fn emit_export(js: &mut String, export: &Export) {
         }
     }
 
+    // The descriptor comes from the wasm binary. Keep its name data, never JS
+    // source: a stable local identifier plus a quoted export alias prevents a
+    // crafted custom section from injecting statements into the glue module.
+    let wrapper = format!("__wl_export_wrapper_{index}");
+    let public_name = js_string(&export.name);
     let _ = writeln!(
         js,
-        "\nexport function {}({}) {{ {} }}",
-        export.name,
+        "\nfunction {wrapper}({}) {{ {} }}\nexport {{ {wrapper} as {public_name} }};",
         params.join(", "),
         lines.join(" ")
     );
 }
 
 /// The export call for an sret return: the buffer `__ret` is the leading argument.
-fn sret_call(name: &str, wasm_args: &[String]) -> String {
+fn sret_call(wasm_name: &str, wasm_args: &[String]) -> String {
     let mut args = vec!["__ret".to_string()];
     args.extend(wasm_args.iter().cloned());
-    format!(
-        "__wl_instance.exports.__wl_export_{name}({})",
-        args.join(", ")
-    )
+    format!("__wl_instance.exports[{wasm_name}]({})", args.join(", "))
 }
 
 /// Read one sret payload from the buffer at JS offset `off`. Returns the
@@ -1039,8 +1043,11 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
         }
     };
 
-    // `imports[ns] ||= {}` then assign the shim, keyed on the wasm import name.
-    let _ = writeln!(js, "    imports[{ns}] = imports[{ns}] || {{}};");
+    // Ensure the namespace exists, then assign the shim by wasm import name.
+    let _ = writeln!(
+        js,
+        "    imports[{ns}] = imports[{ns}] || Object.create(null);"
+    );
     match &d.ret {
         // A handle return stores the result in the value table and yields its index.
         Ret::Handle => {
@@ -1185,6 +1192,11 @@ fn js_string(s: &str) -> String {
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\u{:04x}", u32::from(c));
+            }
             _ => out.push(c),
         }
     }
@@ -1229,7 +1241,7 @@ mod tests {
         ));
         assert!(js.contains("export async function instantiate"));
         // The value-table runtime import is always wired.
-        assert!(js.contains("imports[\"__wasm_lite\"] = { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_bigint: __wl_bigint, __wl_ubigint: __wl_ubigint, __wl_bigint_str: __wl_bigint_str, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop, __wl_cmp: __wl_cmp, __wl_is: __wl_is, __wl_checked_div: __wl_checked_div, __wl_num_str: __wl_num_str, __wl_memory_obj: __wl_memory_obj, __wl_module_obj: __wl_module_obj };"));
+        assert!(js.contains("imports[\"__wasm_lite\"] = Object.assign(Object.create(null), { __wl_drop: __wl_drop, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_bigint: __wl_bigint, __wl_ubigint: __wl_ubigint, __wl_bigint_str: __wl_bigint_str, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop, __wl_cmp: __wl_cmp, __wl_is: __wl_is, __wl_checked_div: __wl_checked_div, __wl_num_str: __wl_num_str, __wl_memory_obj: __wl_memory_obj, __wl_module_obj: __wl_module_obj });"));
     }
 
     #[test]
@@ -1256,7 +1268,8 @@ mod tests {
             "imports[\"ns\"][\"set_id\"] = (p0) => globalThis[\"ns\"][\"set_id\"]((p0 >>> 0));"
         ));
         assert!(js.contains("imports[\"ns\"][\"pick\"] = (p0, p1) => globalThis[\"ns\"][\"pick\"]((p0 ? (p1 >>> 0) : undefined));"));
-        assert!(js.contains("export function next_id() { __wl_check_live(); const __ret = __wl_instance.exports.__wl_export_next_id(); return __ret >>> 0; }"));
+        assert!(js.contains("function __wl_export_wrapper_0() { __wl_check_live(); const __ret = __wl_instance.exports[\"__wl_export_next_id\"](); return __ret >>> 0; }"));
+        assert!(js.contains("export { __wl_export_wrapper_0 as \"next_id\" };"));
     }
 
     #[test]
@@ -1493,10 +1506,11 @@ mod tests {
             },
         ];
         let js = generate_glue(&[], &exports, None);
-        assert!(js.contains("export function add(p0, p1) { __wl_check_live(); const __ret = __wl_instance.exports.__wl_export_add(p0, p1); return __ret; }"));
-        assert!(js.contains("export function is_even(p0) { __wl_check_live(); const __ret = __wl_instance.exports.__wl_export_is_even(p0); return Boolean(__ret); }"));
+        assert!(js.contains("function __wl_export_wrapper_0(p0, p1) { __wl_check_live(); const __ret = __wl_instance.exports[\"__wl_export_add\"](p0, p1); return __ret; }"));
+        assert!(js.contains("export { __wl_export_wrapper_0 as \"add\" };"));
+        assert!(js.contains("function __wl_export_wrapper_1(p0) { __wl_check_live(); const __ret = __wl_instance.exports[\"__wl_export_is_even\"](p0); return Boolean(__ret); }"));
         assert!(
-            js.contains("export function tick() { __wl_check_live(); __wl_instance.exports.__wl_export_tick(); }")
+            js.contains("function __wl_export_wrapper_2() { __wl_check_live(); __wl_instance.exports[\"__wl_export_tick\"](); }")
         );
     }
 
@@ -1509,8 +1523,36 @@ mod tests {
         }];
         let js = generate_glue(&[], &exports, None);
         assert!(js.contains("const [__a0p, __a0l] = __wl_pass_str(p0);"));
-        assert!(js.contains("__wl_instance.exports.__wl_export_greet(__a0p, __a0l)"));
+        assert!(js.contains("__wl_instance.exports[\"__wl_export_greet\"](__a0p, __a0l)"));
         assert!(js.contains("__wl_instance.exports.__wl_free(__a0p, __a0l);"));
         assert!(js.contains("const __s = __wl_str(__p, __l);"));
+    }
+
+    #[test]
+    fn import_keys_cannot_reach_object_prototypes() {
+        let descriptor = func("__wasm_lite", "__proto__", "call", vec![], Ret::Void);
+        let js = generate_glue(&[descriptor], &[], None);
+        assert!(js.contains("const imports = Object.create(null);"));
+        assert!(js.contains(
+            "imports[\"__wasm_lite\"] = Object.assign(Object.create(null), { __wl_drop:"
+        ));
+        assert!(js.contains("imports[\"__wasm_lite\"][\"__proto__\"] = () =>"));
+    }
+
+    #[test]
+    fn export_descriptor_names_are_always_quoted_data() {
+        let export = Export {
+            name: "x\"); globalThis.pwned = true; //".into(),
+            args: vec![],
+            ret: ExportRet::Void,
+        };
+        let js = generate_glue(&[], &[export], None);
+        assert!(!js.contains("export function x"));
+        assert!(js.contains(
+            "__wl_instance.exports[\"__wl_export_x\\\"); globalThis.pwned = true; //\"]()"
+        ));
+        assert!(js.contains(
+            "export { __wl_export_wrapper_0 as \"x\\\"); globalThis.pwned = true; //\" };"
+        ));
     }
 }
