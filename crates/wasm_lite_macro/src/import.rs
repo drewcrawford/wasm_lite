@@ -426,6 +426,12 @@ fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream
             k.tag
         }
     };
+    if f.variadic && !matches!(kind, "f" | "m" | "n") {
+        return Err(Error::new_spanned(
+            name,
+            "import!: #[variadic] is only supported on functions, methods, and constructors",
+        ));
+    }
 
     // Default JS name: the Rust name minus any `r#` (the raw prefix is
     // Rust-only; `fn r#type(...)` must call the JS property `type`). The wasm
@@ -842,6 +848,29 @@ mod tests {
         assert!(
             output.contains("values . as_mut_ptr () as * mut u8"),
             "{output}"
+        );
+    }
+
+    #[test]
+    fn rejects_variadic_on_non_call_bindings() {
+        let result = build(quote! {
+            "Element" {
+                #[setter]
+                #[variadic]
+                fn set_values(this: &JsValue, values: &[JsValue]);
+            }
+        });
+        assert!(
+            result.is_err(),
+            "#[variadic] on a setter must be rejected before it reaches JavaScript codegen"
+        );
+        let error = result.unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("#[variadic] is only supported on functions, methods, and constructors"),
+            "{error}"
         );
     }
 }

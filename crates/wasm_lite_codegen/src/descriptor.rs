@@ -315,7 +315,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
             .collect::<Result<_, _>>()?;
 
         let ret = parse_ret(ret_tag)?;
-        check_shape(kind, &args, &ret, import_name)?;
+        check_shape(kind, &args, &ret, variadic, import_name)?;
 
         descriptors.push(Descriptor {
             kind,
@@ -337,7 +337,19 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Descriptor>, String> {
 /// so a descriptor of the wrong shape would either panic there or silently
 /// produce glue that reads the wrong argument. Rejecting it here keeps the
 /// failure at parse time, where the offending line can be named.
-fn check_shape(kind: Kind, args: &[AbiArg], ret: &Ret, import_name: &str) -> Result<(), String> {
+fn check_shape(
+    kind: Kind,
+    args: &[AbiArg],
+    ret: &Ret,
+    variadic: bool,
+    import_name: &str,
+) -> Result<(), String> {
+    if variadic && !matches!(kind, Kind::Function | Kind::Method | Kind::Constructor) {
+        return Err(format!(
+            "{kind:?} {import_name:?} cannot be variadic; only calls can spread arguments"
+        ));
+    }
+
     let needs_receiver = matches!(
         kind,
         Kind::Method
@@ -600,5 +612,10 @@ mod tests {
         ] {
             assert!(parse(section).is_err(), "accepted {section:?}");
         }
+    }
+
+    #[test]
+    fn rejects_variadic_non_call_descriptors() {
+        assert!(parse(b"s|Element|set_values|values|handle,handles||1\n").is_err());
     }
 }
