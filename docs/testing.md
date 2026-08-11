@@ -125,7 +125,8 @@ mod tests {
 By default a test body runs on the **main thread**, where blocking APIs
 (`lock_block`, `recv_block`, `park`, synchronous `join`) trap. To test them, run
 the body on a dedicated Web Worker with `#[wasm_lite_test(worker)]` — a
-fail-closed `spawn` + `join_async` wrapper:
+fail-closed `spawn` + `join_async` wrapper. This form requires a shared-memory
+`+atomics` build; stable non-atomic wasm has no worker-spawn backend:
 
 ```rust
 #[wasm_lite::wasm_lite_test(worker)]
@@ -193,17 +194,20 @@ harness = false
 
 ## Run the `wasm_lite_std` browser suite
 
-`crates/wasm_lite_std/tests/browser.rs` (a `harness = false` target) exercises
-`Mutex`/`RwLock`/`Condvar`/`mpsc`/`time` across the spin/block/sync/async variants
-(including timeouts) and `spawn`/`join_async` in a real browser — blocking
-variants via `(worker)` tests. Run it with:
+`crates/wasm_lite_std/tests/browser.rs` (a `harness = false` target), together
+with the crate's wasm-enabled lib tests, exercises
+`Mutex`/`RwLock`/`Condvar`/`mpsc`/`time`, `sleep_async`, `park`/`unpark`, and
+`spawn`/`join_async` in a real browser. Blocking variants use `(worker)` tests.
+Run the full shared-memory suite with:
 
 ```bash
 crates/wasm_lite_std/run-browser-tests.sh
 ```
 
 It requires **nightly** (atomics ⇒ recompiled `std`) and a WebDriver browser; pass
-`--no-run` to just build.
+`--no-run` to just build. The repository-wide `scripts/wasm32/tests` also runs a
+stable, non-atomic browser smoke test for the local executor and `sleep_async`,
+so accidental dependencies on atomic waits cannot hide behind the threaded run.
 
 ## Benchmark in a browser
 
@@ -232,11 +236,12 @@ wasm_lite::bench_main!();
 
 ```text
 $ cargo bench
-running 4 benchmarks
+running 5 benchmarks
 test arith::empty ... bench:           0 ns/iter (+/- 0)
 test arith::multiply ... bench:           2 ns/iter (+/- 1)
 test arith::sum_to_1000 ... bench:          11 ns/iter (+/- 3)
 test arith::allocate_a_vec ... bench:          65 ns/iter (+/- 10)
+... awaited_yield reports in the same shape, with browser-dependent timing ...
 ```
 
 Each benchmark gets its own page load, exactly as each test does, so one that
@@ -311,7 +316,10 @@ instead of publishing whatever the result exports happened to hold. The
 fail-closed rule is unchanged: an async benchmark that never calls
 `iter_custom_async` still **fails**.
 
-Note this needs `wasm_lite_std`, and so nightly plus an `+atomics` build.
+This needs `wasm_lite_std`, but no longer inherently needs atomics: the stable
+single-realm executor can drive an async benchmark that does not spawn workers.
+Use the nightly shared-memory configuration only when the benchmark itself
+spawns threads or measures cross-thread work.
 
 ### Benchmarks in CI
 

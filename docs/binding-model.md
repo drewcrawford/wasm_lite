@@ -33,6 +33,23 @@ segment in turn, which is how a method is borrowed off a prototype and applied
 to something else. A `&mut [T]` argument is the same view as `&[T]`, but says
 JS may write back through it.
 
+Calls may also spread their final argument with `#[variadic]`. A
+`&[JsValue]` becomes an ordinary JS array, then its elements become individual
+arguments at the call site:
+
+```rust
+wasm_lite::import! {
+    "Array" {
+        #[variadic]
+        fn of(values: &[JsValue]) -> JsValue;
+    }
+}
+```
+
+Only functions, methods, and constructors can be variadic; applying the
+attribute to a getter, setter, indexing operation, or `instanceof` is rejected
+by both the macro and descriptor parser.
+
 **Operations that aren't calls** — a JS binding surface needs property access,
 `new`, and computed indexing as well. None of these can be inferred from a Rust
 signature (`fn tag_name(this: &JsValue) -> String` reads identically to a
@@ -68,7 +85,9 @@ throwing a `TypeError` (bare `x instanceof undefined` does).
 Getting this wrong is not a subtle mismatch: emitting `el.tagName()` for a
 property read throws, so the shapes are checked in the macro *and* in the
 descriptor parser — a getter takes only the receiver and must return; a setter
-takes receiver plus value and must not; a constructor must return a handle.
+takes receiver plus value and returns either nothing or `Result<(), E>` for an
+assignment that can throw; a constructor must return a value. Index deletion
+may return its JavaScript boolean result or discard it.
 
 There is deliberately no static-method kind: `Klass.method(args)` is already a
 namespaced function with the class as the namespace.
@@ -171,11 +190,17 @@ Symmetric across imports and exports:
 
 | type | import arg | import return | export arg | export return |
 |---|---|---|---|---|
-| numbers / `bool` | ✓ | ✓ | ✓ | ✓ |
-| strings | `&str` | `String` | `&str` | `String` |
+| numbers / `bool` | all scalar widths | all scalar widths | `i32`, `u32`, `f64`, `bool` directly | `i32`, `u32`, `f64`, `bool` directly |
+| strings | `&str` or `String` | `String` | `&str` | `String` |
 | bytes | `&[u8]` | `Vec<u8>` | `&[u8]` | `Vec<u8>` |
 | numeric slices | `&[f32]`, `&[u32]`, … | — | — | — |
+| handle slices | `&[JsValue]` → JS array | — | — | — |
 | JS objects | `&JsValue` | `JsValue` | `JsValue` | `JsValue` |
+
+The narrower direct-export scalar row is intentional: the export descriptor
+and wrapper currently implement direct `i32`/`u32`/`f64` only. All integer and
+float widths are nevertheless valid *inside exported `Option`/`Result`
+payloads*, where the sret buffer records their exact layout.
 
 Numeric slices (`i8`/`i16`/`u16`/`i32`/`u32`/`i64`/`u64`/`f32`/`f64`; `&[u8]`
 keeps its own `bytes` spelling) become a typed-array view over wasm memory — `&[f32]` arrives
@@ -188,9 +213,11 @@ already aligned; the return direction would have the host allocate through
 `__wl_malloc`, which is align-1, and a `Float32Array` cannot view an unaligned
 offset. Returning one needs an aligned allocator first.
 
-Strings/bytes are passed by allocating in wasm memory (`__wl_malloc`, align 1)
-and handing over a packed `(ptr<<32 | len)` `i64`; ownership transfers to
-whichever side allocated last. Objects cross as `u32` value-table indices.
+String/byte arguments flatten to a `(ptr, len)` pair. A direct owned return is a
+packed `(ptr << 32 | len)` `i64`; an `Option`/`Result` payload stores the pointer
+at sret offset 8 and the length at offset 12. Allocations use `__wl_malloc`
+(align 1), ownership transfers across the boundary, and the receiver frees the
+buffer after copying or taking ownership. Objects cross as `u32` value-table indices.
 The import/export asymmetry for objects is deliberate: an import *lends* Rust's
 handle (`&JsValue`), an export *takes* ownership from JS (`JsValue` by value).
 

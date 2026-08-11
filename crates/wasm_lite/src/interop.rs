@@ -41,6 +41,8 @@ mod wb_bridge {
 
 /// Convert a `wasm_lite` handle into a `wasm_bindgen` handle, consuming `self`.
 pub trait ToWasmBindgen {
+    /// Moves this value from the `wasm_lite` value table into the
+    /// `wasm_bindgen` value table.
     fn to_wasm_bindgen(self) -> WbValue;
 }
 
@@ -54,6 +56,8 @@ impl ToWasmBindgen for WlValue {
 
 /// Convert a `wasm_bindgen` handle into a `wasm_lite` handle, consuming `self`.
 pub trait ToWasmLite {
+    /// Moves this value from the `wasm_bindgen` value table into the
+    /// `wasm_lite` value table.
     fn to_wasm_lite(self) -> WlValue;
 }
 

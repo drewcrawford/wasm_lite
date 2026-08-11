@@ -5,18 +5,20 @@
 [migration guide](../MIGRATION.md).)*
 
 These notes record the options for letting wasm_lite and wasm-bindgen coexist in
-one binary. **One of them has since shipped**, so read the status line on each:
+one binary. Both `[patch]` directions now have implementations, with very
+different coverage, so read the status line on each:
 
 | option | status |
 |---|---|
 | [Fake-wasm-bindgen shim](#fake-wasm-bindgen-shim-host-on-wasm_lite) (host on wasm_lite) | **SHIPPED** — [`shims_wasm_bindgen/`](../shims_wasm_bindgen/README.md), exercised by `scripts/wasm32/tests` |
-| [Fake-wasm_lite shim](#fake-wasm_lite-shim-host-on-wasm-bindgen) (host on wasm-bindgen) | design only |
+| [Fake-wasm_lite shim](#fake-wasm_lite-shim-host-on-wasm-bindgen) (host on wasm-bindgen) | **SHIPPED, PARTIAL** — [`shims/`](../shims/); covers the original core subset but trails newer wasm_lite APIs |
 | [Reverse interop](#reverse-interop-a-wasm_lite-leaf-under-a-wasm-bindgen-app) | design only |
-| [Porting wgpu by hand](#porting-wgpu-off-wasm-bindgen-the-capstone) | design only, and **not required** — the shim covers it |
+| [Porting wgpu by hand](#porting-wgpu-off-wasm-bindgen-the-capstone) | design only; not required for the upstream surface the shim already covers |
 
 Today's [interop](./interop.md) is one-directional: `wasm-lite` is always the
 *outer* tool (it runs the wasm-bindgen CLI internally and merges both glues).
-Everything below except the shipped shim is about the inverse and adjacent cases.
+The direct CLI interop remains one-directional; the reverse-direction shim is a
+package substitution, not a glue-merging post-pass.
 
 ## The forcing case: mixed wasm_lite + wgpu binaries
 
@@ -24,12 +26,16 @@ Everything below except the shipped shim is about the inverse and adjacent cases
 backend is irreducibly wasm-bindgen/web-sys, but it does not follow that the app
 "stays a wasm-bindgen-driven build": the shim replaces wasm-bindgen underneath
 unmodified wgpu, so the binary is all-wasm_lite while wgpu's source is untouched.
-Measured 2026-08-04 on Metropolis — a real wgpu application — with
+Measured on a real wgpu application with
 `[patch.crates-io] wasm-bindgen = { path = ".../shims_wasm_bindgen/wasm_bindgen" }`:
 `cargo check` and `cargo build` for `wasm32-unknown-unknown` both succeed, the lock
 holds one `wasm-bindgen` at 0.2.108 whose macro is `wasm-bindgen-macro-wl`, and no
-real wasm-bindgen remains in the graph. Runtime behaviour was not verified in that
-measurement.
+real wasm-bindgen remains in the graph. The shim's own browser coverage now runs
+unmodified js-sys and DOM bindings, constructs a wgpu 28 `Instance`, and reaches
+`navigator.gpu` from `request_adapter`. It still rejects block-level
+`inline_js`/`module`/`raw_module`, which prevents some complete applications
+(including the then-current Metropolis graph) from running unchanged; see the
+shim's [current coverage table](../shims_wasm_bindgen/README.md#what-works).
 
 The subordination design below is the *alternative* route, kept for the case where
 an app must host on wasm-bindgen instead. Original framing follows.
@@ -67,10 +73,11 @@ imports, so the module fails to instantiate. Two candidate fixes:
   so the downstream CLI resolves them with no extra step.
 
 Until then the options are: have the app make `wasm-lite` its final codegen step
-(its `#[wasm_bindgen]` code keeps working), or ship the leaf **dual-backend**
+(its `#[wasm_bindgen]` code keeps working), patch the compatible portion of the
+leaf through [`shims/`](../shims/), or ship the leaf **dual-backend**
 (feature-gate a wasm-bindgen binding surface alongside the wasm_lite one). The
-*threaded* variant of this design is exactly what subordinating wgpu (above)
-needs.
+*threaded* variant of a true post-pass is exactly what subordinating wgpu (above)
+would need.
 
 ## Porting wgpu off wasm-bindgen (the capstone)
 
@@ -78,13 +85,13 @@ The most ambitious option: re-express wgpu's web backend
 (`wgpu/src/backend/webgpu.rs` + the web-sys WebGPU/WebGL/canvas surface) as
 wasm_lite `import!`/`js_class!` bindings, eliminating wasm-bindgen from the binary
 entirely. **Not** required for *mixed* binaries (subordination handles those) —
-this is for an all-wasm_lite world. It is gated on essentially every binding
-feature at once: `js_class!` constructors + property get/set, closures-into-JS
-(wgpu uses `Closure` for device-lost / uncaptured-error / promise callbacks), and
-Promise interop (WebGPU is pervasively async). The one simplifying fact: wgpu-web
-doesn't thread, so there's no worker bootstrap or atomics interplay to
-reimplement — it's a (very large) *binding* surface, a natural capstone for
-`wasm_lite_web`.
+this is for an all-wasm_lite world. The low-level prerequisites now exist in
+`import!` (`#[constructor]`, property/indexing kinds, `#[instanceof]`, variadics),
+`Closure`, and `JsFuture`; `js_class!` still lacks constructor/property sugar and
+checked downcasts. The remaining work is therefore mostly the enormous typed
+WebGPU surface and those typed-wrapper conveniences, rather than inventing
+callbacks or Promise interop. The one simplifying fact: wgpu-web doesn't thread,
+so there's no worker bootstrap or atomics interplay to reimplement.
 
 ## The two `[patch]` shims
 
@@ -100,8 +107,8 @@ wasm_lite.
 > section is the original rationale, which still holds.
 
 Instead of reconciling two binding worlds or rewriting wgpu by hand, **replace
-wasm-bindgen itself**: ship a crate that is API-compatible with `wasm-bindgen` but
-whose `#[wasm_bindgen]` macro lowers to wasm_lite's ABI + descriptor sections, and
+wasm-bindgen itself**: ship a crate that implements the upstream subset in scope
+but whose `#[wasm_bindgen]` macro lowers to wasm_lite's ABI + descriptor sections, and
 have the app drop it in graph-wide with
 `[patch.crates-io] wasm-bindgen = { … }`. Because js-sys, web-sys,
 wasm-bindgen-futures, and wgpu are all written *against* wasm-bindgen, the
@@ -131,6 +138,11 @@ designing a cleaner one.
 
 ### Fake-wasm_lite shim (host on wasm-bindgen)
 
+> **SHIPPED AS A BOUNDED COMPATIBILITY SHIM.** It lives in [`shims/`](../shims/),
+> a separate workspace because it reuses the `wasm_lite` and `wasm_lite_std`
+> package names. Its compile-time grammar test is
+> [`shims/wasm_lite/tests/grammar.rs`](../shims/wasm_lite/tests/grammar.rs).
+
 The mirror image, and probably the best answer to the original leaf-migration
 problem. A leaf is authored against `wasm_lite`; a downstream app that stays on
 wasm-bindgen (e.g. anything using wgpu) `[patch]`es `wasm_lite` / `wasm_lite_std`
@@ -140,13 +152,13 @@ the whole binary is an ordinary wasm-bindgen build — the app's existing
 `wasm-pack` pipeline is unchanged, no `wasm-lite` codegen step, no reverse-interop
 loader surgery.
 
-This is much easier than faking wasm-bindgen, for two reasons:
+This direction is structurally easier than faking wasm-bindgen, for two reasons:
 
 * **wasm_lite's binding surface is a strict subset of wasm-bindgen's**, so the
   macro shim (`import!`→`#[wasm_bindgen] extern`, `#[export]`→`#[wasm_bindgen] pub
   fn`, `js_class!`→extern type, `JsValue`→`wasm_bindgen::JsValue`,
   `console`/`performance`/`date`→web-sys/js-sys) translates *down* with no missing
-  features.
+  features in the subset the shim translates.
 * **The threading half already exists.** A wasm-bindgen-backed `wasm_lite_std` is
   essentially [`wasm_safe_thread`](https://crates.io/crates/wasm_safe_thread)
   (deps: `wasm-bindgen` + `wasm-bindgen-futures` + `js-sys` + `web-time`) — the
@@ -154,14 +166,18 @@ This is much easier than faking wasm-bindgen, for two reasons:
   mostly a thin re-export plus `wasm_bindgen_futures::spawn_local` for
   `spawn_local` and `web-time` for `time`.
 
-So for the realistic large-app case this supersedes reverse interop:
+For the subset it implements, this supersedes reverse interop:
 `images_and_words` stays exactly as it is (wasm-bindgen + wgpu + atomics threads)
 and just patches `wasm_lite`→shim; the migrated leaves compile down to
 wasm-bindgen with no per-binary glue merge. The payoff for the leaf author is
 **one source tree, dual deployment** — native wasm_lite *and* (via the shim) the
 wasm-bindgen world — without the leaf maintaining two binding surfaces itself.
-Honest caveats: the binding-macro shim is real (if bounded) new code; minor API
-drift between `wasm_lite_std` and `wasm_safe_thread` needs thin wrappers; threaded
-leaves still require an atomics build (inherent); and test-only surface
-(`#[wasm_lite_test(worker)]`, `async_doctest!`) is dev-side, so it maps to
-`wasm_bindgen_test` or is irrelevant downstream.
+
+The current boundary matters. `shims/wasm_lite_macro_wb` predates the real
+macro's property/indexing/`instanceof`/variadic forms, and the runtime shim does
+not expose the newer `Closure`, `JsFuture`, browser modules, benchmark API, or
+`AsJsValue`. `shims/wasm_lite_std` likewise trails `sleep_async` and newer test/
+runtime details. Threaded leaves still require the wasm-bindgen host's atomics
+setup, and `#[wasm_lite_test(worker)]` is accepted but maps to a normal
+`wasm_bindgen_test` because that harness has no per-test worker form. Expand and
+test this shim deliberately when a leaf uses surface beyond its grammar test.

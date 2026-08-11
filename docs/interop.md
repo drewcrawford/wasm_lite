@@ -11,6 +11,13 @@ loader with our glue, and provides explicit `.to_wasm_bindgen()` /
 recommended path for an *incremental* migration — see the
 [migration guide](../MIGRATION.md).
 
+With `-o app.js`, the CLI writes the complete interop set beside that file:
+`app.js.wasm`, `app.js.wl.js`, and `app.js.wb.js`. The loader refers to those
+bundle-specific names, so neighboring outputs do not retarget one another.
+Multi-file writes are prepared in sibling temporary files before replacement;
+a failure while preparing one artifact does not partially rewrite the requested
+bundle.
+
 ## Direction matters: `wasm-lite` is the outer tool
 
 The interop is **one-directional**. The supported case is a wasm_lite module
@@ -27,18 +34,27 @@ imports your leaf declares (`Math.random`, `__wl_spawn`, the atomics runtime
 imports, `__wlbridge`, …) are left unsatisfied and the module fails to
 instantiate. wasm_lite can wrap wasm-bindgen; wasm-bindgen can't wrap wasm_lite.
 
-Until "reverse interop" lands (see the [roadmap](./roadmap.md)) the options for a
-wasm_lite-migrated leaf are:
+There are three options for a wasm_lite-migrated leaf:
 
 * **Have the app make `wasm-lite` its final codegen step** (with the
   `wasm-bindgen` feature). The app's own `#[wasm_bindgen]` code keeps working
   unchanged — only the build command changes, not the source. Caveat: wasm-pack
   specifics (`--target bundler|nodejs`, `.d.ts`, JS snippets) don't carry over yet.
+* **Patch in the wasm-bindgen-backed wasm_lite shim** from [`shims/`](../shims/).
+  It lowers a useful subset of `import!`, `#[export]`, `js_class!`,
+  `#[wasm_lite_test]`, and `wasm_lite_std` onto wasm-bindgen, so the leaf source
+  stays unchanged and the app keeps its existing wasm-bindgen pipeline. It is
+  not yet a drop-in replacement for the entire current API: newer property/
+  variadic import forms, `Closure`/`JsFuture`, browser binding modules, benches,
+  and `sleep_async` still need parity work. Treat it as a bounded compatibility
+  shim and test the leaf surface you use.
 * **Ship the leaf dual-backend** — feature-gate a wasm-bindgen binding surface
   alongside the wasm_lite one, behind a thin internal abstraction. The only way to
-  hand the leaf to a consumer who changes *nothing*, at the cost of maintaining two
-  glue surfaces.
+  hand the leaf to a consumer who changes *nothing at all*, at the cost of
+  maintaining two glue surfaces.
 
 Note that "keep the leaf pure Rust" does **not** sidestep this: `wasm_lite_std`
 threads still emit imports (`__wl_spawn`, atomics runtime) that need the codegen
-pass. A leaf with no `import!`/`#[export]`/threads needs no wasm_lite at all.
+pass in a real wasm_lite build. The `shims/wasm_lite_std` substitute routes that
+public surface through `wasm_safe_thread` instead. A leaf with no
+`import!`/`#[export]`/threads needs no wasm_lite at all.

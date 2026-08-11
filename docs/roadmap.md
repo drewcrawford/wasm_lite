@@ -27,23 +27,23 @@ smaller set of browser-first goals:
   existing implementation already reads imported shared memory, creates the
   shared `WebAssembly.Memory`, emits `wl_worker.js`, starts module workers, and
   serves COOP/COEP headers. Roadmap items like a worker pool, cooperative
-  cancellation, `sleep_async`, and broader `std::sync` parity are extensions of
+  cancellation, timer policy, and broader `std::sync` parity are extensions of
   that same path.
 * **Std-like APIs should exist where the browser can support them.** `Mutex`,
   `RwLock`, `Condvar`, `mpsc`, `JoinHandle`, `Instant`, and `SystemTime` are not
   just demos; they are the compatibility layer many Rust crates want. Roadmap
-  items such as `Once`, `Barrier`, scoped threads, and a no-atomics
-  `queueMicrotask` executor continue that theme.
+  items such as `Once`, `Barrier`, and scoped threads continue that theme. The
+  stable no-atomics event-loop executor has now landed.
 * **Testing and logging are product features.** The runner already detects
   rustdoc doctest artifacts, runs wasm tests in real browsers, captures console
   output, and surfaces main-thread and worker panics to the CLI. Roadmap items
   such as test filtering, browser session pooling, and deployment bundling are
   runner work because one server/test runner owns the local feedback loop.
-* **Interop is a migration tool, not the destination.** The supported direction
-  is currently "wasm-lite is the final codegen step." Reverse interop and shim
-  strategies exist because real applications may need wgpu/web-sys today, but
-  the long-term browser-first design still wants wasm_lite's runner, atomics,
-  logging, and test semantics to remain coherent.
+* **Interop is a migration tool, not the destination.** Direct glue merging still
+  requires `wasm-lite` to be the final codegen step; `[patch]` shims now provide
+  bounded alternatives in both host directions. The long-term browser-first
+  design still wants wasm_lite's runner, atomics, logging, and test semantics to
+  remain coherent.
 
 ## Planned crate layering
 
@@ -55,9 +55,11 @@ Following the wasm-bindgen ecosystem split (language vs browser):
   backend retargeted off wasm-bindgen onto `wasm_lite::thread::spawn` +
   `core::arch::wasm32` atomics. Both **sync** and **async** paths work:
   `spawn`/`JoinHandle` (`join`/`join_async`), `park`/`unpark`, `Mutex`/`Condvar`/
-  `RwLock`/`mpsc` (sync + async), and a `spawn_local` event-loop executor for
-  non-blocking async on the main thread. Runtime deps are `wasm_lite` and a
-  small internal `atomic-waker`-backed async wait primitive. Browser-validated (see
+  `RwLock`/`mpsc` (sync + async), `sleep_async`, and a `spawn_local` event-loop
+  executor for non-blocking async on the main thread. The executor and host
+  timer also work in stable, non-atomic wasm; actual worker spawning remains the
+  nightly shared-memory path. Runtime deps are `wasm_lite` and an
+  `atomic-waker`-backed async wait primitive. Browser-validated (see
   [testing](./testing.md)). *Like `std` (the `std::thread`/`std::sync` slice).*
 * `wasm_lite_js` *(future)* — ECMAScript built-ins (`Object`, `Array`, `Map`,
   `JSON`, `Date`, …) bound with `js_class!`. *Like `js-sys`.*
@@ -68,9 +70,10 @@ Following the wasm-bindgen ecosystem split (language vs browser):
   depends on where they live. Between them they were enough to take `async_file`,
   `exfiltrate` and `app_window` off web-sys entirely.
 
-Bindings stay out of core so it remains small; `js_class!` is the primitive all
-upper layers build on (so its constructors + property get/set are the gate for
-`wasm_lite_js`/`wasm_lite_web`).
+The broad generated binding catalogs still belong outside core so it remains
+small. `js_class!` is the intended typed primitive for those layers; its missing
+constructor/property conveniences affect ergonomics, while `import!` already
+provides the underlying operations.
 
 ### What belongs in `wasm_lite_std` — the absorption rule
 
@@ -109,7 +112,7 @@ Two corollaries worth stating, because both came up while deciding this:
 
 ## Known gaps / roadmap
 
-Roughly in priority order. The threading/async/testing layer is complete and
+Roughly in priority order. The threading/async/testing layer is substantial and
 browser-validated; the next frontier is the binding crates. Items marked
 *designed* have a worked-out plan but no implementation yet.
 
@@ -120,32 +123,28 @@ browser-validated; the next frontier is the binding crates. Items marked
   forever). Plan: a `CancelToken` plus a `run_until_cancelled(token, fut)`
   combinator, reusing the executor wake path. Library-only. *Designed.* The
   `*_timeout` APIs give a crude poll-based version today.
-* **Async timer / `sleep_async`** — a `setTimeout`-backed timer giving an
-  `async sleep` usable on the main thread (`thread::sleep` uses `Atomics.wait`,
-  which traps there). Also replaces the current `*_timeout` implementation, which
-  spawns a whole Web Worker per timeout.
-* **No-atomics `queueMicrotask` executor** — today `spawn_local` is built only on
-  the shared-memory path, so single-threaded async still needs a `+atomics` build
-  (nightly + `-Z build-std` + COOP/COEP). Plan: a `queueMicrotask`-backed
-  `spawn_local` selected when the module is not a shared-memory build, so
-  single-threaded async needs no `SharedArrayBuffer`. The two coexist behind one
-  `spawn_local` surface.
+* ~~**Async timer / `sleep_async`**~~ — **done.** Generated glue owns cancellable
+  host timers; shared-memory workers proxy them to the root realm, and long
+  durations are chained past JavaScript's signed 32-bit timeout limit.
+* ~~**No-atomics event-loop executor**~~ — **done.** Stable, ordinary wasm uses
+  `__wl_schedule` to queue executor turns without `SharedArrayBuffer` or
+  `-Z build-std`; atomics builds retain the cross-thread `Atomics.waitAsync`
+  backend behind the same `spawn_local` API.
 * ~~**Promise interop (`await` a JS `Promise` from Rust)**~~ — **done**
   ([`JsFuture`](../crates/wasm_lite/src/future.rs)), and now used in anger:
   `wasm_lite::fetch` is built on it, streaming response bodies included.
 
 ### Bindings & marshalling
 
-* **Closures into JS (`Closure<dyn FnMut(...)>` analogue)** — let JS call back into
-  Rust (event listeners, `setTimeout`, Promise `.then`). Today `import!` accepts
-  only scalar/string/bytes/handle arguments, not function pointers. Needs a new
-  codegen shim kind. With Promise interop, this unblocks idiomatic event-driven
-  `wasm_lite_web` APIs.
-* **`js_class!` constructors (`new Foo()`) + property get/set** (`el.textContent`),
-  plus owned-object args and `instanceof`-checked downcasting — each a new codegen
-  shim kind. The prerequisite for `wasm_lite_js`/`wasm_lite_web`.
+* ~~**Closures into JS**~~ — **done.** `Closure` covers nullary, one-argument,
+  variadic, variadic-returning, and variadic-fallible callbacks and underpins
+  `JsFuture`.
+* **Typed `js_class!` conveniences** — constructors (`new Foo()`), property
+  get/set (`el.textContent`), owned-object args, and `instanceof`-checked
+  downcasting. The low-level codegen kinds already exist in `import!`; this item
+  is typed-wrapper surface and boilerplate removal, not a missing JS operation.
 * **`wasm_lite_js` / `wasm_lite_web`** — the binding crates (ECMAScript built-ins,
-  then DOM/host APIs), gated on the `js_class!` work above. Note that `fetch`,
+  then DOM/host APIs), ideally after the `js_class!` work above. Note that `fetch`,
   `websocket` and `dom` did **not** need it: `import!`'s
   `#[constructor]`/`#[getter]`/`#[setter]` cover a real binding surface today,
   with a hand-written newtype per class (the shared `js_handle!` macro). What
@@ -156,7 +155,8 @@ browser-validated; the next frontier is the binding crates. Items marked
 * **Richer type marshalling (a `serde-wasm-bindgen` analogue)** — a `serde`
   `Serializer`/`Deserializer` pair so `#[derive(Serialize, Deserialize)]` types
   cross the boundary directly, instead of hand-encoding (e.g. JSON through a
-  `&str`). Gated on the `js_class!` get/set work.
+  `&str`). The low-level property/indexing operations exist; the remaining work
+  is the serializer design and a maintainable typed object layer.
 
 ### Threading parity
 
@@ -171,22 +171,27 @@ browser-validated; the next frontier is the binding crates. Items marked
 
 ### wasm-bindgen coexistence
 
-* **Running wasm_lite and wasm-bindgen in one binary** — the hardest open problem,
-  driven by `wgpu` (whose web backend can't leave wasm-bindgen in the near term).
-  Several strategies are under design — reverse interop, subordinating wgpu's glue,
-  and `[patch]`-based shims in both directions. These are detailed separately in
-  the [design notes](./design-notes.md).
+* **Close the remaining coexistence gaps.** Direct CLI interop works with
+  `wasm-lite` as the outer tool, and `[patch]` shims now exist in both directions:
+  [`shims_wasm_bindgen/`](../shims_wasm_bindgen/) is substantial enough for
+  unmodified js-sys/web-sys and part of wgpu 28 at runtime; [`shims/`](../shims/)
+  lowers a bounded wasm_lite subset onto wasm-bindgen. Remaining work includes
+  block-level wasm-bindgen module/snippet attributes, parity for newer wasm_lite
+  APIs in the reverse shim, and (if still useful) a true reverse glue post-pass.
+  See the [design notes](./design-notes.md).
 
 ### Tooling & tests
 
-* **Broaden the wasm test suite** — `crates/wasm_lite_std/tests/browser.rs` ports
-  the bulk of the native unit suite (52 tests across spin/block/sync/async +
-  timeouts), and `scripts/wasm32/tests` runs it in **both** Firefox and Chrome,
-  because the two disagree on nested worker spawn. Remaining: multi-reader
-  `RwLock` and `park`/`unpark`.
-* **Deployment niceties** — a `wasm-lite bundle` command, and session
-  pooling/idle reaper for the persistent browser. (Test filtering already works:
-  `cargo test NAME`, `--exact` and `--list` all follow libtest.)
+* **Broaden the wasm test suite** — the dedicated browser integration target and
+  wasm-enabled lib tests now cover spin/block/sync/async paths, timeouts,
+  `sleep_async`, and `park`/`unpark`; `scripts/wasm32/tests` runs the threaded
+  suites in **both** Firefox and Chrome because they disagree on nested worker
+  spawn. Remaining notable lock case: multiple simultaneous `RwLock` readers.
+* **Deployment niceties** — `wasm-lite -o` already emits bundle-specific worker
+  and interop artifact names with guarded multi-file writes. A higher-level
+  `wasm-lite bundle` command and a session-pool idle reaper remain. (Test
+  filtering already works: `cargo test NAME`, `--exact` and `--list` follow
+  libtest.)
 * **Smaller items** — deeply nested generics on imports (`Option<Result<…>>` does
   not work yet, though single-level `Option<Vec<u8>>`/`Result<…>` do), and a
   `panic = "unwind"` mode (catch-unwind per poll, drop just the failed task, poison

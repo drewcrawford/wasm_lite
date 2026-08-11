@@ -38,19 +38,33 @@ pub enum Payload {
     /// No value at all — `Result<(), E>`, a fallible operation whose success
     /// carries nothing. The sret buffer holds only the discriminant.
     Unit,
+    /// An 8-bit signed integer.
     I8,
+    /// A 16-bit signed integer.
     I16,
+    /// An 8-bit unsigned integer.
     U8,
+    /// A 16-bit unsigned integer.
     U16,
+    /// A 64-bit signed integer, represented as a JavaScript `BigInt`.
     I64,
+    /// A 64-bit unsigned integer, represented as a JavaScript `BigInt`.
     U64,
+    /// A 32-bit floating-point number.
     F32,
+    /// A 32-bit signed integer (also used for `isize`).
     I32,
+    /// A 32-bit unsigned integer (also used for `usize`).
     U32,
+    /// A 64-bit floating-point number.
     F64,
+    /// A boolean encoded as an integer.
     Bool,
+    /// A UTF-8 string represented by a pointer-length pair.
     Str,
+    /// A byte slice represented by a pointer-length pair.
     Bytes,
+    /// A JavaScript value-table handle.
     Handle,
 }
 

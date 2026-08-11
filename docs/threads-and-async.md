@@ -18,6 +18,17 @@ unchanged:
 * a worker that returns to JS can disappear while Rust async tasks still live in
   its TLS unless the bootstrap drains them deliberately.
 
+There are two supported wasm modes:
+
+* **Stable, single-realm wasm** uses ordinary non-shared memory. `spawn_local`,
+  `JsFuture`, `sleep_async`, and the non-blocking/spinning synchronization paths
+  work without atomics, `SharedArrayBuffer`, cross-origin isolation, or
+  `-Z build-std`. Actual thread spawning is unavailable in this mode;
+  `Builder::spawn` returns `io::ErrorKind::Unsupported`.
+* **Shared-memory wasm** enables atomics and Web Workers. It adds real
+  `spawn`/`JoinHandle`, cross-thread wakes, and blocking primitives on workers,
+  at the cost of the nightly/build-std and browser-isolation requirements below.
+
 The [wasm-bindgen threaded example](https://wasm-bindgen.github.io/wasm-bindgen/examples/raytrace.html)
 documents several consequences of making threads fit a broad target matrix:
 threaded code needs specific output targets (`web` or `no-modules` in that
@@ -67,10 +78,14 @@ glue behind a single `__wl_spawn` import:
   `__wl_spawn`.
 * The glue allocates a fresh stack + TLS block (`__wl_thread_alloc`) and starts a
   worker, postMessaging `{ module, memory, work, stackTop, tlsPtr }`.
-* The worker (a codegen-emitted bootstrap, `wl_worker.js`) instantiates the same
+* The worker (a codegen-emitted bootstrap, `wl_worker.js` in the runner or
+  `<glue>.worker.js` from `wasm-lite -o <glue>`) instantiates the same
   module on the same memory, points `__stack_pointer` at the new stack, calls
   `__wasm_init_tls`, then `__wl_thread_entry` — which reconstitutes the closure
   and runs it. Threads coordinate via `core::sync::atomic`.
+* When the worker reports completion and closes, the parent realm frees its
+  stack and TLS. The worker cannot safely free the stack it is still returning
+  through or its active TLS.
 
 ### Workers are always created by the main thread
 
@@ -113,13 +128,30 @@ this primitive + `core::arch::wasm32` atomics).
 
 Both the **sync** and **async** paths work. Since the main thread can't block,
 `wasm_lite_std` ships a small event-loop executor: `spawn_local(future)` runs a
-task on the event loop, and while it's pending the executor *sleeps* on
-`Atomics.waitAsync` (the `__wl_wait_async` runtime import) rather than busy-polling.
-Wakes are edge-triggered and cross-thread: each executor owns a wake atom, and a
-task's `Waker` bumps it and issues `memory.atomic.notify` — which resolves the
-owning realm's `waitAsync` Promise even when the notify comes from another worker.
-So `JoinHandle::join_async().await`, `Mutex::lock_async().await`, etc. run
-non-blocking on the main thread and are woken the instant a worker releases.
+task on the current realm's event loop.
+
+In a stable non-atomic build, its waker schedules another host turn through
+`__wl_schedule` (currently a zero-delay timeout). In a shared-memory build, a
+pending executor instead sleeps on `Atomics.waitAsync` (`__wl_wait_async`)
+rather than polling. Those wakes are edge-triggered and cross-thread: each
+executor owns a wake atom, and a task's `Waker` bumps it and issues
+`memory.atomic.notify`, resolving the owning realm's `waitAsync` Promise even
+when the notify comes from another worker. That is what lets
+`JoinHandle::join_async().await`, `Mutex::lock_async().await`, and the other
+cross-thread futures remain non-blocking on the main thread.
+
+## Non-blocking timers
+
+`wasm_lite_std::sleep_async(duration)` is safe on the browser main thread in
+both wasm modes. Generated glue keeps a cancellable host-timer registry; dropping
+the future cancels its timer, and durations beyond JavaScript's signed 32-bit
+timeout limit are split into multiple legs. In a shared-memory worker, timer
+arm/cancel messages are proxied to the root realm so a timer can outlive the
+worker that created its future.
+
+The synchronous `sleep` still blocks. On an atomics worker it uses
+`Atomics.wait`; in a stable non-atomic wasm build it can only busy-wait, blocking
+that realm's event loop, so browser code should prefer `sleep_async`.
 
 ## Async lifecycle & failures — two fixes for wasm-bindgen footguns
 
@@ -134,9 +166,10 @@ wrong. For that uniformity to hold, two things have to be true:
   `close()`s when its entry returns, so a `spawn_local`'d task is silently
   abandoned — "the thread shut down and my futures mysteriously stopped" — and its
   TLS (where the task queue lives) is freed underneath it. Instead the worker
-  bootstrap polls the exported `__wl_executor_idle()` and only frees its TLS/stack
-  + `close()`s once the executor has drained, so `spawn_local` is correct on *any*
-  thread, not just main (proven in `examples/worker-spawn-local-demo`). Residual
+  bootstrap polls the exported `__wl_executor_idle()` and only reports completion
+  + `close()`s once the executor has drained; its parent then frees the TLS/stack.
+  Thus `spawn_local` is correct on *any* thread, not just main (proven in
+  `examples/worker-spawn-local-demo`). Residual
   hazard: a worker task that never completes keeps the worker alive — explicit
   termination is rare, and the right tool for it is *cooperative cancellation* (a
   token the tasks check), not a hard `terminate()` that strands held locks.
@@ -151,9 +184,10 @@ wrong. For that uniformity to hold, two things have to be true:
   `{ok:false}` (with the message via the captured console), and a hang falls to
   the runner's timeout. The verdict is rendered by the runner polling a
   still-live browser page, not by `main` returning — which is what makes
-  deferring it possible. (Caveat: rustdoc links doctests with `rustdocflags`, not
-  `rustflags`, so an async doctest crate must repeat the threads/atomics link
-  args under `[build] rustdocflags` — see `examples/async-doctest-demo`.)
+  deferring it possible. (For a *threaded* async doctest, rustdoc links with
+  `rustdocflags`, not `rustflags`, so the crate must repeat the atomics/link args
+  under `[build] rustdocflags` — see `examples/async-doctest-demo`. A stable
+  single-realm async doctest needs none of those flags.)
 
 `wasm_lite_std` installs a single canonical panic hook (once, on first spawn) that
 logs each panic exactly once with thread attribution and routes it to the join
@@ -230,7 +264,8 @@ instants before the Unix epoch (arithmetic past `UNIX_EPOCH` returns `None`).
 `wasm_lite_std::is_main_thread()` rounds out the threading surface: `true` on the
 browser main thread (and the native process's initial thread), `false` on a
 spawned worker — the thread where `Atomics.wait` (blocking locks, `park`) is
-unavailable.
+available. A stable non-atomic wasm module has no spawned realms, so it always
+reports `true` and `available_parallelism()` reports one.
 
 [`std::time`]: https://doc.rust-lang.org/std/time/
 [`web-time`]: https://crates.io/crates/web-time
