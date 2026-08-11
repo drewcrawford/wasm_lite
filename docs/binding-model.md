@@ -199,8 +199,9 @@ Symmetric across imports and exports:
 
 The narrower direct-export scalar row is intentional: the export descriptor
 and wrapper currently implement direct `i32`/`u32`/`f64` only. All integer and
-float widths are nevertheless valid *inside exported `Option`/`Result`
-payloads*, where the sret buffer records their exact layout.
+float widths are nevertheless valid inside exported `Option` arguments and
+`Option`/`Result` returns; the latter use the sret buffer to record their exact
+layout.
 
 Numeric slices (`i8`/`i16`/`u16`/`i32`/`u32`/`i64`/`u64`/`f32`/`f64`; `&[u8]`
 keeps its own `bytes` spelling) become a typed-array view over wasm memory — `&[f32]` arrives
