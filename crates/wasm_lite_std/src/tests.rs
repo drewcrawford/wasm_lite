@@ -3,6 +3,34 @@
 
 use super::*;
 
+#[cfg(not(target_arch = "wasm32"))]
+struct JoinExitState {
+    release: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct JoinExitBarrier(std::cell::RefCell<Option<std::sync::Arc<JoinExitState>>>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for JoinExitBarrier {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+
+        if let Some(state) = self.0.get_mut().take() {
+            while !state.release.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+std::thread_local! {
+    static JOIN_EXIT_BARRIER: JoinExitBarrier = const {
+        JoinExitBarrier(std::cell::RefCell::new(None))
+    };
+}
+
 // Compile-time assertions for auto-traits (Send/Sync).
 // These are critical guarantees for a threading library.
 fn _assert_send<T: Send>() {}
@@ -36,6 +64,44 @@ fn test_spawn_and_join() {
     let handle = spawn(|| 42);
     let result = handle.join().unwrap();
     assert_eq!(result, 42);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn regression_join_waits_for_thread_local_destructors() {
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+
+    let state = Arc::new(JoinExitState {
+        release: std::sync::atomic::AtomicBool::new(false),
+    });
+    let worker_state = Arc::clone(&state);
+    let handle = spawn(move || {
+        JOIN_EXIT_BARRIER.with(|barrier| {
+            *barrier.0.borrow_mut() = Some(worker_state);
+        });
+    });
+
+    // A real join must wait for TLS destruction. Release the destructor after
+    // a bounded delay so a fixed implementation does not deadlock this test.
+    let watchdog_state = Arc::clone(&state);
+    let watchdog = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        watchdog_state.release.store(true, Ordering::Release);
+    });
+
+    let start = std::time::Instant::now();
+    handle.join().unwrap();
+    let join_elapsed = start.elapsed();
+
+    // Let the current implementation's detached worker finish before failing.
+    state.release.store(true, Ordering::Release);
+    watchdog.join().unwrap();
+
+    assert!(
+        join_elapsed >= Duration::from_millis(75),
+        "join returned after {join_elapsed:?}, before the TLS destructor was released"
+    );
 }
 
 // try join from bg thread
@@ -158,6 +224,38 @@ fn test_sleep() {
         elapsed >= Duration::from_millis(50),
         "sleep should wait at least 50ms, but only waited {:?}",
         elapsed
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn regression_dropping_sleep_async_cancels_its_native_timer() {
+    use std::future::Future;
+    use std::sync::{Arc, Weak};
+    use std::task::{Context, Poll, Wake, Waker};
+
+    struct WakerToken(std::sync::atomic::AtomicBool);
+    impl Wake for WakerToken {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    let mut sleep = Box::pin(sleep_async(Duration::from_secs(60)));
+    let token = Arc::new(WakerToken(std::sync::atomic::AtomicBool::new(false)));
+    let weak: Weak<WakerToken> = Arc::downgrade(&token);
+    let waker = Waker::from(token);
+    {
+        let mut cx = Context::from_waker(&waker);
+        assert!(matches!(sleep.as_mut().poll(&mut cx), Poll::Pending));
+    }
+
+    drop(sleep);
+    drop(waker);
+
+    assert!(
+        weak.upgrade().is_none(),
+        "dropping SleepAsync left its timer thread and registered waker alive"
     );
 }
 
@@ -297,6 +395,31 @@ async_test! {
         let main_pos = result.iter().position(|&x| x == 2).unwrap();
         assert!(hook_pos < main_pos, "hook should run before main function");
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn regression_spawn_hook_panics_are_returned_by_join() {
+    const HOOK_NAME: &str = "regression_spawn_hook_panics_are_returned_by_join";
+    const THREAD_NAME: &str = "spawn-hook-panic-target";
+
+    register_spawn_hook(HOOK_NAME, || {
+        if std::thread::current().name() == Some(THREAD_NAME) {
+            panic!("spawn hook panic payload");
+        }
+    });
+
+    let handle = Builder::new()
+        .name(THREAD_NAME.to_string())
+        .spawn(|| ())
+        .unwrap();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle.join()));
+
+    // Clean up even though the current implementation makes join itself panic.
+    remove_spawn_hook(HOOK_NAME);
+
+    let join_result = outcome.expect("join panicked instead of returning the hook panic");
+    assert!(join_result.is_err(), "a panicking hook must produce Err");
 }
 
 async_test! {

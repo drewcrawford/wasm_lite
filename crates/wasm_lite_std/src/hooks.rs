@@ -66,6 +66,10 @@ pub fn clear_spawn_hooks() {
 ///
 /// This is called internally by the spawn implementations before running
 /// the main thread function.
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_feature = "atomics")),
+    allow(dead_code)
+)]
 pub(crate) fn run_spawn_hooks() {
     // Clone the hooks so we don't hold the lock while calling them
     // This prevents deadlock if a hook tries to register another hook

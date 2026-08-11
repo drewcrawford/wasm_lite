@@ -34,6 +34,10 @@ pub(crate) struct AsyncWake {
 }
 
 impl AsyncWake {
+    pub(crate) fn belongs_to(&self, wait: &AsyncWait) -> bool {
+        Arc::ptr_eq(&self.inner, &wait.inner)
+    }
+
     pub(crate) fn wake(self) -> bool {
         if self
             .inner

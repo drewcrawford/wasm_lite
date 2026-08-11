@@ -375,3 +375,84 @@ fn test_mutex_lock_async_timeout() {
         assert!(result.is_none());
     });
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn regression_cancelled_async_mutex_waiter_is_removed_immediately() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let mutex = Mutex::new(());
+    let guard = mutex.lock_sync();
+    let mut waiter = Box::pin(mutex.lock_async());
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(matches!(waiter.as_mut().poll(&mut cx), Poll::Pending));
+
+    drop(waiter);
+
+    let queued = mutex
+        .waiting_async_threads
+        .with_mut(|waiters| waiters.len());
+    assert_eq!(queued, 0, "a canceled future left a waiter queued");
+    drop(guard);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn regression_timed_out_blocking_mutex_waiter_is_removed_immediately() {
+    let mutex = Arc::new(Mutex::new(()));
+    let guard = mutex.lock_sync();
+    let waiter_mutex = Arc::clone(&mutex);
+    std::thread::spawn(move || {
+        assert!(
+            waiter_mutex
+                .lock_block_timeout(Instant::now() + Duration::from_millis(10))
+                .is_none()
+        );
+    })
+    .join()
+    .unwrap();
+
+    let queued = mutex.waiting_sync_threads.with_mut(|waiters| waiters.len());
+    assert_eq!(queued, 0, "a timed-out thread left a waiter queued");
+    drop(guard);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn regression_early_mutex_notification_cancels_timeout_thread() {
+    use std::future::Future;
+    use std::sync::{Arc, Weak};
+    use std::task::{Context, Poll, Wake, Waker};
+
+    struct WakerToken(std::sync::atomic::AtomicBool);
+    impl Wake for WakerToken {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    let mutex = Mutex::new(());
+    let guard = mutex.lock_sync();
+    let mut waiter = Box::pin(mutex.lock_async_timeout(Instant::now() + Duration::from_secs(60)));
+    let token = Arc::new(WakerToken(std::sync::atomic::AtomicBool::new(false)));
+    let weak: Weak<WakerToken> = Arc::downgrade(&token);
+    let waker = Waker::from(token);
+    {
+        let mut cx = Context::from_waker(&waker);
+        assert!(matches!(waiter.as_mut().poll(&mut cx), Poll::Pending));
+
+        drop(guard);
+        match waiter.as_mut().poll(&mut cx) {
+            Poll::Ready(Some(acquired)) => drop(acquired),
+            other => panic!("notified mutex waiter did not acquire the lock: {other:?}"),
+        }
+    }
+    drop(waiter);
+    drop(waker);
+
+    assert!(
+        weak.upgrade().is_none(),
+        "the losing timeout thread retained the completed task's waker"
+    );
+}

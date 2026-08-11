@@ -324,6 +324,12 @@ fn run_suite(
             for line in output.lines() {
                 println!("    {line}");
             }
+            if output.is_empty() {
+                let error = browser.eval_string("return globalThis.__wl_done.error || \"\";")?;
+                if !error.is_empty() {
+                    println!("    {error}");
+                }
+            }
         }
     }
 

@@ -1,17 +1,33 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::{Mutex, NotAvailable};
-use crate::async_wait::waiter;
+use crate::async_wait::{AsyncWait, AsyncWake, waiter};
 use crate::guard::Guard;
+use crate::spinlock::Spinlock;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-#[cfg(target_arch = "wasm32")]
-use crate as thread;
-#[cfg(not(target_arch = "wasm32"))]
-use std::thread;
-
 use crate::time::Instant;
+
+struct RegisteredWait<'a> {
+    wait: AsyncWait,
+    queue: &'a Spinlock<Vec<AsyncWake>>,
+}
+
+impl Future for RegisteredWait<'_> {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.wait).poll(cx)
+    }
+}
+
+impl Drop for RegisteredWait<'_> {
+    fn drop(&mut self) {
+        self.queue
+            .with_mut(|senders| senders.retain(|sender| !sender.belongs_to(&self.wait)));
+    }
+}
 
 pub(crate) async fn lock_async<T>(mutex: &Mutex<T>) -> Guard<'_, T> {
     loop {
@@ -30,7 +46,11 @@ pub(crate) async fn lock_async<T>(mutex: &Mutex<T>) -> Guard<'_, T> {
             Ok(guard) => return guard,
             Err(receiver) => {
                 // Wait for the signal that the lock is available
-                receiver.await;
+                RegisteredWait {
+                    wait: receiver,
+                    queue: &mutex.waiting_async_threads,
+                }
+                .await;
             }
         }
     }
@@ -65,24 +85,12 @@ pub(crate) async fn lock_async_timeout<T>(
         match a {
             Ok(guard) => return Some(guard),
             Err(receiver) => {
-                // Create a channel for timeout
-                let (timeout_sender, timeout_receiver) = waiter();
-
-                // Compute the remaining time on the calling thread: `Instant`s
-                // are not comparable across threads on wasm (each worker's
-                // clock starts at its own time origin), so the spawned thread
-                // must receive a `Duration`, never the deadline itself.
-                let timeout = deadline - Instant::now();
-
-                // Spawn a thread to handle the timeout
-                thread::Builder::new()
-                    .name("lock_async_timeout".to_string())
-                    .spawn(move || {
-                        thread::sleep(timeout);
-                        // Send timeout signal
-                        timeout_sender.wake();
-                    })
-                    .expect("Failed to spawn timeout thread");
+                let receiver = RegisteredWait {
+                    wait: receiver,
+                    queue: &mutex.waiting_async_threads,
+                };
+                let timeout = deadline.saturating_duration_since(Instant::now());
+                let timeout_receiver = crate::sleep_async(timeout);
 
                 // Race between notification and timeout
                 struct Race<F1, F2> {

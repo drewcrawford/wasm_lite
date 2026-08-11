@@ -20,7 +20,9 @@ pub(crate) fn lock_block<T>(mutex: &Mutex<T>) -> Guard<'_, T> {
                 }
                 Err(_) => {
                     let handle = thread::current();
-                    threads.push(handle);
+                    if !threads.iter().any(|thread| thread.id() == handle.id()) {
+                        threads.push(handle);
+                    }
                     Err(NotAvailable)
                 }
             }
@@ -49,7 +51,9 @@ pub(crate) fn lock_block_timeout<T>(mutex: &Mutex<T>, deadline: Instant) -> Opti
                 Ok(guard) => Ok(guard),
                 Err(_) => {
                     let handle = thread::current();
-                    threads.push(handle);
+                    if !threads.iter().any(|thread| thread.id() == handle.id()) {
+                        threads.push(handle);
+                    }
                     Err(NotAvailable)
                 }
             });
@@ -59,6 +63,10 @@ pub(crate) fn lock_block_timeout<T>(mutex: &Mutex<T>, deadline: Instant) -> Opti
             Err(NotAvailable) => {
                 let remaining = deadline - Instant::now();
                 thread::park_timeout(remaining);
+                let current = thread::current();
+                mutex
+                    .waiting_sync_threads
+                    .with_mut(|threads| threads.retain(|thread| thread.id() != current.id()));
             }
         }
     }

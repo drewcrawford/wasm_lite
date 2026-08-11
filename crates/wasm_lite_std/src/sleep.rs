@@ -97,79 +97,52 @@ impl Future for SleepAsync {
 #[cfg(target_arch = "wasm32")]
 mod wasm_impl {
     use super::*;
-    use crate::async_wait::AsyncWait;
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-    use wasm_lite::Closure;
+    use crate::async_wait::{AsyncWait, AsyncWake};
+    use crate::spinlock::Spinlock;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
-    thread_local! {
-        /// Closures for timers that have not fired, by id.
-        ///
-        /// The closure cannot live in the future itself: `Closure` wraps a
-        /// realm-bound handle and is `!Send`, and a sleep that is not `Send` is
-        /// most of the use gone — an executor cannot move the task. Parking it
-        /// here keeps the future `Send` while still owning the closure, so a
-        /// cancelled sleep drops it instead of leaking.
-        static PENDING: RefCell<HashMap<u64, Closure>> = RefCell::new(HashMap::new());
-        static NEXT_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static NEXT_TOKEN: AtomicU32 = AtomicU32::new(1);
+    static TIMERS: Spinlock<Vec<(u32, AsyncWake)>> = Spinlock::new(Vec::new());
+
+    #[link(wasm_import_module = "__wasm_lite")]
+    unsafe extern "C" {
+        #[link_name = "__wl_timer_arm"]
+        fn timer_arm(token: u32, delay_ms: f64);
+        #[link_name = "__wl_timer_cancel"]
+        fn timer_cancel(token: u32);
     }
 
-    /// A `setTimeout` whose callback wakes an async waiter.
+    /// A host timer identified by an opaque integer in a Rust-owned registry.
+    ///
+    /// In a shared build the root realm owns the actual timeout; workers only
+    /// proxy arm/cancel operations, so the timeout survives its creator worker
+    /// exiting. Keeping pointers out of the JavaScript-visible token prevents a
+    /// forged callback from becoming an arbitrary `Box::from_raw` in Rust.
     pub(super) struct Timer {
         wait: AsyncWait,
-        js_id: f64,
-        key: u64,
-        /// The thread that armed it. Clearing a timeout or dropping a `Closure`
-        /// is only meaningful in the realm that created it.
-        owner: crate::ThreadId,
+        token: u32,
     }
 
     impl Timer {
         pub(super) fn new(dur: Duration) -> Self {
             let (wake, wait) = waiter();
-            let key = NEXT_ID.with(|n| {
-                let k = n.get();
-                n.set(k + 1);
-                k
-            });
-            // `Closure::new` takes FnMut; a one-shot wake is FnOnce, so an
-            // Option makes it callable more than once without being wrong.
-            let mut wake = Some(wake);
-            let cb = Closure::new(move || {
-                if let Some(w) = wake.take() {
-                    w.wake();
+            let token = TIMERS.with_mut(|timers| {
+                loop {
+                    let candidate = NEXT_TOKEN.fetch_add(1, Ordering::Relaxed);
+                    if candidate != 0 && timers.iter().all(|(token, _)| *token != candidate) {
+                        timers.push((candidate, wake));
+                        break candidate;
+                    }
                 }
-                // Fired: the closure is no longer needed.
-                PENDING.with(|p| {
-                    p.borrow_mut().remove(&key);
-                });
             });
-            let js_id = wasm_lite::timer::set_timeout(cb.as_js_value(), dur.as_secs_f64() * 1000.0);
-            PENDING.with(|p| {
-                p.borrow_mut().insert(key, cb);
-            });
-            Timer {
-                wait,
-                js_id,
-                key,
-                owner: crate::current().id(),
-            }
+            unsafe { timer_arm(token, dur.as_secs_f64() * 1000.0) };
+            Timer { wait, token }
         }
     }
 
     impl Drop for Timer {
         fn drop(&mut self) {
-            // Off-thread drop: the timer and its closure belong to another
-            // realm, where neither `clearTimeout` nor dropping the handle means
-            // anything from here. Leave them; the callback will fire, find its
-            // waiter gone, and clean itself up.
-            if crate::current().id() != self.owner {
-                return;
-            }
-            wasm_lite::timer::clear_timeout(self.js_id);
-            PENDING.with(|p| {
-                p.borrow_mut().remove(&self.key);
-            });
+            unsafe { timer_cancel(self.token) };
         }
     }
 
@@ -179,29 +152,66 @@ mod wasm_impl {
             Pin::new(&mut self.wait).poll(cx).map(|_| ())
         }
     }
+
+    /// Complete a host timer and wake its Rust future.
+    #[doc(hidden)]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __wl_timer_fire(token: u32) {
+        if let Some(wake) = take_timer(token) {
+            wake.wake();
+        }
+    }
+
+    /// Acknowledge cancellation and release the host-owned wake allocation.
+    #[doc(hidden)]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn __wl_timer_cancelled(token: u32) {
+        drop(take_timer(token));
+    }
+
+    fn take_timer(token: u32) -> Option<AsyncWake> {
+        TIMERS.with_mut(|timers| {
+            timers
+                .iter()
+                .position(|(candidate, _)| *candidate == token)
+                .map(|position| timers.swap_remove(position).1)
+        })
+    }
+
+    // The exports are invoked only by generated JavaScript, so keep them even
+    // when Rust's call graph has no references to them.
+    #[used]
+    static KEEP_TIMER_FIRE: extern "C" fn(u32) = __wl_timer_fire;
+    #[used]
+    static KEEP_TIMER_CANCELLED: extern "C" fn(u32) = __wl_timer_cancelled;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native_impl {
     use super::*;
-    use crate::async_wait::AsyncWait;
+    use crate::async_wait::{AsyncWait, AsyncWake};
+    use std::cmp::Reverse;
+    use std::collections::{BinaryHeap, HashMap};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Condvar, Mutex, OnceLock};
+    use std::time::Instant;
 
-    /// A thread that sleeps and then wakes the waiter.
-    ///
-    /// Native has no event loop to hang a timer on, and this mirrors what the
-    /// rest of `wasm_lite_std` does for native timeouts.
     pub(super) struct Timer {
         wait: AsyncWait,
+        id: u64,
     }
 
     impl Timer {
         pub(super) fn new(dur: Duration) -> Self {
             let (wake, wait) = waiter();
-            std::thread::spawn(move || {
-                std::thread::sleep(dur);
-                wake.wake();
-            });
-            Timer { wait }
+            let id = driver().arm(dur, wake);
+            Timer { wait, id }
+        }
+    }
+
+    impl Drop for Timer {
+        fn drop(&mut self) {
+            driver().cancel(self.id);
         }
     }
 
@@ -209,6 +219,95 @@ mod native_impl {
         type Output = ();
         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
             Pin::new(&mut self.wait).poll(cx).map(|_| ())
+        }
+    }
+
+    struct Driver {
+        next_id: AtomicU64,
+        shared: Arc<(Mutex<Queue>, Condvar)>,
+    }
+
+    #[derive(Default)]
+    struct Queue {
+        deadlines: BinaryHeap<Reverse<(Instant, u64)>>,
+        pending: HashMap<u64, AsyncWake>,
+    }
+
+    fn driver() -> &'static Driver {
+        static DRIVER: OnceLock<Driver> = OnceLock::new();
+        DRIVER.get_or_init(Driver::new)
+    }
+
+    impl Driver {
+        fn new() -> Self {
+            let shared = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
+            let thread_shared = Arc::clone(&shared);
+            std::thread::Builder::new()
+                .name("wasm_lite_std timer driver".to_owned())
+                .spawn(move || run(thread_shared))
+                .expect("failed to spawn timer driver");
+            Driver {
+                next_id: AtomicU64::new(1),
+                shared,
+            }
+        }
+
+        fn arm(&self, dur: Duration, wake: AsyncWake) -> u64 {
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            let deadline = Instant::now() + dur;
+            let (queue, changed) = &*self.shared;
+            let mut queue = queue.lock().expect("timer driver lock poisoned");
+            queue.pending.insert(id, wake);
+            queue.deadlines.push(Reverse((deadline, id)));
+            changed.notify_one();
+            id
+        }
+
+        fn cancel(&self, id: u64) {
+            let (queue, changed) = &*self.shared;
+            let removed = queue
+                .lock()
+                .expect("timer driver lock poisoned")
+                .pending
+                .remove(&id)
+                .is_some();
+            if removed {
+                changed.notify_one();
+            }
+        }
+    }
+
+    fn run(shared: Arc<(Mutex<Queue>, Condvar)>) {
+        let (mutex, changed) = &*shared;
+        let mut queue = mutex.lock().expect("timer driver lock poisoned");
+        loop {
+            while let Some(Reverse((_, id))) = queue.deadlines.peek() {
+                if queue.pending.contains_key(id) {
+                    break;
+                }
+                queue.deadlines.pop();
+            }
+
+            let Some(Reverse((deadline, id))) = queue.deadlines.peek().copied() else {
+                queue = changed.wait(queue).expect("timer driver lock poisoned");
+                continue;
+            };
+
+            let now = Instant::now();
+            if deadline > now {
+                let (next, _) = changed
+                    .wait_timeout(queue, deadline - now)
+                    .expect("timer driver lock poisoned");
+                queue = next;
+                continue;
+            }
+
+            queue.deadlines.pop();
+            if let Some(wake) = queue.pending.remove(&id) {
+                drop(queue);
+                wake.wake();
+                queue = mutex.lock().expect("timer driver lock poisoned");
+            }
         }
     }
 }

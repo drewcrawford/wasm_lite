@@ -5,7 +5,12 @@
 /// The wasm `atomic.wait` instruction traps on the main thread, so callers use
 /// this to pick a blocking vs. spinning strategy. A shared-memory `+atomics`
 /// build always has the capability on worker threads.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
 pub(crate) fn atomics_wait_supported() -> bool {
     !crate::wasm::is_main_thread()
+}
+
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+pub(crate) fn atomics_wait_supported() -> bool {
+    false
 }

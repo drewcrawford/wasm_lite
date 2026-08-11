@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 #![cfg_attr(nightly_rustc, feature(internal_output_capture))]
-#![cfg_attr(target_arch = "wasm32", feature(stdarch_wasm_atomic_wait))]
+#![cfg_attr(
+    all(target_arch = "wasm32", target_feature = "atomics"),
+    feature(stdarch_wasm_atomic_wait)
+)]
 //! A unified cross-platform `std::thread` + `std::sync` replacement for native + wasm32.
 //!
 //! ![logo](https://github.com/drewcrawford/wasm_lite_std/raw/main/art/logo.png)

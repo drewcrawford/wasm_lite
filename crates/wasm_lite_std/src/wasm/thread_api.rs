@@ -255,75 +255,87 @@ impl Builder {
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
-        // Create Thread before spawning so we can pass it to the worker
-        // Thread::name() only returns Some if explicitly set via Builder::name()
-        let id = ThreadId(THREAD_COUNTER.fetch_add(1, Ordering::Relaxed));
-        let thread = Thread {
-            inner: Arc::new(ThreadInner {
-                name: self._name.clone(),
-                id,
-                parking_state: Box::new(AtomicU32::new(0)),
-            }),
-        };
+        #[cfg(not(target_feature = "atomics"))]
+        {
+            let _ = f;
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "thread spawning requires a shared-memory +atomics wasm build",
+            ))
+        }
 
-        let thread_for_worker = thread.clone();
+        #[cfg(target_feature = "atomics")]
+        {
+            // Create Thread before spawning so we can pass it to the worker
+            // Thread::name() only returns Some if explicitly set via Builder::name()
+            let id = ThreadId(THREAD_COUNTER.fetch_add(1, Ordering::Relaxed));
+            let thread = Thread {
+                inner: Arc::new(ThreadInner {
+                    name: self._name.clone(),
+                    id,
+                    parking_state: Box::new(AtomicU32::new(0)),
+                }),
+            };
 
-        let finished = Arc::new(AtomicBool::new(false));
-        let finished_for_worker = finished.clone();
+            let thread_for_worker = thread.clone();
 
-        let (send, recv) = crate::mpsc::channel();
-        let closure = move || {
-            // Mark this worker so is_main_thread()/atomic.wait gating works here.
-            mark_worker_thread();
+            let finished = Arc::new(AtomicBool::new(false));
+            let finished_for_worker = finished.clone();
 
-            // Set up TLS for current() before running user code
-            CURRENT_THREAD.with(|cell| {
-                *cell.borrow_mut() = Some(thread_for_worker);
-            });
+            let (send, recv) = crate::mpsc::channel();
+            let closure = move || {
+                // Mark this worker so is_main_thread()/atomic.wait gating works here.
+                mark_worker_thread();
 
-            // Set up panic handling: store a sender closure that the panic hook can use
-            // to send the error through the channel before aborting
-            PANIC_SENDER.with(|cell| {
-                let send_clone = send.clone();
-                let finished_clone = finished_for_worker.clone();
-                *cell.borrow_mut() = Some(Box::new(move |msg: String| {
-                    finished_clone.store(true, Ordering::Release);
-                    let _ = send_clone.send_sync(Err(msg));
-                }));
-            });
+                // Set up TLS for current() before running user code
+                CURRENT_THREAD.with(|cell| {
+                    *cell.borrow_mut() = Some(thread_for_worker);
+                });
 
-            // Install our panic hook (once, globally — it reads thread-locals,
-            // so a single hook serves every thread).
-            install_panic_hook();
+                // Set up panic handling: store a sender closure that the panic hook can use
+                // to send the error through the channel before aborting
+                PANIC_SENDER.with(|cell| {
+                    let send_clone = send.clone();
+                    let finished_clone = finished_for_worker.clone();
+                    *cell.borrow_mut() = Some(Box::new(move |msg: String| {
+                        finished_clone.store(true, Ordering::Release);
+                        let _ = send_clone.send_sync(Err(msg));
+                    }));
+                });
 
-            crate::hooks::run_spawn_hooks();
+                // Install our panic hook (once, globally — it reads thread-locals,
+                // so a single hook serves every thread).
+                install_panic_hook();
 
-            let result = f();
+                crate::hooks::run_spawn_hooks();
 
-            // Clear panic sender since we completed successfully
-            PANIC_SENDER.with(|cell| {
-                cell.borrow_mut().take();
-            });
+                let result = f();
 
-            flush_captured_prints_to_console_current_thread_impl();
+                // Clear panic sender since we completed successfully
+                PANIC_SENDER.with(|cell| {
+                    cell.borrow_mut().take();
+                });
 
-            // Mark as finished before sending result (Release pairs with Acquire in is_finished)
-            finished_for_worker.store(true, Ordering::Release);
-            // Ignore send errors - receiver may have been dropped if JoinHandle wasn't joined
-            let _ = send.send_sync(Ok(result));
-        };
+                flush_captured_prints_to_console_current_thread_impl();
 
-        // Hand the closure to wasm_lite's spawn primitive, which boxes it,
-        // starts a Web Worker sharing this module + memory, and runs it on a
-        // fresh stack/TLS. (Worker name / stack size are not yet plumbed
-        // through; they are accepted for API compatibility.)
-        wasm_lite::thread::spawn(closure);
+                // Mark as finished before sending result (Release pairs with Acquire in is_finished)
+                finished_for_worker.store(true, Ordering::Release);
+                // Ignore send errors - receiver may have been dropped if JoinHandle wasn't joined
+                let _ = send.send_sync(Ok(result));
+            };
 
-        Ok(JoinHandle {
-            receiver: recv,
-            thread,
-            finished,
-        })
+            // Hand the closure to wasm_lite's spawn primitive, which boxes it,
+            // starts a Web Worker sharing this module + memory, and runs it on a
+            // fresh stack/TLS. (Worker name / stack size are not yet plumbed
+            // through; they are accepted for API compatibility.)
+            wasm_lite::thread::spawn(closure);
+
+            Ok(JoinHandle {
+                receiver: recv,
+                thread,
+                finished,
+            })
+        }
     }
 }
 
@@ -338,6 +350,7 @@ impl Builder {
 /// and route it to the join channel when this thread has a sender. Consequence:
 /// once you spawn a thread, wasm_lite_std owns the panic hook — install any
 /// custom hook (`set_panic_hook`, etc.) before the first spawn.
+#[cfg(target_feature = "atomics")]
 fn install_panic_hook() {
     use std::sync::Once;
     static INSTALLED: Once = Once::new();

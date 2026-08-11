@@ -16,6 +16,16 @@ done
 
 cargo build -p runner
 
+# The standard Rust-stable build has no shared memory or atomics. Exercise its
+# event-loop executor and local host timer separately from the nightly threaded
+# suite below, so an accidental atomic-wait dependency cannot hide in CI.
+echo "testing wasm_lite_std stable non-atomic timer (firefox)"
+RUSTFLAGS="$WASM32_RUSTFLAGS" \
+RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" \
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+cargo +stable test -p wasm_lite_std --test browser \
+    --target wasm32-unknown-unknown sleep_async_waits_on_the_main_thread
+
 echo "testing examples/tests-demo passing suite"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test passing)
 

@@ -627,6 +627,48 @@ mod suite {
         });
     }
 
+    /// A `Send` sleep may be created on one worker and awaited in another realm.
+    /// Its timer must survive the creating worker exiting.
+    #[wasm_lite::wasm_lite_test]
+    fn regression_sleep_async_survives_its_creator_worker_exiting() {
+        struct FirstReady<A, B> {
+            preferred: A,
+            watchdog: B,
+        }
+
+        impl<A: Future<Output = ()> + Unpin, B: Future<Output = ()> + Unpin> Future for FirstReady<A, B> {
+            type Output = bool;
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<bool> {
+                if Pin::new(&mut self.preferred).poll(cx).is_ready() {
+                    return Poll::Ready(true);
+                }
+                if Pin::new(&mut self.watchdog).poll(cx).is_ready() {
+                    return Poll::Ready(false);
+                }
+                Poll::Pending
+            }
+        }
+
+        wasm_lite_std::async_doctest!(async {
+            let moved =
+                wasm_lite_std::spawn(|| wasm_lite_std::sleep_async(Duration::from_millis(20)))
+                    .join_async()
+                    .await
+                    .unwrap();
+            let watchdog = wasm_lite_std::sleep_async(Duration::from_millis(300));
+
+            assert!(
+                FirstReady {
+                    preferred: moved,
+                    watchdog,
+                }
+                .await,
+                "SleepAsync was orphaned when its creating worker exited"
+            );
+        });
+    }
+
     /// `request_animation_frame` runs its callback, and releases it after.
     ///
     /// The closure has to outlive the call — it is what JS will invoke — so it

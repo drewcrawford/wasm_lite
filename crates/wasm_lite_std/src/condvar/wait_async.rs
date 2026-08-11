@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::Instant;
-use super::thread;
 use super::{ASYNC_WAITER_ID_COUNTER, AsyncWaiter, Condvar, WaitTimeoutResult};
 use crate::Guard;
 use crate::async_wait::waiter;
@@ -202,9 +201,9 @@ impl Condvar {
         // Create a unique ID for this waiter
         let waiter_id = ASYNC_WAITER_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-        // Create two channels - one for normal notification, one for timeout
+        // Create a channel for normal notification. The timeout uses the shared
+        // cancellable timer service rather than a sleeping thread.
         let (notify_sender, notify_receiver) = waiter();
-        let (timeout_sender, timeout_receiver) = waiter();
 
         // Add to waiting list
         self.waiting_async_threads.with_mut(|waiters| {
@@ -223,14 +222,8 @@ impl Condvar {
         // longer a correctness requirement — but it stays, because a duration is
         // what the sleeping side actually wants and it keeps this independent of
         // the clock's representation.
-        let timeout = deadline - Instant::now();
-
-        // Spawn a thread to handle the timeout
-        thread::spawn(move || {
-            thread::sleep(timeout);
-            // Send timeout signal
-            timeout_sender.wake();
-        });
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        let timeout_receiver = crate::sleep_async(timeout);
 
         // Release the mutex
         drop(guard);

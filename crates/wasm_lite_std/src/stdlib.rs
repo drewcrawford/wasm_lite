@@ -100,10 +100,18 @@ impl<T> JoinHandle<T> {
     /// Unfortunately, this is almost never what you want, and is likely to prevent your workers from spawning.
     /// Consider [`JoinHandle::join_async`] instead, or see the documentation on [`crate::spawn`] for details.
     pub fn join(self) -> Result<T, Box<dyn std::any::Any + Send + 'static>> {
-        // The thread always sends a result before exiting, so this should never fail
-        self.receiver
+        let JoinHandle {
+            std_handle,
+            receiver,
+            ..
+        } = self;
+        let result = receiver
             .recv_sync()
-            .expect("thread terminated without sending result")
+            .expect("thread terminated without sending result");
+        // Receiving the closure result is not the same as joining the thread:
+        // thread-local destructors still run after the closure returns.
+        std_handle.join()?;
+        result
     }
 
     /// Waits asynchronously for the thread to finish and returns its result.
@@ -111,15 +119,35 @@ impl<T> JoinHandle<T> {
     /// This is the async version of [`JoinHandle::join`]. The error type differs
     /// from the synchronous version - panics are converted to `Box<String>` containing
     /// the debug representation of the panic payload.
-    pub async fn join_async(mut self) -> Result<T, Box<String>>
+    pub async fn join_async(self) -> Result<T, Box<String>>
     where
         T: Send + 'static,
     {
-        self.receiver
+        let JoinHandle {
+            std_handle,
+            mut receiver,
+            ..
+        } = self;
+        let result = receiver
             .recv_async()
             .await
             .expect("thread terminated without sending result")
-            .map_err(|e| Box::new(format!("{:?}", e)) as Box<String>)
+            .map_err(|e| Box::new(format!("{:?}", e)) as Box<String>);
+
+        // Joining can run arbitrary TLS destructors, so keep that blocking work
+        // off the async caller and await a small completion channel instead.
+        let (exit_sender, mut exit_receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = exit_sender.send_sync(std_handle.join());
+        });
+        let exit = exit_receiver
+            .recv_async()
+            .await
+            .expect("join helper terminated without sending result");
+        if let Err(panic) = exit {
+            return Err(Box::new(format!("{:?}", panic)));
+        }
+        result
     }
 
     /// Gets the thread associated with this handle.
@@ -218,8 +246,10 @@ impl Builder {
         let (sender, receiver) = mpsc::channel();
         let std_handle = self.inner.spawn(move || {
             mark_worker_thread();
-            crate::hooks::run_spawn_hooks();
-            let result = catch_unwind(AssertUnwindSafe(f));
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                crate::hooks::run_spawn_hooks();
+                f()
+            }));
             let _ = sender.send_sync(result);
         })?;
         let thread = Thread(std_handle.thread().clone());
@@ -246,8 +276,10 @@ where
     let (sender, receiver) = mpsc::channel();
     let std_handle = thread::spawn(move || {
         mark_worker_thread();
-        crate::hooks::run_spawn_hooks();
-        let result = catch_unwind(AssertUnwindSafe(f));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            crate::hooks::run_spawn_hooks();
+            f()
+        }));
         let _ = sender.send_sync(result);
     });
     let thread = Thread(std_handle.thread().clone());

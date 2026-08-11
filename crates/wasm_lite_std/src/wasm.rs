@@ -6,8 +6,16 @@
 //! blocking use the wasm `atomic.wait`/`atomic.notify` instructions directly
 //! (see [`wasm_utils`]). No wasm-bindgen, js-sys, or web-sys.
 
+#[cfg(target_feature = "atomics")]
+mod executor;
+#[cfg(not(target_feature = "atomics"))]
+#[path = "wasm/executor_single.rs"]
 mod executor;
 mod thread_api;
+#[cfg(target_feature = "atomics")]
+mod wasm_utils;
+#[cfg(not(target_feature = "atomics"))]
+#[path = "wasm/wasm_utils_single.rs"]
 mod wasm_utils;
 
 pub use executor::spawn_local;
@@ -28,26 +36,30 @@ pub use thread_api::{
     park, park_timeout, sleep, spawn, yield_now, yield_to_event_loop_async,
 };
 // Re-exported for `super::*` in `thread_api` and `crate::wasm_support`.
+#[cfg(target_feature = "atomics")]
+pub(crate) use wasm_utils::mark_worker_thread;
 pub(crate) use wasm_utils::{
     WaitResult, atomics_wait_timeout_ms_try, get_available_parallelism, is_main_thread,
-    mark_worker_thread, park_notify_at_addr, park_wait_at_addr, park_wait_timeout_at_addr,
-    sleep_sync_ms,
+    park_notify_at_addr, park_wait_at_addr, park_wait_timeout_at_addr, sleep_sync_ms,
 };
 
 static THREAD_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Type alias for the panic sender closure stored in thread-local storage.
+#[cfg(target_feature = "atomics")]
 type PanicSender = Box<dyn FnOnce(String) + Send>;
 
 std::thread_local! {
     static CURRENT_THREAD: std::cell::RefCell<Option<Thread>> = const { std::cell::RefCell::new(None) };
 
-    /// Holds a closure that sends a panic error through the channel.
-    /// This is set before running user code and called from the panic hook.
-    static PANIC_SENDER: std::cell::RefCell<Option<PanicSender>> = const { std::cell::RefCell::new(None) };
-
     /// Tracks pending async tasks spawned on this thread.
     static PENDING_TASKS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(target_feature = "atomics")]
+std::thread_local! {
+    /// Sends a worker panic through its join channel.
+    static PANIC_SENDER: std::cell::RefCell<Option<PanicSender>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(nightly_rustc)]
@@ -57,7 +69,7 @@ std::thread_local! {
     };
 }
 
-#[cfg(nightly_rustc)]
+#[cfg(all(nightly_rustc, target_feature = "atomics"))]
 fn flush_captured_prints_to_console_current_thread_impl() {
     CONSOLE_CAPTURE.with(|slot| {
         let capture = {
@@ -88,7 +100,7 @@ fn flush_captured_prints_to_console_current_thread_impl() {
     });
 }
 
-#[cfg(not(nightly_rustc))]
+#[cfg(all(not(nightly_rustc), target_feature = "atomics"))]
 fn flush_captured_prints_to_console_current_thread_impl() {}
 
 pub(crate) fn redirect_println_eprintln_to_console_current_thread_impl() {
