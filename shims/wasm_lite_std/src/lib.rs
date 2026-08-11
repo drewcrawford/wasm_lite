@@ -2,7 +2,8 @@
 
 //! wasm-bindgen-backed shim for `wasm_lite_std`.
 //!
-//! See the [`wasm_lite`] shim for the rationale. This crate provides the
+//! See the [`wasm_lite`](https://github.com/drewcrawford/wasm_lite) shim for the
+//! rationale. This crate provides the
 //! `wasm_lite_std` surface — threads, sync primitives, time — on top of
 //! [`wasm_safe_thread`], which is the crate `wasm_lite_std` was itself ported
 //! from and whose API is near-identical. That makes the bulk of this file a

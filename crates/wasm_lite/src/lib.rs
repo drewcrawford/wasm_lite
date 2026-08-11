@@ -69,10 +69,12 @@
 //! rich serde-style marshalling. Three things it *does* now have: Rust closures
 //! passed into JS ([`Closure`], zero- and one-argument signatures), awaiting
 //! JS promises ([`JsFuture`]), and the [`fetch`] API built on both. The
-//! `wasm-bindgen` feature
-//! supports incremental migration in the direction where `wasm-lite` is the
-//! final codegen step; the reverse direction, where a wasm-bindgen/wasm-pack app
-//! consumes a wasm_lite leaf without running `wasm-lite`, is still roadmap work.
+//! `wasm-bindgen` feature supports incremental migration in the direction where
+//! `wasm-lite` is the final codegen step. Bounded package-substitution shims
+//! cover both host directions too: [`shims/`](https://github.com/drewcrawford/wasm_lite/tree/main/shims)
+//! lowers a wasm_lite-authored leaf onto a wasm-bindgen host, while
+//! [`shims_wasm_bindgen/`](https://github.com/drewcrawford/wasm_lite/tree/main/shims_wasm_bindgen)
+//! lowers the supported wasm-bindgen ecosystem surface onto wasm_lite.
 //!
 //! Prefer `wasm-bindgen` when you need its mature ecosystem surface today.
 //! Prefer [`wasm_lite`](crate) when the browser path itself is the product
@@ -176,9 +178,10 @@
 //! ```
 //!
 //! `examples/hello-rust` covers imports, handles, strings, bytes, and
-//! [`js_class!`]. The other examples build the same way, except the
-//! threaded/async examples need **nightly + `-Z build-std`** and atomics link
-//! flags. See
+//! [`js_class!`]. The other examples build the same way. Examples that spawn
+//! workers need **nightly + `-Z build-std`** and atomics link flags; local async
+//! work through `spawn_local`, [`JsFuture`], and `sleep_async` also works in an
+//! ordinary stable, non-atomic build. See
 //! [Threads, async & shared memory](https://github.com/drewcrawford/wasm_lite/blob/main/docs/threads-and-async.md)
 //! and `crates/wasm_lite_std/run-browser-tests.sh`.
 //!
@@ -221,6 +224,8 @@
 //! 1. **Rust side.** [`import!`], [`export`], and [`js_class!`] emit normal
 //!    wasm imports/exports *plus* a descriptor line into a custom wasm section
 //!    (`__wasm_lite_imports`, `__wl_exports`) describing each binding's ABI.
+//!    [`wasm_lite_test`] and [`wasm_lite_bench`] record harness entries in their
+//!    own discovery sections.
 //! 2. **Codegen.** The `wasm-lite` CLI reads those sections from the compiled
 //!    `.wasm` and generates a matching JavaScript glue module: the import object
 //!    the wasm expects, plus one wrapper per [`export`].
@@ -246,7 +251,10 @@
 //! | [`export`] | export Rust functions to JavaScript callers |
 //! | [`js_class!`] | define typed [`JsValue`] wrappers |
 //! | [`wasm_lite_test`] | register browser-driven wasm tests; `(worker)` runs the body on a Web Worker |
+//! | [`wasm_lite_bench`] / [`Bencher`] | register and measure browser-driven benchmarks |
 //! | [`JsValue`] | opaque handle to a JavaScript value owned by the host value table |
+//! | [`Closure`] | pass Rust closures to JavaScript callbacks |
+//! | [`JsFuture`] | await JavaScript promises from Rust |
 //! | [`set_panic_hook`] | report wasm panic messages through `console.error` |
 //!
 //! The core crate also exposes these modules:
@@ -256,6 +264,11 @@
 //! | [`console`] | `console.log` / `console.error` bindings |
 //! | [`date`] | `Date.now()` binding |
 //! | [`performance`] | `performance.now()` binding |
+//! | [`timer`] | host timers used by non-blocking sleeps and scheduling |
+//! | [`event`] | browser event-listener bindings |
+//! | [`fetch`] | Fetch + Streams bindings |
+//! | [`websocket`] | WebSocket bindings |
+//! | [`dom`] | focused DOM bindings |
 //! | [`thread`] | raw cross-thread primitives; prefer [`wasm_lite_std`] for the full `std::thread` + `std::sync` surface |
 //! | `interop` | optional `wasm-bindgen` feature: conversions to/from `wasm_bindgen::JsValue` |
 //!
@@ -264,7 +277,7 @@
 //! | doc | covers |
 //! |---|---|
 //! | [Binding model](https://github.com/drewcrawford/wasm_lite/blob/main/docs/binding-model.md) | [`import!`], [`export`], [`js_class!`], [`JsValue`], type marshalling (`Option`/`Result`, strings, bytes, handles) |
-//! | [Testing](https://github.com/drewcrawford/wasm_lite/blob/main/docs/testing.md) | [`wasm_lite_test`] and `(worker)`, `cargo test`/`cargo run` in-browser, doctests, the [`wasm_lite_std`] browser suite |
+//! | [Testing and benchmarking](https://github.com/drewcrawford/wasm_lite/blob/main/docs/testing.md) | [`wasm_lite_test`], [`wasm_lite_bench`], `(worker)`, `cargo test`/`cargo bench` in-browser, doctests, the [`wasm_lite_std`] browser suite |
 //! | [Threads, async & shared memory](https://github.com/drewcrawford/wasm_lite/blob/main/docs/threads-and-async.md) | `+atomics` builds, [`thread::spawn`], [`wasm_lite_std`] (`Mutex`/`RwLock`/`Condvar`/`mpsc`, sync + async), the `spawn_local` executor, panic surfacing, the `std::time` veneer |
 //! | [wasm-bindgen interop](https://github.com/drewcrawford/wasm_lite/blob/main/docs/interop.md) | the `wasm-bindgen` feature and `.to_wasm_bindgen()` / `.to_wasm_lite()` conversions |
 //! | [Crate layering & roadmap](https://github.com/drewcrawford/wasm_lite/blob/main/docs/roadmap.md) | planned `wasm_lite_js`/`wasm_lite_web` split and known gaps |
@@ -277,11 +290,11 @@
 //! | crate | role |
 //! |---|---|
 //! | `crates/wasm_lite` | core: [`import!`], [`export`], [`js_class!`], [`JsValue`], runtime (`__wl_malloc`/`__wl_free`, panic hook), [`thread::spawn`], [`console`]/[`performance`]/[`date`]/[`fetch`]/[`websocket`]/[`dom`] bindings |
-//! | `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): [`import!`], [`export`], [`wasm_lite_test`], [`js_class!`]; shared type-to-ABI dispatch lives in `ty` |
-//! | `crates/wasm_lite_codegen` | host-side: read descriptor sections, generate JS glue |
-//! | `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen |
-//! | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync + async); ported from `wasm_safe_thread`, retargeted off wasm-bindgen onto [`wasm_lite`](crate) + a `spawn_local` event-loop executor |
-//! | `runner` | WebDriver runner; serves a bin interactively, or drives tests/doctests headless and exits |
+//! | `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): [`import!`], [`export`], [`wasm_lite_test`], [`wasm_lite_bench`], [`js_class!`]; shared type-to-ABI dispatch lives in `ty` |
+//! | `crates/wasm_lite_codegen` | host-side: read binding/test/benchmark sections; generate export wrappers, worker glue, and interop bundles |
+//! | `crates/wasm_lite_cli` | the `wasm-lite` binary; writes glue plus bundle-specific worker and wasm-bindgen interop artifacts |
+//! | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync + async); atomics builds use workers while stable non-atomic wasm uses a local event-loop executor |
+//! | `runner` | WebDriver runner; serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
 //!
 //! ## Examples
 //!
@@ -293,6 +306,7 @@
 //! | `examples/exports-demo` | Rust-to-JS exports |
 //! | `examples/tests-demo` | [`wasm_lite_test`] |
 //! | `examples/doctest-demo` | browser-driven doctests |
+//! | `examples/bench-demo` | [`wasm_lite_bench`] and sync/async browser benchmarks |
 //! | `examples/interop` | wasm-bindgen bridge |
 //! | `examples/atomics-demo` | shared memory + atomics; nightly |
 //! | `examples/threads-demo` | [`thread::spawn`] over Web Workers; nightly |
@@ -309,7 +323,7 @@
 //! * Modern-browser runner: **done** (WebDriver: Firefox/Chrome/Safari).
 //! * `+atomics` / shared-memory builds: **done**; threads spawn onto Web Workers.
 //! * Std-like thread/sync/time veneer: **done** in [`wasm_lite_std`] (sync and async).
-//! * Unit tests and doctests in-browser: **done**.
+//! * Unit tests, doctests, and benchmarks in-browser: **done**.
 //! * Rust/JS imports and exports: **done** ([`import!`] / [`export`]).
 //! * Logging and panic surfacing to the CLI: **done** for main-thread failures,
 //!   joined workers, detached-worker warnings, and doctests with [`set_panic_hook`].
@@ -317,8 +331,10 @@
 //! * Avoid dependencies: **mostly held**. The core crate and codegen have zero
 //!   runtime dependencies. The proc-macro crate uses `syn`/`quote` at build time
 //!   for typed parsing and hygienic codegen.
-//! * Interop with wasm-bindgen crates: **done** behind the `wasm-bindgen` feature,
-//!   with reverse interop still on the roadmap.
+//! * Interop with wasm-bindgen crates: **done** behind the `wasm-bindgen`
+//!   feature when `wasm-lite` owns final codegen; bounded `[patch]` shims exist
+//!   for both host directions, while a general reverse glue post-pass remains
+//!   roadmap work.
 //!
 //! [`wasm_lite_std`]: https://crates.io/crates/wasm_lite_std
 

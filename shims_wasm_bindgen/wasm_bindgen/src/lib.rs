@@ -20,22 +20,26 @@
 //!
 //! # Status
 //!
-//! Early, but past the interesting part. The substitution mechanism works (see
-//! [`__rt`]), and [`macro@wasm_bindgen`] translates the attribute grammar
-//! web-sys is written in: `extends`, `method`, `getter`, `setter`,
-//! `constructor`, `static_method_of`, `indexing_getter`/`indexing_setter`,
-//! `js_name`, `js_class`, `js_namespace`, `catch`, and the lookup hints
-//! (`structural`, `final`) that wasm_lite's lowering already satisfies.
+//! This is a bounded compatibility shim, not a complete wasm-bindgen
+//! reimplementation. Its browser suite runs unmodified `js-sys` 0.3.85 and DOM
+//! `web-sys` 0.3.85; all 135 web-sys WebGPU features compile; and wgpu 28
+//! constructs an `Instance` and reaches `navigator.gpu` through
+//! `request_adapter`. See the workspace
+//! [coverage table](https://github.com/drewcrawford/wasm_lite/blob/main/shims_wasm_bindgen/README.md#what-works)
+//! for the version-pinning and test details.
 //!
-//! `shims_wasm_bindgen/consumer-demo` exercises all of that in a browser from a
-//! crate whose only dependency is this one.
+//! [`macro@wasm_bindgen`] translates the attribute grammar those crates use,
+//! including property/indexing forms, constructors, namespaces, `catch`,
+//! variadics, string enums, generic extern types, `is_type_of`, and thread-local
+//! statics.
 //!
 //! [`JsCast`] is generated per type, so `dyn_into`/`dyn_ref`/`is_instance_of`
 //! work.
 //!
 //! Not yet handled — each an explicit error rather than silently wrong glue:
-//! `variadic`, `module`/`raw_module`/`inline_js`, `start`, and multi-segment
-//! `js_namespace`. `js-sys` and `web-sys` have not been tried.
+//! block-level `module`/`raw_module`/`inline_js`/`js_namespace`, `start`, and
+//! closures taking `&T`. `final` is accepted as a lookup hint but cannot enforce
+//! wasm-bindgen's prototype-only method lookup if an object shadows the method.
 
 #![deny(missing_docs)]
 

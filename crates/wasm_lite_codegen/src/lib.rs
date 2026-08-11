@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Host-side code generation for wasm_lite.
 //!
-//! The wasm-side `import!` macro records a descriptor for every imported JS
-//! function into the `__wasm_lite_imports` custom section. This crate reads that
-//! section out of a compiled module and generates the matching JavaScript glue:
-//! one shim per import that unmarshals the wasm-level arguments (e.g. a `&str`
-//! arrives as a `(ptr, len)` pair to decode from linear memory) and calls the
-//! real JS function.
+//! The wasm-side macros record imports, exports, tests, and benchmarks in custom
+//! sections. This crate reads those sections from a compiled module and
+//! generates the matching JavaScript: import shims that unmarshal wasm-level
+//! arguments, wrappers for Rust exports, harness discovery, and (for
+//! shared-memory modules) a Web Worker bootstrap.
+//!
+//! It also detects imported memory and wasm-bindgen schema sections. The latter
+//! feeds the interop bundler, which runs the wasm-bindgen CLI and assembles one
+//! loader around the finalized wasm, wasm_lite glue, and patched wasm-bindgen
+//! glue. Callers can select bundle-specific sibling paths for both interop and
+//! worker artifacts.
 //!
 //! It is dependency-free: a minimal wasm binary reader plus a small text parser.
 

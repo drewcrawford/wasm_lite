@@ -2,7 +2,8 @@
 
 //! wasm-bindgen-backed implementations of the `wasm_lite` binding macros.
 //!
-//! These reproduce the *grammar* of [`wasm_lite`]'s `import!`, `#[export]`,
+//! These reproduce the *grammar* of
+//! [`wasm_lite`](https://github.com/drewcrawford/wasm_lite)'s `import!`, `#[export]`,
 //! `js_class!` and `#[wasm_lite_test]`, but lower them to `#[wasm_bindgen]`
 //! instead of wasm_lite's own ABI + descriptor sections. A crate authored
 //! against wasm_lite therefore compiles unchanged inside an ordinary

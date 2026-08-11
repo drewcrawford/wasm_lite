@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Procedural macros for wasm_lite, built on `syn` + `quote`.
 //!
-//! Three macros: `#[export]` (Rust→JS exports), `#[wasm_lite_test]` (test
-//! harness entries), and `js_class!` (typed `JsValue` wrappers). Each parses the
-//! input into a typed AST and emits the matching wasm export / descriptor with
-//! `quote!`. The descriptor format (`name|argtags|rettag`) and the flattened ABI
-//! are what `wasm_lite_codegen` reads back to generate the JS glue.
+//! Five macros: `import!` (JavaScript imports), `#[export]` (Rust→JS exports),
+//! `#[wasm_lite_test]` and `#[wasm_lite_bench]` (browser harness entries), and
+//! `js_class!` (typed `JsValue` wrappers). Each parses the input into a typed AST
+//! and emits the matching wasm import/export or custom-section descriptor with
+//! `quote!`. The descriptor formats and flattened ABI are what
+//! `wasm_lite_codegen` reads back to generate the JavaScript glue.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};

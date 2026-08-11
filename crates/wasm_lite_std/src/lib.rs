@@ -81,6 +81,12 @@
 //! [`spawn()`], [`Builder`], [`JoinHandle`], [`park()`], [`Thread::unpark()`], thread locals,
 //! and spawn hooks.
 //!
+//! Worker spawning needs shared-memory `+atomics` wasm and therefore nightly
+//! `-Z build-std`. Async that stays in one realm does not: `spawn_local`,
+//! [`sleep_async`], and the non-blocking synchronization paths run in an
+//! ordinary stable, non-atomic wasm build too. In that mode, attempting to
+//! spawn a worker reports [`std::io::ErrorKind::Unsupported`].
+//!
 //! # Comparison with wasm_thread
 //!
 //! [wasm_thread](https://crates.io/crates/wasm_thread) is a popular crate that aims to closely
@@ -131,8 +137,10 @@
 //! - `wasm_thread` uses `Arc<Packet<UnsafeCell>>` with a custom `Signal` primitive and `Waker` list
 //!
 //! **Async waiting:**
-//! - `wasm_lite_std` runs a small event-loop executor (`spawn_local`) that sleeps on
-//!   `Atomics.waitAsync` and is woken cross-thread by `memory.atomic.notify` — no JS Promise glue
+//! - `wasm_lite_std` runs a small event-loop executor (`spawn_local`): stable
+//!   non-atomic wasm schedules another host turn, while shared-memory builds
+//!   sleep on `Atomics.waitAsync` and wake cross-thread via
+//!   `memory.atomic.notify`
 //! - `wasm_thread` implements `futures::future::poll_fn` with manual `Waker` tracking
 //!
 //! ## When to use which
@@ -373,7 +381,9 @@
 //!
 //! # Building for WASM
 //!
-//! Standard library must be rebuilt with atomics support:
+//! To spawn workers, the standard library must be rebuilt with atomics support.
+//! Stable, non-atomic builds can use the local executor and timers without this
+//! configuration:
 //!
 //! ```bash
 //! # Install nightly and components
