@@ -215,14 +215,26 @@ pub unsafe extern "C" fn __wl_closure_call_n(id: u32, argc: u32, args_ptr: u32) 
 /// JS function value, which is what an event listener, a `Promise`
 /// continuation, or a `wgpu` device-lost callback needs.
 ///
-/// ```no_run
+/// ```
+/// # #[cfg(target_arch = "wasm32")]
+/// # wasm_lite::import! {
+/// #     "Function" {
+/// #         fn call0(this: &wasm_lite::JsValue) -> wasm_lite::JsValue as "call";
+/// #     }
+/// # }
+/// # #[cfg(target_arch = "wasm32")]
+/// # fn main() {
+/// # wasm_lite::set_panic_hook();
 /// use wasm_lite::Closure;
 ///
 /// let mut count = 0;
 /// let cb = Closure::new(move || { count += 1; });
-/// # let _ = cb.as_js_value();
+/// # let _ = call0(cb.as_js_value());
 /// // pass `cb.as_js_value()` to an import, then either keep `cb` alive or
 /// // hand it to JS for good with `cb.forget()`.
+/// # }
+/// # #[cfg(not(target_arch = "wasm32"))]
+/// # fn main() {}
 /// ```
 ///
 /// # How the handle stays sound

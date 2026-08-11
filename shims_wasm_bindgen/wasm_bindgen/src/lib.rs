@@ -270,11 +270,19 @@ impl JsCast for JsValue {
 /// So `import!` takes an optional `crate = <path>;` prefix, and generated code
 /// reaches the runtime through here instead:
 ///
-/// ```ignore
+/// ```
 /// wasm_bindgen::__rt::import! {
 ///     crate = ::wasm_bindgen::__rt;
 ///     "Math" { fn random() -> f64; }
 /// }
+/// # #[cfg(target_arch = "wasm32")]
+/// # fn main() {
+/// # wasm_bindgen::__rt::set_panic_hook();
+/// # let value = random();
+/// # assert!((0.0..1.0).contains(&value));
+/// # }
+/// # #[cfg(not(target_arch = "wasm32"))]
+/// # fn main() {}
 /// ```
 ///
 /// Every path in that expansion resolves through `wasm-bindgen`, so a crate

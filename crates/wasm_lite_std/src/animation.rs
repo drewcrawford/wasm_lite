@@ -28,10 +28,15 @@ thread_local! {
 ///
 /// **Main thread only** — a worker has no `requestAnimationFrame`.
 ///
-/// ```no_run
-/// wasm_lite_std::request_animation_frame(|| {
+/// ```
+/// # #[cfg(target_arch = "wasm32")]
+/// # wasm_lite::set_panic_hook();
+/// # let (tx, mut frame) = wasm_lite_std::mpsc::channel();
+/// wasm_lite_std::request_animation_frame(move || {
 ///     // draw
+/// #   tx.send_sync(()).unwrap();
 /// });
+/// # wasm_lite_std::async_doctest!(async move { frame.recv_async().await.unwrap(); });
 /// ```
 ///
 /// On native there is no compositor to wait for, so the callback runs

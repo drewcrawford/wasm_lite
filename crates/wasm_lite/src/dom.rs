@@ -7,8 +7,9 @@
 //! `KeyboardEvent` — plus the `js_sys::global`/`Reflect` calls that go with
 //! them.
 //!
-//! ```no_run
-//! # fn f() -> Result<(), wasm_lite::JsValue> {
+//! ```
+//! # #[cfg(target_arch = "wasm32")]
+//! # fn run() -> Result<(), wasm_lite::JsValue> {
 //! let window = wasm_lite::dom::window().expect("not on the main thread");
 //! let document = window.document().expect("no document");
 //!
@@ -16,6 +17,10 @@
 //! canvas.style().set_property("width", "100vw")?;
 //! document.body().expect("no body").append_child(&canvas)?;
 //! # Ok(()) }
+//! # #[cfg(target_arch = "wasm32")]
+//! # fn main() { wasm_lite::set_panic_hook(); run().unwrap(); }
+//! # #[cfg(not(target_arch = "wasm32"))]
+//! # fn main() {}
 //! ```
 //!
 //! # Differences from web-sys

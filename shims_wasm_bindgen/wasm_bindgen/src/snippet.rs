@@ -46,8 +46,15 @@ pub fn blob_url(source: &str) -> String {
 
 /// Link a JavaScript file into the binary and get a URL for it.
 ///
-/// ```ignore
+/// ```
+/// # #[cfg(target_arch = "wasm32")]
+/// # fn main() {
+/// # wasm_bindgen::__rt::set_panic_hook();
 /// let url = wasm_bindgen::link_to!(module = "/src/task/worker.js");
+/// # assert!(url.starts_with("blob:"));
+/// # }
+/// # #[cfg(not(target_arch = "wasm32"))]
+/// # fn main() {}
 /// ```
 ///
 /// The path is relative to the *calling* crate's root, as wasm-bindgen's is.

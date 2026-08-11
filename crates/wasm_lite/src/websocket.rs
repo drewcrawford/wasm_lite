@@ -5,11 +5,12 @@
 //! MessageEvent, CloseEvent}` and the `js_sys` pieces those drag along
 //! (`ArrayBuffer`, `Uint8Array`).
 //!
-//! ```no_run
-//! # fn f() {
+//! ```
+//! # #[cfg(target_arch = "wasm32")]
+//! # fn run() -> Result<(), wasm_lite::JsValue> {
 //! use wasm_lite::websocket::{BinaryType, MessageEvent, WebSocket};
 //!
-//! let socket = WebSocket::new("wss://example.com/socket").expect("bad URL");
+//! let socket = WebSocket::new("wss://example.invalid/socket")?;
 //! socket.set_binary_type(BinaryType::ArrayBuffer);
 //!
 //! let on_message = wasm_lite::Closure::new_with_arg(|event| {
@@ -21,7 +22,12 @@
 //! });
 //! socket.set_onmessage(Some(on_message.as_js_value()));
 //! on_message.forget(); // hand it to JS for the life of the realm
-//! # }
+//! # socket.close()?;
+//! # Ok(()) }
+//! # #[cfg(target_arch = "wasm32")]
+//! # fn main() { wasm_lite::set_panic_hook(); run().unwrap(); }
+//! # #[cfg(not(target_arch = "wasm32"))]
+//! # fn main() {}
 //! ```
 //!
 //! # Handler lifetime
