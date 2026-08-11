@@ -9,6 +9,7 @@
 //! web-sys" below.
 //!
 //! ```no_run
+//! # // no_run because: awaiting Fetch needs wasm_lite_std's executor, which cannot depend back from this core crate without linking duplicate runtime exports
 //! # async fn f() -> Result<(), wasm_lite::JsValue> {
 //! use wasm_lite::fetch::{RequestInit, fetch};
 //!

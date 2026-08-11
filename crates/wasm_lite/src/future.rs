@@ -56,6 +56,7 @@ fn settle(shared: &Rc<RefCell<Shared>>, outcome: Result<JsValue, JsValue>) {
 /// `Result<_, JsValue>`.
 ///
 /// ```no_run
+/// # // no_run because: awaiting a Promise needs wasm_lite_std's executor, which cannot depend back from this core crate without linking duplicate runtime exports
 /// # async fn f(promise: &wasm_lite::JsValue) {
 /// let value = wasm_lite::JsFuture::new(promise).await;
 /// match value {

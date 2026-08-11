@@ -12,7 +12,7 @@
 //! each binding becomes a private module containing one `import!` plus a public
 //! wrapper that converts newtypes to and from handles:
 //!
-//! ```ignore
+//! ```text
 //! #[wasm_bindgen]
 //! extern "C" {
 //!     pub type Element;
@@ -23,7 +23,7 @@
 //!
 //! becomes (roughly)
 //!
-//! ```ignore
+//! ```text
 //! #[repr(transparent)] pub struct Element { obj: JsValue }
 //! mod __wb_tag_name {
 //!     import! { crate = ::wasm_bindgen::__rt;
