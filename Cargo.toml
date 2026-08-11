@@ -31,7 +31,7 @@ rust-version = "1.95.0"
 authors = ["Drew Crawford <drew@sealedabstract.com>"]
 license = "MIT OR Apache-2.0"
 keywords = ["wasm", "webassembly", "javascript", "bindings", "wasm-bindgen"]
-categories = ["wasm", "web-programming", "development-tools::ffi"]
+categories = ["wasm", "web-programming", "development-tools::ffi", "concurrency", "asynchronous"]
 repository = "https://github.com/drewcrawford/wasm_lite"
 homepage = "https://sealedabstract.com/code/wasm_lite"
 
