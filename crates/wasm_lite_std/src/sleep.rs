@@ -54,6 +54,14 @@ pub struct SleepAsync {
     remaining: Duration,
 }
 
+impl std::fmt::Debug for SleepAsync {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SleepAsync")
+            .field("remaining", &self.remaining)
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 fn new_timer(dur: Duration) -> wasm_impl::Timer {
     wasm_impl::Timer::new(dur)

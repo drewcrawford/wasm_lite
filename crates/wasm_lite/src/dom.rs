@@ -481,7 +481,10 @@ impl MouseEvent {
 }
 
 /// The unit a [`WheelEvent`]'s deltas are expressed in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// This enum is deliberately exhaustive: [`DeltaMode::Other`] preserves every
+/// unknown numeric value, including modes a future browser API may add.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeltaMode {
     /// Pixels.
     Pixel,

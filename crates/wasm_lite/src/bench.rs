@@ -76,6 +76,7 @@ const MAX_ITERS: u64 = 1 << 40;
 ///
 /// A benchmark that never calls `iter` reports nothing and the runner fails it,
 /// rather than reporting a fabricated zero.
+#[derive(Debug)]
 pub struct Bencher {
     result: Option<Report>,
 }

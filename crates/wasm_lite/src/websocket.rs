@@ -121,12 +121,14 @@ mod imp {
 }
 
 /// How binary frames are delivered to `onmessage`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum BinaryType {
     /// An `ArrayBuffer` — what [`MessageEvent::data_bytes`] reads.
     ArrayBuffer,
     /// A `Blob`, whose contents are only reachable asynchronously. The default,
     /// and almost never what Rust code wants.
+    #[default]
     Blob,
 }
 
