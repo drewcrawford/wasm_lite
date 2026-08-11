@@ -1011,9 +1011,14 @@ fn emit_shim(js: &mut String, d: &Descriptor) {
     // `js_name` may be a *path* — js-sys binds `Uint8Array.prototype.set.call`
     // — so each dotted segment becomes another lookup.
     let member = |base: &str| {
-        d.js_name.split('.').fold(base.to_string(), |acc, seg| {
-            format!("{acc}[{}]", js_string(seg))
-        })
+        let mut out = String::with_capacity(base.len() + d.js_name.len() + 4);
+        out.push_str(base);
+        for segment in d.js_name.split('.') {
+            out.push('[');
+            out.push_str(&js_string(segment));
+            out.push(']');
+        }
+        out
     };
 
     let call = match d.kind {
@@ -1285,6 +1290,22 @@ mod tests {
         assert!(js.contains(
             "imports[\"Math\"][\"max2\"] = (p0, p1) => globalThis[\"Math\"][\"max\"](p0, p1);"
         ));
+    }
+
+    #[test]
+    fn long_member_paths_generate_without_quadratic_copying() {
+        let js_name = vec!["member"; 50_000].join(".");
+        let descriptor = func("ns", "binding", &js_name, vec![], Ret::Void);
+
+        let started = std::time::Instant::now();
+        let js = generate_glue(&[descriptor], &[], None);
+        let elapsed = started.elapsed();
+
+        assert!(js.ends_with("\n"));
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "a 50,000-segment descriptor took {elapsed:?}; member-path generation should be linear"
+        );
     }
 
     #[test]
