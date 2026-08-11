@@ -312,9 +312,10 @@ export function setInstance(instance) {
 /// `WebAssembly.Memory` (or a worker passes in the one it received) and supplies
 /// it as an import. `makeMemory()` is exported so a future thread spawner can
 /// create the shared memory once and hand the same object to every worker.
-fn instantiate_shared(mem: &MemoryImport) -> String {
+fn instantiate_shared(mem: &MemoryImport, worker_specifier: &str) -> String {
     let module = js_string(&mem.module);
     let name = js_string(&mem.name);
+    let worker_specifier = js_string(worker_specifier);
     let maximum = mem
         .maximum
         .map_or(String::new(), |m| format!(", maximum: {m}"));
@@ -384,7 +385,7 @@ function __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize) {{
         return;
     }}
     globalThis.__wl_spawn_count = (globalThis.__wl_spawn_count || 0) + 1;
-    const w = new Worker(new URL(\"./wl_worker.js\", import.meta.url), {{ type: \"module\" }});
+    const w = new Worker(new URL({worker_specifier}, import.meta.url), {{ type: \"module\" }});
     __wl_workers.add(w);
     // A worker that fails to start — a fetch the page's COEP rejects, a syntax
     // error in the bootstrap, a nested-worker restriction — reports through
@@ -509,6 +510,20 @@ pub fn generate_glue(
     exports: &[Export],
     memory: Option<&MemoryImport>,
 ) -> String {
+    generate_glue_with_worker(imports, exports, memory, "./wl_worker.js")
+}
+
+/// Generate glue whose shared-memory thread spawner loads `worker_specifier`.
+///
+/// This is the same output as [`generate_glue`], except callers that emit files
+/// to disk can give every bundle a distinct worker module rather than sharing
+/// the default `./wl_worker.js` name.
+pub fn generate_glue_with_worker(
+    imports: &[Descriptor],
+    exports: &[Export],
+    memory: Option<&MemoryImport>,
+    worker_specifier: &str,
+) -> String {
     let mut js = String::from(PREAMBLE);
     // Null-prototype objects make wasm import names literal keys. On ordinary
     // objects, names such as `__proto__` and `constructor` mutate or resolve
@@ -519,7 +534,7 @@ pub fn generate_glue(
     // thread spawning. (Unused entries are harmless — the wasm only imports what
     // it references.)
     let test_rt = "__wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_bigint: __wl_bigint, __wl_ubigint: __wl_ubigint, __wl_bigint_str: __wl_bigint_str, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop, __wl_cmp: __wl_cmp, __wl_is: __wl_is, __wl_checked_div: __wl_checked_div, __wl_num_str: __wl_num_str, __wl_memory_obj: __wl_memory_obj, __wl_module_obj: __wl_module_obj";
-    if memory.is_some() {
+    if memory.is_some_and(|memory| memory.shared) {
         let _ = writeln!(
             js,
             "    imports[\"__wasm_lite\"] = Object.assign(Object.create(null), {{ __wl_drop: __wl_drop, __wl_spawn: __wl_spawn, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, {test_rt} }});"
@@ -553,7 +568,7 @@ pub fn generate_glue(
     );
     js.push_str("    return imports;\n}\n");
     match memory {
-        Some(mem) => js.push_str(&instantiate_shared(mem)),
+        Some(mem) => js.push_str(&instantiate_shared(mem, worker_specifier)),
         None => js.push_str(INSTANTIATE),
     }
 

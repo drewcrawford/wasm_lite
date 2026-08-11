@@ -18,8 +18,8 @@ mod wasm;
 
 pub use descriptor::{AbiArg, Descriptor, Kind, Ret};
 pub use exports::{Export, ExportArg, ExportRet, Payload, exports_from_wasm};
-pub use generate::{generate_glue, generate_worker};
-pub use interop::{InteropBundle, build_interop, patch_wasm_bindgen_glue};
+pub use generate::{generate_glue, generate_glue_with_worker, generate_worker};
+pub use interop::{InteropBundle, build_interop, interop_loader, patch_wasm_bindgen_glue};
 pub use wasm::{MemoryImport, imported_memory};
 
 /// Name of the custom section the `import!` macro writes descriptors into.
