@@ -469,11 +469,17 @@ function __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize) {{
             globalThis.__wl_worker_done = (globalThis.__wl_worker_done || 0) + 1;
             __wl_workers.delete(w);
             w.terminate();
+            // The worker cannot free the heap blocks backing its own wasm
+            // stack or TLS: it would return through deallocated storage. Once
+            // its completion message reaches this realm it is no longer
+            // running wasm, so the shared allocator can release both safely.
+            __wl_instance.exports.__wl_thread_free(stackPtr, __WL_STACK);
+            if (tlsSize) __wl_instance.exports.__wl_thread_free(tlsPtr, tlsSize);
         }}
     }};
     w.postMessage({{
         module: __wl_module, memory: __wl_memory, work,
-        stackPtr, stackTop: stackPtr + __WL_STACK, stackSize: __WL_STACK, tlsPtr, tlsSize,
+        stackPtr, stackTop: stackPtr + __WL_STACK, tlsPtr, tlsSize,
     }});
 }}
 ",
@@ -488,7 +494,8 @@ function __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize) {{
 /// message with the compiled module, the shared memory, the boxed `work`
 /// pointer, and a freshly allocated stack + TLS block; it instantiates the same
 /// module on the same memory, points this thread's `__stack_pointer` at the new
-/// stack, initializes TLS, runs the entry trampoline, then frees and closes.
+/// stack, initializes TLS, runs the entry trampoline, then reports completion
+/// and closes. The parent frees the stack and TLS after that report.
 pub fn generate_worker(glue_specifier: &str) -> String {
     let glue = js_string(glue_specifier);
     format!(
@@ -519,7 +526,7 @@ self.addEventListener(\"unhandledrejection\", (ev) => {{
 }});
 
 self.onmessage = async (e) => {{
-    const {{ module, memory, work, stackPtr, stackTop, stackSize, tlsPtr, tlsSize }} = e.data;
+    const {{ module, memory, work, stackPtr, stackTop, tlsPtr, tlsSize }} = e.data;
     const imports = makeImports();
     imports[\"env\"] = imports[\"env\"] || {{}};
     imports[\"env\"][\"memory\"] = memory;
@@ -530,8 +537,8 @@ self.onmessage = async (e) => {{
     if (tlsSize) instance.exports.__wasm_init_tls(tlsPtr);
 
     const finish = () => {{
-        instance.exports.__wl_thread_free(stackPtr, stackSize);
-        if (tlsSize) instance.exports.__wl_thread_free(tlsPtr, tlsSize);
+        // The parent owns teardown. Freeing these here would deallocate the
+        // stack this callback returns through (and this realm's active TLS).
         self.postMessage(\"done\");
         self.close();
     }};
@@ -1514,6 +1521,28 @@ mod tests {
         assert!(js.contains("__wl_instance.exports[\"__wl_export_greet\"](__a0p, __a0l)"));
         assert!(js.contains("__wl_instance.exports.__wl_free(__a0p, __a0l);"));
         assert!(js.contains("const __s = __wl_str(__p, __l);"));
+    }
+
+    #[test]
+    fn parent_frees_worker_stack_and_tls_after_completion() {
+        let memory = MemoryImport {
+            module: "env".into(),
+            name: "memory".into(),
+            initial: 1,
+            maximum: Some(2),
+            shared: true,
+        };
+        let glue = generate_glue(&[], &[], Some(&memory));
+        assert!(glue.contains("__wl_instance.exports.__wl_thread_free(stackPtr, __WL_STACK);"));
+        assert!(
+            glue.contains("if (tlsSize) __wl_instance.exports.__wl_thread_free(tlsPtr, tlsSize);")
+        );
+
+        let worker = generate_worker("./program.js");
+        assert!(
+            !worker.contains("__wl_thread_free"),
+            "worker must not deallocate the stack it is executing on: {worker}"
+        );
     }
 
     #[test]

@@ -49,9 +49,13 @@ where
 ///
 /// Called by the worker bootstrap after it sets up this thread's stack and TLS.
 /// Not for direct use.
+///
+/// # Safety
+///
+/// `work` must be the pointer produced by one, and only one, call to [`spawn`].
 #[doc(hidden)]
 #[unsafe(no_mangle)]
-pub extern "C" fn __wl_thread_entry(work: u32) {
+pub unsafe extern "C" fn __wl_thread_entry(work: u32) {
     let work = unsafe { Box::from_raw(work as *mut Work) };
     (work)();
 }
@@ -64,19 +68,33 @@ pub extern "C" fn __wl_thread_entry(work: u32) {
 #[unsafe(no_mangle)]
 pub extern "C" fn __wl_thread_alloc(size: usize) -> *mut u8 {
     if size == 0 {
-        return core::ptr::NonNull::<u8>::dangling().as_ptr();
+        return core::ptr::NonNull::<u128>::dangling().as_ptr().cast();
     }
     match std::alloc::Layout::from_size_align(size, 16) {
-        Ok(layout) => unsafe { std::alloc::alloc(layout) },
-        Err(_) => core::ptr::null_mut(),
+        Ok(layout) => {
+            let ptr = unsafe { std::alloc::alloc(layout) };
+            if ptr.is_null() {
+                std::alloc::handle_alloc_error(layout);
+            }
+            ptr
+        }
+        // The glue cannot recover from a missing stack or TLS allocation. A
+        // null result would be used as address zero and corrupt linear memory.
+        Err(_) => std::process::abort(),
     }
 }
 
-/// Free a block from [`__wl_thread_alloc`] (`size` must match).
+/// Free a block from [`__wl_thread_alloc`].
+///
+/// # Safety
+///
+/// `ptr` must have been returned by [`__wl_thread_alloc`] for the same
+/// non-zero `size`, no wasm execution may still be using the block as its
+/// stack or TLS, and the allocation must not have been freed already. For
+/// `size == 0`, `ptr` is ignored.
 #[doc(hidden)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
-pub extern "C" fn __wl_thread_free(ptr: *mut u8, size: usize) {
+pub unsafe extern "C" fn __wl_thread_free(ptr: *mut u8, size: usize) {
     if size == 0 {
         return;
     }
@@ -92,9 +110,24 @@ pub extern "C" fn __wl_thread_free(ptr: *mut u8, size: usize) {
 /// their addresses from [`spawn`] (which user code does reference) keeps them.
 fn keep_thread_exports() {
     #[used]
-    static K_ENTRY: extern "C" fn(u32) = __wl_thread_entry;
+    static K_ENTRY: unsafe extern "C" fn(u32) = __wl_thread_entry;
     #[used]
     static K_ALLOC: extern "C" fn(usize) -> *mut u8 = __wl_thread_alloc;
     #[used]
-    static K_FREE: extern "C" fn(*mut u8, usize) = __wl_thread_free;
+    static K_FREE: unsafe extern "C" fn(*mut u8, usize) = __wl_thread_free;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_allocations_are_non_null_and_sixteen_byte_aligned() {
+        for size in [0, 1, 15, 16, 37] {
+            let ptr = __wl_thread_alloc(size);
+            assert!(!ptr.is_null());
+            assert_eq!(ptr.addr() % 16, 0);
+            unsafe { __wl_thread_free(ptr, size) };
+        }
+    }
 }
