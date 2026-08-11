@@ -57,6 +57,10 @@ pub(crate) fn is_str(ty: &Type) -> bool {
     matches!(ty, Type::Reference(r) if is_ident(&r.elem, "str"))
 }
 
+pub(crate) fn is_mut_ref(ty: &Type) -> bool {
+    matches!(ty, Type::Reference(r) if r.mutability.is_some())
+}
+
 /// `&[u8]` or `&mut [u8]`.
 ///
 /// Mutability is accepted because the JS side sees a *view* over wasm memory

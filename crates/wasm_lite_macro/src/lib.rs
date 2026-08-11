@@ -429,23 +429,42 @@ fn is_js_reserved_word(name: &str) -> bool {
     )
 }
 
-/// Reject `&'static str` / `&'static [u8]` export parameters. The JS glue frees
-/// the argument buffer immediately after the call returns, and the shim's
-/// `from_raw_parts` has an unbounded lifetime that would happily coerce to
-/// `'static` — letting safe code stash a reference that dangles.
-fn reject_static_ref(ty: &Type) -> syn::Result<()> {
-    if let Type::Reference(r) = ty
-        && let Some(lt) = &r.lifetime
-        && lt.ident == "static"
-    {
-        return Err(Error::new_spanned(
-            ty,
-            "#[wasm_lite::export]: `&'static` arguments are unsound — the \
-             argument buffer is freed right after the call returns, so a \
-             'static reference would dangle. Use `&str`/`&[u8]` instead.",
-        ));
+/// Validate a borrowed string/byte export parameter.
+///
+/// The JS glue owns a temporary argument buffer and frees it immediately after
+/// the call. A `'static` reference could therefore be retained by otherwise
+/// safe Rust and become dangling. Mutable references are not supportable either:
+/// the glue copies JS data into that temporary buffer but has no way to copy
+/// mutations back into the caller's original JS value.
+fn validate_export_ref(ty: &Type) -> syn::Result<()> {
+    if let Type::Reference(r) = ty {
+        if let Some(lt) = &r.lifetime
+            && lt.ident == "static"
+        {
+            return Err(Error::new_spanned(
+                ty,
+                "#[wasm_lite::export]: `&'static` arguments are unsound — the \
+                 argument buffer is freed right after the call returns, so a \
+                 'static reference would dangle. Use `&str`/`&[u8]` instead.",
+            ));
+        }
+        if r.mutability.is_some() {
+            return Err(Error::new_spanned(
+                ty,
+                "#[wasm_lite::export]: mutable string/byte references are not \
+                 supported — arguments cross through a temporary buffer and \
+                 mutations cannot be copied back to the JavaScript caller",
+            ));
+        }
     }
     Ok(())
+}
+
+/// Numeric types that have a direct (non-sret) export ABI implemented by the
+/// host-side export parser and glue generator.
+fn direct_export_numeric(ty: &Type) -> Option<String> {
+    let scalar = numeric(ty)?;
+    matches!(scalar.as_str(), "i32" | "u32" | "f64").then_some(scalar)
 }
 
 /// `crate = <path>` as an attribute argument.
@@ -472,6 +491,26 @@ fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
             "#[wasm_lite::export] does not support `async fn`: the shim would \
              drop the future without polling it, so the export would do nothing. \
              Export a sync fn that spawns the async work instead.",
+        ));
+    }
+    // A generated wasm entry point has one concrete ABI. Type/const generics
+    // cannot express that, while a lifetime generic can smuggle in a
+    // `'static` bound and defeat the dangling-reference check below.
+    if !func.sig.generics.params.is_empty() || func.sig.generics.where_clause.is_some() {
+        return Err(Error::new_spanned(
+            &func.sig.generics,
+            "#[wasm_lite::export] does not support generic functions: an export \
+             must have one concrete ABI (and generic lifetime bounds could make \
+             a temporary argument borrow effectively `'static`)",
+        ));
+    }
+    // The generated entry point is callable by arbitrary JavaScript and is
+    // intentionally safe. It cannot uphold an unsafe function's preconditions.
+    if let Some(unsafety) = &func.sig.unsafety {
+        return Err(Error::new_spanned(
+            unsafety,
+            "#[wasm_lite::export] cannot expose an `unsafe fn` through a safe \
+             JavaScript entry point",
         ));
     }
 
@@ -518,6 +557,7 @@ fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
 
         // `Option<T>` arg: a discriminant param plus T's normal flattening.
         if let Some(inner) = generic1(ty, "Option") {
+            validate_export_ref(inner)?;
             let (flat, recon, tag) = option_arg(krate, &pat, inner)?;
             flat_params.extend(flat);
             pre.push(recon);
@@ -527,7 +567,7 @@ fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
         }
 
         if is_str(ty) {
-            reject_static_ref(ty)?;
+            validate_export_ref(ty)?;
             let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
             flat_params.push(quote! { #p: *const u8 });
             flat_params.push(quote! { #l: usize });
@@ -535,7 +575,7 @@ fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
             call_args.push(quote! { #pat });
             arg_tags.push("str".into());
         } else if is_byte_slice(ty) {
-            reject_static_ref(ty)?;
+            validate_export_ref(ty)?;
             let (p, l) = (format_ident!("{pat}_ptr"), format_ident!("{pat}_len"));
             flat_params.push(quote! { #p: *const u8 });
             flat_params.push(quote! { #l: usize });
@@ -548,7 +588,7 @@ fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
             pre.push(quote! { let #pat = #krate::JsValue::__wl_from_abi(#pat); });
             call_args.push(quote! { #pat });
             arg_tags.push("handle".into());
-        } else if let Some(scalar) = numeric(ty) {
+        } else if let Some(scalar) = direct_export_numeric(ty) {
             flat_params.push(quote! { #pat: #ty });
             call_args.push(quote! { #pat });
             arg_tags.push(scalar);
@@ -632,6 +672,11 @@ fn build_return(
         ReturnType::Type(_, ty) => ty.as_ref(),
     };
 
+    // An explicitly written `-> ()` is the same ABI as an omitted return.
+    if matches!(ty, Type::Tuple(t) if t.elems.is_empty()) {
+        return Ok((quote! {}, String::new(), quote! { #call; }, false));
+    }
+
     if let Some(inner) = generic1(ty, "Option") {
         let (tag, write) = payload(krate, inner, &format_ident!("__x"))?;
         let body = quote! {
@@ -666,7 +711,7 @@ fn build_return(
         return Ok((quote! {}, format!("res:{ok_tag}:{err_tag}"), body, true));
     }
 
-    if let Some(scalar) = numeric(ty) {
+    if let Some(scalar) = direct_export_numeric(ty) {
         return Ok((quote! { -> #ty }, scalar, call.clone(), false));
     }
     if is_ident(ty, "bool") {
@@ -735,16 +780,15 @@ fn payload(krate: &syn::Path, ty: &Type, binding: &Ident) -> syn::Result<(String
     let off8 = quote! { (__ret as *mut u8).add(8) };
     let off12 = quote! { (__ret as *mut u8).add(12) };
 
+    if matches!(ty, Type::Tuple(t) if t.elems.is_empty()) {
+        return Ok(("unit".into(), quote! { let _ = #binding; }));
+    }
     if let Some(scalar) = numeric(ty) {
-        let write = match scalar.as_str() {
-            "i32" => {
-                quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut i32, #binding); } }
-            }
-            "u32" => {
-                quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut u32, #binding); } }
-            }
-            _ => quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut f64, #binding); } },
-        };
+        // The glue reads each payload with the descriptor's exact DataView
+        // width. Writing every non-i32/u32 value as f64 both failed to compile
+        // for most scalar types and disagreed with that layout.
+        let write =
+            quote! { unsafe { ::core::ptr::write_unaligned(#off8 as *mut #ty, #binding); } };
         return Ok((scalar, write));
     }
     if is_ident(ty, "bool") {
@@ -1036,7 +1080,9 @@ fn build_js_class(class_def: &JsClass) -> syn::Result<TokenStream2> {
         };
         wrappers.push(quote! { pub fn #mname(#recv) #wrap_ret { #body } });
 
-        let js = m.js.clone().unwrap_or_else(|| mname.to_string());
+        // A raw Rust identifier is only an escape hatch for the source parser;
+        // the JavaScript property is named `type`, not `r#type`.
+        let js = m.js.clone().unwrap_or_else(|| unraw(mname));
         let js_lit = LitStr::new(&js, Span::call_site());
         import_decls.push(quote! { fn #mname( #(#imp_args),* ) #imp_ret as #js_lit; });
     }
@@ -1144,5 +1190,107 @@ fn fn_arg(input: &FnArg) -> syn::Result<(Ident, &Type)> {
             r,
             "#[wasm_lite::export] cannot be used on methods",
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_crate() -> syn::Path {
+        syn::parse_quote!(::wasm_lite)
+    }
+
+    #[test]
+    fn rejects_static_borrow_hidden_inside_option() {
+        let func: ItemFn = syn::parse_quote! {
+            pub fn retain(value: Option<&'static str>) { let _ = value; }
+        };
+        let error = build_export(&default_crate(), &func).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("`&'static` arguments are unsound")
+        );
+    }
+
+    #[test]
+    fn rejects_generic_lifetime_that_can_require_static() {
+        let func: ItemFn = syn::parse_quote! {
+            pub fn retain<'a: 'static>(value: &'a str) { let _ = value; }
+        };
+        let error = build_export(&default_crate(), &func).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("does not support generic functions")
+        );
+    }
+
+    #[test]
+    fn rejects_mutable_temporary_buffer_borrows() {
+        let func: ItemFn = syn::parse_quote! {
+            pub fn mutate(value: Option<&mut [u8]>) { let _ = value; }
+        };
+        let error = build_export(&default_crate(), &func).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("mutations cannot be copied back")
+        );
+    }
+
+    #[test]
+    fn numeric_sret_payloads_use_their_exact_rust_layout() {
+        let binding = format_ident!("__x");
+        for ty in [
+            "i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize", "f32", "f64",
+        ] {
+            let parsed: Type = syn::parse_str(ty).unwrap();
+            let (tag, write) = payload(&default_crate(), &parsed, &binding).unwrap();
+            assert_eq!(tag, ty);
+            assert!(
+                write.to_string().contains(&format!("as * mut {ty} , __x")),
+                "wrong payload writer for {ty}: {write}"
+            );
+        }
+    }
+
+    #[test]
+    fn unit_returns_and_result_payloads_are_supported() {
+        let func: ItemFn = syn::parse_quote! {
+            pub fn explicit_unit() -> () {}
+        };
+        assert!(build_export(&default_crate(), &func).is_ok());
+
+        let unit: Type = syn::parse_quote!(());
+        let (tag, _) = payload(&default_crate(), &unit, &format_ident!("__x")).unwrap();
+        assert_eq!(tag, "unit");
+    }
+
+    #[test]
+    fn rejects_direct_numeric_abis_the_glue_does_not_implement() {
+        let func: ItemFn = syn::parse_quote! {
+            pub fn round_trip(value: i64) -> i64 { value }
+        };
+        let error = build_export(&default_crate(), &func).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported argument type `i64`")
+        );
+    }
+
+    #[test]
+    fn js_class_unraws_default_javascript_method_names() {
+        let class: JsClass = syn::parse_quote! {
+            type Widget;
+            impl Widget {
+                fn r#type(&self) -> String;
+            }
+        };
+        let output = build_js_class(&class).unwrap().to_string();
+        assert!(output.contains("as \"type\""), "{output}");
+        assert!(!output.contains("\"r#type\""), "{output}");
     }
 }

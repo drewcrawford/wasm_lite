@@ -284,7 +284,16 @@ fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream
     let mut arg_tags: Vec<String> = Vec::new();
 
     for (pname, ty) in &f.params {
-        orig_params.push(quote! { #pname: #ty });
+        // `Option<&mut [u8]>` needs `&mut self` to obtain a pointer without
+        // weakening the borrow to `&[u8]`. A plain `&mut [T]` binding can
+        // reborrow mutably without the binding itself being `mut`.
+        let option_mut_slice =
+            generic1(ty, "Option").is_some_and(|inner| is_byte_slice(inner) && is_mut_ref(inner));
+        if option_mut_slice {
+            orig_params.push(quote! { mut #pname: #ty });
+        } else {
+            orig_params.push(quote! { #pname: #ty });
+        }
 
         if let Some(inner) = generic1(ty, "Option") {
             let (ep, ca, tag) = option_arg(krate, pname, inner)?;
@@ -308,9 +317,14 @@ fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream
             call_args.push(quote! { #pname.len() });
             arg_tags.push("str".into());
         } else if is_byte_slice(ty) {
-            extern_params.push(quote! { _: *const u8 });
+            let (ptr_ty, ptr) = if is_mut_ref(ty) {
+                (quote! { *mut u8 }, quote! { #pname.as_mut_ptr() })
+            } else {
+                (quote! { *const u8 }, quote! { #pname.as_ptr() })
+            };
+            extern_params.push(quote! { _: #ptr_ty });
             extern_params.push(quote! { _: usize });
-            call_args.push(quote! { #pname.as_ptr() });
+            call_args.push(ptr);
             call_args.push(quote! { #pname.len() });
             arg_tags.push("bytes".into());
         } else if is_handle_slice(ty) {
@@ -323,11 +337,20 @@ fn build_fn(krate: &Path, ns: &LitStr, f: &ImportFn) -> syn::Result<(TokenStream
             // `(ptr, len)` in *elements*, matching `slice::len()`; the shim
             // makes a typed-array view of that many elements, so neither side
             // has to know the element size.
-            extern_params.push(quote! { _: *const u8 });
+            let (ptr_ty, ptr) = if is_mut_ref(ty) {
+                (
+                    quote! { *mut u8 },
+                    quote! { #pname.as_mut_ptr() as *mut u8 },
+                )
+            } else {
+                (
+                    quote! { *const u8 },
+                    quote! { #pname.as_ptr() as *const u8 },
+                )
+            };
+            extern_params.push(quote! { _: #ptr_ty });
             extern_params.push(quote! { _: usize });
-            // `as_ptr` on a `&mut [T]` reborrows immutably, which is fine: the
-            // pointer is only a base address, and the JS view is what writes.
-            call_args.push(quote! { #pname.as_ptr() as *const u8 });
+            call_args.push(ptr);
             call_args.push(quote! { #pname.len() });
             arg_tags.push(format!("slice:{elem}"));
         } else if is_ref_jsvalue(ty) {
@@ -713,6 +736,21 @@ fn option_arg(
         ));
     }
     if is_byte_slice(inner) {
+        if is_mut_ref(inner) {
+            return Ok((
+                vec![
+                    quote! { _: i32 },
+                    quote! { _: *mut u8 },
+                    quote! { _: usize },
+                ],
+                vec![
+                    quote! { #pname.is_some() as i32 },
+                    quote! { #pname.as_deref_mut().map_or(::core::ptr::null_mut(), |__s| __s.as_mut_ptr()) },
+                    quote! { #pname.as_deref().map_or(0, |__s| __s.len()) },
+                ],
+                "bytes".into(),
+            ));
+        }
         return Ok((
             vec![
                 quote! { _: i32 },
@@ -764,4 +802,46 @@ fn option_arg(
             type_string(inner)
         ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expansion(input: TokenStream2) -> String {
+        build(input).unwrap().to_string()
+    }
+
+    #[test]
+    fn mutable_byte_slice_preserves_mutable_pointer_provenance() {
+        let output = expansion(quote! {
+            "Buffer" { fn fill(bytes: &mut [u8]); }
+        });
+        assert!(output.contains("* mut u8"), "{output}");
+        assert!(output.contains("bytes . as_mut_ptr ()"), "{output}");
+    }
+
+    #[test]
+    fn optional_mutable_byte_slice_uses_a_mutable_reborrow() {
+        let output = expansion(quote! {
+            "Buffer" { fn fill(bytes: Option<&mut [u8]>); }
+        });
+        assert!(
+            output.contains("mut bytes : Option < & mut [u8] >"),
+            "{output}"
+        );
+        assert!(output.contains("bytes . as_deref_mut ()"), "{output}");
+        assert!(output.contains("null_mut"), "{output}");
+    }
+
+    #[test]
+    fn mutable_numeric_slice_preserves_mutable_pointer_provenance() {
+        let output = expansion(quote! {
+            "Buffer" { fn fill(values: &mut [f32]); }
+        });
+        assert!(
+            output.contains("values . as_mut_ptr () as * mut u8"),
+            "{output}"
+        );
+    }
 }
