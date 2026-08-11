@@ -585,7 +585,7 @@ fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
         } else if is_jsvalue(ty) {
             // JS registers the object and passes its index; Rust takes ownership.
             flat_params.push(quote! { #pat: u32 });
-            pre.push(quote! { let #pat = #krate::JsValue::__wl_from_abi(#pat); });
+            pre.push(quote! { let #pat = unsafe { #krate::JsValue::__wl_from_abi(#pat) }; });
             call_args.push(quote! { #pat });
             arg_tags.push("handle".into());
         } else if let Some(scalar) = direct_export_numeric(ty) {
@@ -628,7 +628,7 @@ fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
         quote! {
             const _: () = {
                 #[used] static __WL_KEEP_MALLOC: extern "C" fn(usize) -> *mut u8 = #krate::__wl_malloc;
-                #[used] static __WL_KEEP_FREE: extern "C" fn(*mut u8, usize) = #krate::__wl_free;
+                #[used] static __WL_KEEP_FREE: unsafe extern "C" fn(*mut u8, usize) = #krate::__wl_free;
             };
         }
     } else {
@@ -641,9 +641,10 @@ fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         #func
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
+        #[doc(hidden)]
+        #[allow(clippy::missing_safety_doc)]
         #[unsafe(no_mangle)]
-        pub extern "C" fn #export_ident( #(#flat_params),* ) #ret_decl {
+        pub unsafe extern "C" fn #export_ident( #(#flat_params),* ) #ret_decl {
             #(#pre)*
             #ret_expr
         }
@@ -865,7 +866,7 @@ fn option_arg(
         let h = format_ident!("{pat}_h");
         return Ok((
             vec![quote! { #some: i32 }, quote! { #h: u32 }],
-            quote! { let #pat = if #some != 0 { #krate::__Option::Some(#krate::JsValue::__wl_from_abi(#h)) } else { #krate::__Option::None }; },
+            quote! { let #pat = if #some != 0 { #krate::__Option::Some(unsafe { #krate::JsValue::__wl_from_abi(#h) }) } else { #krate::__Option::None }; },
             "handle".into(),
         ));
     }
@@ -1278,6 +1279,18 @@ mod tests {
             error
                 .to_string()
                 .contains("unsupported argument type `i64`")
+        );
+    }
+
+    #[test]
+    fn generated_abi_entry_points_require_unsafe_calls_from_rust() {
+        let func: ItemFn = syn::parse_quote! {
+            pub fn echo(value: &str) -> String { value.to_string() }
+        };
+        let output = build_export(&default_crate(), &func).unwrap().to_string();
+        assert!(
+            output.contains("pub unsafe extern \"C\" fn __wl_export_echo"),
+            "{output}"
         );
     }
 

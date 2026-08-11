@@ -135,10 +135,15 @@ pub extern "C" fn __wl_closure_call_0(id: u32) {
 
 /// Trampoline for a one-argument closure. The handle is created by the glue and
 /// ownership passes to Rust, matching the export convention for objects.
+///
+/// # Safety
+///
+/// `arg` must name a live value-table slot whose ownership is transferred to
+/// this call.
 #[doc(hidden)]
 #[unsafe(no_mangle)]
-pub extern "C" fn __wl_closure_call_1(id: u32, arg: u32) {
-    let arg = JsValue::__wl_from_abi(arg);
+pub unsafe extern "C" fn __wl_closure_call_1(id: u32, arg: u32) {
+    let arg = unsafe { JsValue::__wl_from_abi(arg) };
     // Bound so `arg` is moved into the call exactly once, and still dropped
     // (freeing its table slot) if the closure has already gone away.
     let mut arg = Some(arg);
@@ -172,7 +177,10 @@ pub unsafe extern "C" fn __wl_closure_call_n(id: u32, argc: u32, args_ptr: u32) 
     let raw = unsafe { core::slice::from_raw_parts(args_ptr as *const u32, argc as usize) };
     // Wrapped up front so the handles are freed on drop whatever happens next
     // — including the closure having already gone away.
-    let args: Vec<JsValue> = raw.iter().map(|i| JsValue::__wl_from_abi(*i)).collect();
+    let args: Vec<JsValue> = raw
+        .iter()
+        .map(|i| unsafe { JsValue::__wl_from_abi(*i) })
+        .collect();
 
     let taken = ANY_ARGS.with(|r| r.borrow_mut().borrow_out(id));
     let Some(mut f) = taken else { return 0 };
@@ -276,7 +284,7 @@ impl Closure {
 
         let id = ZERO_ARG.with(|r| r.borrow_mut().insert(Box::new(f)));
         Closure {
-            handle: JsValue::__wl_from_abi(unsafe { closure_new(id, 0) }),
+            handle: unsafe { JsValue::__wl_from_abi(closure_new(id, 0)) },
             id,
             arity: Arity::Zero,
         }
@@ -290,11 +298,11 @@ impl Closure {
     {
         #[cfg(target_arch = "wasm32")]
         #[used]
-        static KEEP: extern "C" fn(u32, u32) = __wl_closure_call_1;
+        static KEEP: unsafe extern "C" fn(u32, u32) = __wl_closure_call_1;
 
         let id = ONE_ARG.with(|r| r.borrow_mut().insert(Box::new(f)));
         Closure {
-            handle: JsValue::__wl_from_abi(unsafe { closure_new(id, 1) }),
+            handle: unsafe { JsValue::__wl_from_abi(closure_new(id, 1)) },
             id,
             arity: Arity::One,
         }
@@ -334,7 +342,7 @@ impl Closure {
 
         let id = ANY_ARGS.with(|r| r.borrow_mut().insert(Box::new(f)));
         Closure {
-            handle: JsValue::__wl_from_abi(unsafe { closure_new(id, 2) }),
+            handle: unsafe { JsValue::__wl_from_abi(closure_new(id, 2)) },
             id,
             arity: Arity::Any,
         }

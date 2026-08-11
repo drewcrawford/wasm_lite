@@ -418,11 +418,16 @@ pub extern "C" fn __wl_malloc(len: usize) -> *mut u8 {
     }
 }
 
-/// Free a buffer from [`__wl_malloc`] (`len` must match the allocation).
+/// Free a buffer from [`__wl_malloc`].
+///
+/// # Safety
+///
+/// `ptr` must have been returned by [`__wl_malloc`] for the same non-zero
+/// `len`, and the allocation must not have been freed already. For `len == 0`,
+/// `ptr` is ignored.
 #[doc(hidden)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
-pub extern "C" fn __wl_free(ptr: *mut u8, len: usize) {
+pub unsafe extern "C" fn __wl_free(ptr: *mut u8, len: usize) {
     if len == 0 {
         return;
     }
@@ -470,7 +475,7 @@ impl FromSretPayload for bool {
 impl FromSretPayload for JsValue {
     unsafe fn __wl_read(base: *const u8) -> Self {
         let idx = unsafe { core::ptr::read_unaligned(base.add(8) as *const u32) };
-        JsValue::__wl_from_abi(idx)
+        unsafe { JsValue::__wl_from_abi(idx) }
     }
 }
 

@@ -543,7 +543,7 @@ fn build_return(
         return Ok(Return {
             wrapper_ret: quote! { -> #krate::JsValue },
             extern_decl: scalar_extern(quote! { -> u32 }),
-            body: quote! { #krate::JsValue::__wl_from_abi(unsafe { #call }) },
+            body: quote! { unsafe { #krate::JsValue::__wl_from_abi(#call) } },
             ret_tag: "handle".into(),
             needs_malloc: false,
         });

@@ -34,8 +34,15 @@ impl JsValue {
     }
 
     /// Wrap a table index received across the ABI into an owned handle.
+    ///
+    /// # Safety
+    ///
+    /// `idx` must name a live, uniquely owned value-table slot whose ownership
+    /// is being transferred to the returned `JsValue`. Constructing two owned
+    /// handles for one slot corrupts the host free list when both are dropped;
+    /// use [`Clone`] when another independently owned handle is needed.
     #[doc(hidden)]
-    pub fn __wl_from_abi(idx: u32) -> JsValue {
+    pub unsafe fn __wl_from_abi(idx: u32) -> JsValue {
         JsValue {
             idx,
             _not_thread_safe: PhantomData,
@@ -108,7 +115,7 @@ macro_rules! __js_binop {
         impl core::ops::$trait for &JsValue {
             type Output = JsValue;
             fn $method(self, rhs: &JsValue) -> JsValue {
-                JsValue::__wl_from_abi(unsafe { binop($op, self.idx, rhs.idx) })
+                unsafe { JsValue::__wl_from_abi(binop($op, self.idx, rhs.idx)) }
             }
         }
     )* };
@@ -129,26 +136,26 @@ __js_binop! {
 impl core::ops::Neg for &JsValue {
     type Output = JsValue;
     fn neg(self) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { unop(0, self.idx) })
+        unsafe { JsValue::__wl_from_abi(unop(0, self.idx)) }
     }
 }
 
 impl core::ops::Not for &JsValue {
     type Output = JsValue;
     fn not(self) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { unop(1, self.idx) })
+        unsafe { JsValue::__wl_from_abi(unop(1, self.idx)) }
     }
 }
 
 impl JsValue {
     /// JS `>>>` — the unsigned right shift, which has no Rust operator.
     pub fn unsigned_shr(&self, rhs: &JsValue) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { binop(10, self.idx, rhs.idx) })
+        unsafe { JsValue::__wl_from_abi(binop(10, self.idx, rhs.idx)) }
     }
 
     /// JS `~` — bitwise complement, distinct from `Not`'s logical `!`.
     pub fn bit_not(&self) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { unop(2, self.idx) })
+        unsafe { JsValue::__wl_from_abi(unop(2, self.idx)) }
     }
 
     /// A handle to the module's `WebAssembly.Memory`.
@@ -156,7 +163,7 @@ impl JsValue {
     /// Threading polyfills hand this to a worker so it can share the same
     /// linear memory.
     pub fn wasm_memory() -> JsValue {
-        JsValue::__wl_from_abi(unsafe { memory_obj() })
+        unsafe { JsValue::__wl_from_abi(memory_obj()) }
     }
 
     /// A handle to the compiled `WebAssembly.Module`.
@@ -164,7 +171,7 @@ impl JsValue {
     /// A thread spawner hands this to a worker so it can instantiate the same
     /// module rather than re-fetching and re-compiling it.
     pub fn wasm_module() -> JsValue {
-        JsValue::__wl_from_abi(unsafe { module_obj() })
+        unsafe { JsValue::__wl_from_abi(module_obj()) }
     }
 
     /// A JS array holding the values these handles denote.
@@ -198,12 +205,12 @@ impl JsValue {
     ///
     /// [`JsCast`]: https://docs.rs/wasm-bindgen
     pub fn checked_div(&self, rhs: &JsValue) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { checked_div_raw(self.idx, rhs.idx) })
+        unsafe { JsValue::__wl_from_abi(checked_div_raw(self.idx, rhs.idx)) }
     }
 
     /// JS `**`.
     pub fn pow(&self, exp: &JsValue) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { binop(11, self.idx, exp.idx) })
+        unsafe { JsValue::__wl_from_abi(binop(11, self.idx, exp.idx)) }
     }
 
     /// JS `==` — *loose* equality, which coerces. [`PartialEq`] is `===`.
@@ -429,7 +436,7 @@ impl JsValue {
     /// Every JS number is a double, so this is the one numeric constructor;
     /// the `From` impls below funnel into it.
     pub fn from_f64(v: f64) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { make_num(v) })
+        unsafe { JsValue::__wl_from_abi(make_num(v)) }
     }
 
     /// JS `undefined`.
@@ -467,12 +474,12 @@ impl JsValue {
     /// number is a double and silently loses precision above 2^53, which is
     /// well inside the range of the types that reach here.
     pub fn from_i64(v: i64) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { make_bigint(v) })
+        unsafe { JsValue::__wl_from_abi(make_bigint(v)) }
     }
 
     /// A handle to an unsigned JS `BigInt`.
     pub fn from_u64(v: u64) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { make_ubigint(v as i64) })
+        unsafe { JsValue::__wl_from_abi(make_ubigint(v as i64)) }
     }
 
     /// A handle to a `BigInt` wider than 64 bits.
@@ -481,13 +488,13 @@ impl JsValue {
     /// value in one piece.
     pub fn from_i128(v: i128) -> JsValue {
         let s = v.to_string();
-        JsValue::__wl_from_abi(unsafe { make_bigint_str(s.as_ptr(), s.len()) })
+        unsafe { JsValue::__wl_from_abi(make_bigint_str(s.as_ptr(), s.len())) }
     }
 
     /// As [`JsValue::from_i128`], unsigned.
     pub fn from_u128(v: u128) -> JsValue {
         let s = v.to_string();
-        JsValue::__wl_from_abi(unsafe { make_bigint_str(s.as_ptr(), s.len()) })
+        unsafe { JsValue::__wl_from_abi(make_bigint_str(s.as_ptr(), s.len())) }
     }
 
     /// A handle to a JS string, copied out of wasm memory.
@@ -496,7 +503,7 @@ impl JsValue {
     // so it is not `FromStr` and never could be.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> JsValue {
-        JsValue::__wl_from_abi(unsafe { make_str(s.as_ptr(), s.len()) })
+        unsafe { JsValue::__wl_from_abi(make_str(s.as_ptr(), s.len())) }
     }
 
     /// A handle to JS `null`.
@@ -626,7 +633,7 @@ impl Clone for JsValue {
             #[link_name = "__wl_clone"]
             fn clone_handle(idx: u32) -> u32;
         }
-        JsValue::__wl_from_abi(unsafe { clone_handle(self.idx) })
+        unsafe { JsValue::__wl_from_abi(clone_handle(self.idx)) }
     }
 }
 
