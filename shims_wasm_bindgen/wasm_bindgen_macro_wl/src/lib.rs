@@ -847,7 +847,7 @@ fn callback_signature(ty: &Type) -> Option<Callback> {
         let syn::PathArguments::Parenthesized(p) = &seg.arguments else {
             continue;
         };
-        let inputs = p.inputs.iter().cloned().collect();
+        let inputs = p.inputs.iter().map(|input| input.ty.clone()).collect();
         let output = match &p.output {
             ReturnType::Default => None,
             ReturnType::Type(_, t) => Some((**t).clone()),
@@ -1374,7 +1374,6 @@ fn split_generics(g: &syn::Generics, target: Option<&Type>) -> (syn::Generics, s
         let mut p = p.clone();
         if let syn::GenericParam::Type(tp) = &mut p {
             // A default is legal in an extern block but not on a real function.
-            tp.eq_token = None;
             tp.default = None;
         }
         if goes_on_impl {
@@ -1399,7 +1398,6 @@ fn wrapper_generics(g: &syn::Generics) -> (TokenStream2, TokenStream2) {
     let params = g.params.iter().map(|p| match p {
         syn::GenericParam::Type(t) => {
             let mut t = t.clone();
-            t.eq_token = None;
             t.default = None;
             quote! { #t }
         }

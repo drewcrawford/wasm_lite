@@ -507,9 +507,9 @@ fn build_export(krate: &syn::Path, func: &ItemFn) -> syn::Result<TokenStream2> {
     }
     // The generated entry point is callable by arbitrary JavaScript and is
     // intentionally safe. It cannot uphold an unsafe function's preconditions.
-    if let Some(unsafety) = &func.sig.unsafety {
+    if let syn::Safety::Unsafe(unsafe_token) = &func.sig.safety {
         return Err(Error::new_spanned(
-            unsafety,
+            unsafe_token,
             "#[wasm_lite::export] cannot expose an `unsafe fn` through a safe \
              JavaScript entry point",
         ));
