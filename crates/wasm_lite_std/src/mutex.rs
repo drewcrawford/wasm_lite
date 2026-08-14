@@ -347,7 +347,7 @@ impl<T> Mutex<T> {
     /// # Examples
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::Mutex;
     ///
     /// let mutex = Mutex::new(HashMap::<String, i32>::new());
@@ -365,7 +365,7 @@ impl<T> Mutex<T> {
     /// ## Concurrent Async Tasks
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::Mutex;
     /// use std::sync::Arc;
     ///
@@ -402,7 +402,7 @@ impl<T> Mutex<T> {
     /// # Examples
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::Mutex;
     /// # #[cfg(target_arch = "wasm32")]
     /// use wasm_lite_std::time::{Duration, Instant};
@@ -619,7 +619,7 @@ impl<T> Mutex<T> {
     /// # Examples
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::Mutex;
     ///
     /// let mutex = Mutex::new(String::from("async world"));
@@ -635,7 +635,7 @@ impl<T> Mutex<T> {
     /// ## Async Task Coordination
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::Mutex;
     /// use std::sync::Arc;
     ///
@@ -674,7 +674,7 @@ impl<T> Mutex<T> {
     /// # Examples
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::Mutex;
     ///
     /// let mutex = Mutex::new(vec!["async", "programming"]);
@@ -692,7 +692,7 @@ impl<T> Mutex<T> {
     /// ## Async State Updates
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::Mutex;
     /// use std::sync::Arc;
     /// use std::collections::HashMap;

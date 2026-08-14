@@ -173,7 +173,7 @@ impl<T> RwLock<T> {
     /// # Examples
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::rwlock::RwLock;
     ///
     /// let rwlock = RwLock::new(vec!["async", "data"]);
@@ -312,7 +312,7 @@ impl<T> RwLock<T> {
     /// # Examples
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::rwlock::RwLock;
     ///
     /// let rwlock = RwLock::new(String::from("async world"));

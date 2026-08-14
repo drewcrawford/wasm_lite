@@ -171,7 +171,7 @@ impl<T> RwLock<T> {
     /// # Examples
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::rwlock::RwLock;
     /// use std::collections::HashMap;
     ///
@@ -300,7 +300,7 @@ impl<T> RwLock<T> {
     /// # Examples
     ///
     /// ```
-    /// # test_executors::spin_on(async {
+    /// # wasm_lite_std::async_doctest!(async {
     /// use wasm_lite_std::rwlock::RwLock;
     /// use std::collections::HashMap;
     ///

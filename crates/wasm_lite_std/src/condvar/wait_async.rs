@@ -28,27 +28,22 @@ impl Condvar {
     /// # Examples
     ///
     /// ```
-    /// # // std::thread::spawn panics on wasm32
-    /// # if cfg!(target_arch = "wasm32") { return; }
-    /// # test_executors::spin_on(async {
-    /// use wasm_lite_std::{Mutex, condvar::Condvar};
+    /// # wasm_lite_std::async_doctest!(async {
+    /// use wasm_lite_std::{Mutex, condvar::Condvar, spawn};
     /// use std::sync::Arc;
-    /// # use std::thread;
     ///
     /// let pair = Arc::new((Mutex::new(false), Condvar::new()));
     /// let pair_clone = Arc::clone(&pair);
     ///
-    /// // Spawn a thread that will notify us
-    /// thread::spawn(move || {
-    ///     # #[cfg(not(target_arch = "wasm32"))]
-    ///     std::thread::sleep(std::time::Duration::from_millis(10));
-    ///     test_executors::spin_on(async {
-    ///         let (mutex, condvar) = &*pair_clone;
-    ///         let mut ready = mutex.lock_async().await;
-    ///         *ready = true;
-    ///         drop(ready);
-    ///         condvar.notify_one();
-    ///     });
+    /// // Spawn a thread that will notify us. It blocks on the mutex, which is
+    /// // legal off the main thread; the condvar orders the handshake, so no
+    /// // sleep is needed to make the two sides meet.
+    /// spawn(move || {
+    ///     let (mutex, condvar) = &*pair_clone;
+    ///     let mut ready = mutex.lock_block();
+    ///     *ready = true;
+    ///     drop(ready);
+    ///     condvar.notify_one();
     /// });
     ///
     /// let (mutex, condvar) = &*pair;
@@ -105,26 +100,19 @@ impl Condvar {
     /// # Examples
     ///
     /// ```
-    /// # // std::thread::spawn panics on wasm32
-    /// # if cfg!(target_arch = "wasm32") { return; }
-    /// # test_executors::spin_on(async {
-    /// use wasm_lite_std::{Mutex, condvar::Condvar};
+    /// # wasm_lite_std::async_doctest!(async {
+    /// use wasm_lite_std::{Mutex, condvar::Condvar, spawn};
     /// use std::sync::Arc;
-    /// # use std::thread;
     ///
     /// let pair = Arc::new((Mutex::new(false), Condvar::new()));
     /// let pair_clone = Arc::clone(&pair);
     ///
-    /// thread::spawn(move || {
-    ///     # #[cfg(not(target_arch = "wasm32"))]
-    ///     std::thread::sleep(std::time::Duration::from_millis(10));
-    ///     test_executors::spin_on(async {
-    ///         let (mutex, condvar) = &*pair_clone;
-    ///         let mut ready = mutex.lock_async().await;
-    ///         *ready = true;
-    ///         drop(ready);
-    ///         condvar.notify_one();
-    ///     });
+    /// spawn(move || {
+    ///     let (mutex, condvar) = &*pair_clone;
+    ///     let mut ready = mutex.lock_block();
+    ///     *ready = true;
+    ///     drop(ready);
+    ///     condvar.notify_one();
     /// });
     ///
     /// let (mutex, condvar) = &*pair;
@@ -159,31 +147,24 @@ impl Condvar {
     /// # Examples
     ///
     /// ```
-    /// # // std::thread::spawn panics on wasm32
-    /// # if cfg!(target_arch = "wasm32") { return; }
-    /// # test_executors::spin_on(async {
-    /// use wasm_lite_std::{Mutex, condvar::Condvar};
+    /// # wasm_lite_std::async_doctest!(async {
+    /// use wasm_lite_std::{Mutex, condvar::Condvar, spawn};
     /// use std::sync::Arc;
     /// # #[cfg(target_arch = "wasm32")]
     /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
-    /// # use std::thread;
     ///
     /// let pair = Arc::new((Mutex::new(false), Condvar::new()));
     /// let pair_clone = Arc::clone(&pair);
     ///
     /// // Spawn a thread that will notify us
-    /// thread::spawn(move || {
-    ///     # #[cfg(not(target_arch = "wasm32"))]
-    ///     std::thread::sleep(std::time::Duration::from_millis(10));
-    ///     test_executors::spin_on(async {
-    ///         let (mutex, condvar) = &*pair_clone;
-    ///         let mut ready = mutex.lock_async().await;
-    ///         *ready = true;
-    ///         drop(ready);
-    ///         condvar.notify_one();
-    ///     });
+    /// spawn(move || {
+    ///     let (mutex, condvar) = &*pair_clone;
+    ///     let mut ready = mutex.lock_block();
+    ///     *ready = true;
+    ///     drop(ready);
+    ///     condvar.notify_one();
     /// });
     ///
     /// let (mutex, condvar) = &*pair;
@@ -336,30 +317,23 @@ impl Condvar {
     /// # Examples
     ///
     /// ```
-    /// # // std::thread::spawn panics on wasm32
-    /// # if cfg!(target_arch = "wasm32") { return; }
-    /// # test_executors::spin_on(async {
-    /// use wasm_lite_std::{Mutex, condvar::Condvar};
+    /// # wasm_lite_std::async_doctest!(async {
+    /// use wasm_lite_std::{Mutex, condvar::Condvar, spawn};
     /// use std::sync::Arc;
     /// # #[cfg(target_arch = "wasm32")]
     /// use wasm_lite_std::time::{Duration, Instant};
     /// # #[cfg(not(target_arch = "wasm32"))]
     /// # use std::time::{Duration, Instant};
-    /// # use std::thread;
     ///
     /// let pair = Arc::new((Mutex::new(0), Condvar::new()));
     /// let pair_clone = Arc::clone(&pair);
     ///
-    /// thread::spawn(move || {
-    ///     # #[cfg(not(target_arch = "wasm32"))]
-    ///     std::thread::sleep(std::time::Duration::from_millis(10));
-    ///     test_executors::spin_on(async {
-    ///         let (mutex, condvar) = &*pair_clone;
-    ///         let mut value = mutex.lock_async().await;
-    ///         *value = 10;
-    ///         drop(value);
-    ///         condvar.notify_one();
-    ///     });
+    /// spawn(move || {
+    ///     let (mutex, condvar) = &*pair_clone;
+    ///     let mut value = mutex.lock_block();
+    ///     *value = 10;
+    ///     drop(value);
+    ///     condvar.notify_one();
     /// });
     ///
     /// let (mutex, condvar) = &*pair;

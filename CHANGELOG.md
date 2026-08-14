@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## 0.1.1 - unreleased
 
+### Removed
+
+- The `test_executors` dev-dependency of `wasm_lite_std`. It was only ever
+  reached from doctests, and `async_doctest!` covers that job on every target.
+
 ### Fixed
 
 - **A threaded build missing a linker export failed unreadably.** The five
@@ -35,6 +40,22 @@ All notable changes to this project will be documented in this file.
   so the section must be keyed by the exact triple. Miss either half and every
   doctest that spawns a thread fails while every other test passes — which reads
   like a threading race and is not one.
+
+- **Sixteen `wasm_lite_std` doctests could not compile for wasm32.** The async
+  examples — `lock_async`, `lock_async_timeout`, `with_async`, the `RwLock`
+  pair, the `wait_async` family — drove their futures with
+  `test_executors::spin_on`, and `test_executors` was a deliberately native-only
+  dev-dependency: on wasm32 it pulls wasm-bindgen into the test binary, which
+  the runner refuses as an interop module. The `if cfg!(target_arch = "wasm32")
+  { return; }` guard those examples carried never helped, because `cfg!` is a
+  runtime branch and the name still has to resolve at compile time. They now use
+  this crate's own `async_doctest!`, which drives the future on the event-loop
+  executor in the browser and blocks on native, so the examples are checked in
+  both worlds instead of one. The four `Condvar` examples that spawned a
+  notifier thread also stop reaching for an executor inside the spawned closure:
+  they use `wasm_lite_std::spawn` and the blocking `lock_block`, which is what a
+  spawned thread should do anyway, and the condvar handshake orders the two
+  sides without the `sleep` they used to need.
 
 - **Parallel doctests started more browsers than the machine could hold.**
   `cargo test --doc` invokes the runner once per doctest and runs those in

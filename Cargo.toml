@@ -54,14 +54,13 @@ wasm_lite = { path = "crates/wasm_lite", version = "0.1.0" }
 wasm_lite_macro = { path = "crates/wasm_lite_macro", version = "0.1.0" }
 wasm_lite_codegen = { path = "crates/wasm_lite_codegen", version = "0.1.0" }
 
-# NOTE: no dev-cycle self-patch here, deliberately. Patching test_executors to
-# the local path makes `wasm_lite_std`'s *lib* tests link two copies of
-# wasm_lite_std -- the cfg(test) one and the rlib reached via test_executors,
-# which depends on wasm_lite_std -- and both define #[no_mangle]
-# __wl_async_tick / __wl_executor_idle, so the link fails on duplicate symbols.
+# NOTE: no dev-cycle self-patch here, deliberately. `test_executors` is the
+# obvious crate to reach for when a test needs to drive a future, but it depends
+# back on wasm_lite_std, so patching it to the local path makes wasm_lite_std's
+# *lib* tests link two copies of wasm_lite_std -- the cfg(test) one and the rlib
+# reached via test_executors -- and both define #[no_mangle] __wl_async_tick /
+# __wl_executor_idle, so the link fails on duplicate symbols.
 #
-# Consequence: `src/condvar/tests.rs` uses #[test_executors::async_test], whose
-# *published* expansion is #[wasm_bindgen_test], so those tests do not build for
-# wasm32 and never have. The `browser` integration target is unaffected -- it
-# uses #[wasm_lite_test] directly, which is also the fix for condvar/tests.rs.
-# See NEEDS_REVIEW.md in Metropolis, section 29.
+# So wasm_lite_std drives its own futures instead: `async_test_body!` in tests
+# and `async_doctest!` in doctests, both of which work on wasm32 as well as
+# native. Nothing in this workspace depends on test_executors.
