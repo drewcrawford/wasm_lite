@@ -79,7 +79,9 @@ and prefer crates by `drewcrawford`.
 
 **The full gate is `scripts/check_all`** — fmt, check, clippy, tests, and docs across *both*
 worlds (native and wasm32), including the script-selected examples, browser binding suites,
-bench smoke, and `shims_wasm_bindgen` consumers. Run it before considering a change done.
+bench smoke, `wasm_lite_std`'s doctests under atomics, and `shims_wasm_bindgen` consumers.
+Run it before considering a change done. Note that `scripts/wasm32/docs` only *builds* docs —
+doctests are *executed* by `scripts/wasm32/tests`, which is where a new doctest suite belongs.
 The reverse `shims/` workspace is not currently part of that gate and needs an explicit
 `cargo test --manifest-path shims/Cargo.toml --workspace` when touched. Each stage is also
 runnable alone (`scripts/fmt`, `scripts/check`, `scripts/clippy`, `scripts/tests`,

@@ -53,6 +53,17 @@ echo "testing shims_wasm_bindgen/consumer-async (async tests, atomics)"
 echo "testing examples/doctest-demo doctests"
 (cd examples/doctest-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --doc)
 
+# wasm_lite_std's doctests are the only place several threading and async APIs
+# are exercised the way a user would write them -- worker_doctest!,
+# async_doctest!, the blocking lock/condvar handshakes. `cargo doc` builds those
+# examples but never runs them, so before this stage a doctest that failed in the
+# browser was indistinguishable from a passing build. Atomics, hence nightly +
+# build-std.
+echo "testing wasm_lite_std doctests (atomics, firefox)"
+RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
+    cargo +nightly test -p wasm_lite_std --doc \
+    --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+
 # The crate's own lib tests, which until 2026-08-03 did not compile for wasm32
 # at all -- they used #[test_executors::async_test], whose published expansion is
 # #[wasm_bindgen_test]. They now use wasm_lite's macros directly, so the unit

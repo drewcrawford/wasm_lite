@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## 0.1.1 - unreleased
 
+### Added
+
+- **`wasm_lite_std`'s doctests now run on wasm32 in the gate.** They are the
+  only place several threading and async APIs are exercised the way a user
+  writes them — `worker_doctest!`, `async_doctest!`, the blocking lock and
+  condvar handshakes — and `scripts/wasm32/docs` only ever ran `cargo doc`,
+  which builds those examples without running them. A doctest that failed in
+  the browser was therefore indistinguishable from a passing build, which is
+  how a whole class of threading bug reached users. `scripts/wasm32/tests` now
+  runs them under atomics.
+
 ### Removed
 
 - The `test_executors` dev-dependency of `wasm_lite_std`. It was only ever
