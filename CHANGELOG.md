@@ -28,6 +28,23 @@ All notable changes to this project will be documented in this file.
   the message the panic hook logged. `#[wasm_lite_bench]` takes `#[ignore]` but
   rejects `#[should_panic]` — a benchmark that panicked measured nothing.
 
+- **`cargo test` works on wasm-bindgen interop modules.** Test mode used to exit
+  2 with "does not yet support wasm-bindgen interop modules", while `cargo run`
+  and doctests handled them fine. The sharp edge was that enabling wasm_lite's
+  own `wasm-bindgen` feature — the `JsValue` bridge — is exactly what puts the
+  interop descriptors in the module, so turning on a supported feature silently
+  cost you the ability to run your tests, and only after a full build.
+
+  The runner now builds the interop bundle in test mode too. The wasm-bindgen
+  CLI preserves `__wasm_lite_tests`, `__wasm_lite_imports`, and the
+  `__wl_test_*` exports — it only strips its own schema section and the debug
+  sections — so discovery and invocation needed no change. What was missing was
+  a loader that exports `instantiate` rather than running on import, since a
+  test target is driven one case per page load.
+
+  Threads remain the gap: an interop bundle has no worker bootstrap, so
+  `#[wasm_lite_test(worker)]` in an interop module is still unsupported.
+
 - **`wasm_lite_std`'s doctests now run on wasm32 in the gate.** They are the
   only place several threading and async APIs are exercised the way a user
   writes them — `worker_doctest!`, `async_doctest!`, the blocking lock and

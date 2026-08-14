@@ -32,6 +32,12 @@ echo "testing examples/tests-demo passing suite"
 echo "testing examples/tests-demo binding kinds"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test bindings)
 
+# A wasm-bindgen interop module in *test* mode: the runner has to build the
+# interop bundle and drive tests through it, which only works because the
+# wasm-bindgen CLI preserves our custom sections and __wl_test_* exports.
+echo "testing examples/interop harness (wasm-bindgen interop, test mode)"
+(cd examples/interop && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test harness)
+
 echo "testing examples/tests-demo closures"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test closures)
 

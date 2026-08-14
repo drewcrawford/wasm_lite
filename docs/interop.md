@@ -58,3 +58,25 @@ threads still emit imports (`__wl_spawn`, atomics runtime) that need the codegen
 pass in a real wasm_lite build. The `shims/wasm_lite_std` substitute routes that
 public surface through `wasm_safe_thread` instead. A leaf with no
 `import!`/`#[export]`/threads needs no wasm_lite at all.
+
+## Tests run through the bundle too
+
+`cargo test` on an interop module works the same way `cargo run` does. The
+runner sees wasm-bindgen's schema section, finalizes the module with the
+`wasm-bindgen` CLI, and serves a merged loader over both glues — the only
+difference from a plain target is that the loader exports `instantiate` instead
+of running on import, so the runner can load a page per test case.
+
+This works because the wasm-bindgen CLI leaves our metadata alone: it strips its
+own `__wasm_bindgen_unstable` section and the debug sections, but preserves
+`__wasm_lite_tests`, `__wasm_lite_imports`, and the `__wl_test_*` exports.
+Discovery and invocation are therefore unchanged, and
+`examples/interop/tests/harness.rs` keeps it that way — it calls a
+`#[wasm_bindgen]` function and exercises the `JsValue` bridge from inside a
+`#[wasm_lite_test]`.
+
+One thing to know: enabling wasm_lite's `wasm-bindgen` feature is what puts the
+schema section in your module, so it also makes the `wasm-bindgen` CLI a build
+requirement, version-matched to your `wasm-bindgen` dependency. Threads are the
+current gap — an interop bundle has no worker bootstrap, so a `#[wasm_lite_test(worker)]`
+in an interop module is not supported.

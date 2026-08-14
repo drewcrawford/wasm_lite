@@ -375,6 +375,14 @@ pub mod timer;
 pub mod websocket;
 
 /// Bridge to `wasm_bindgen::JsValue` (enable the `wasm-bindgen` feature).
+///
+/// Enabling the feature puts wasm-bindgen's schema section in your module, so
+/// the runner finalizes it with the `wasm-bindgen` CLI and serves a merged
+/// loader over both glues. That applies to `cargo run`, doctests, **and**
+/// `cargo test` alike, so turning the feature on does not cost you a test
+/// suite — but it does mean the CLI must be installed and version-matched to
+/// your `wasm-bindgen` dependency, or the build fails when the runner reaches
+/// for it.
 #[cfg(feature = "wasm-bindgen")]
 pub mod interop;
 

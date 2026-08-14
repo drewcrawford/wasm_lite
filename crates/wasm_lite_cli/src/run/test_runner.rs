@@ -11,7 +11,10 @@
 //!   * a plain `bin`: run `main` once (pass = ran to completion).
 
 use super::webdriver::Browser;
-use super::{Args, BOOTSTRAP_JS, PROGRAM_JS, PROGRAM_WASM, Route, WL_WORKER_JS, bind, read, serve};
+use super::{
+    Args, BOOTSTRAP_JS, PROGRAM_JS, PROGRAM_WASM, Route, WB_GLUE_JS, WL_GLUE_JS, WL_WORKER_JS,
+    bind, read, serve,
+};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use wasm_lite_codegen::{ShouldPanic, TestDecl};
@@ -115,22 +118,51 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
         return Err("test mode supports .wasm programs".to_string());
     }
     let module = read(program)?;
-    if wasm_lite_codegen::uses_wasm_bindgen(&module) {
-        return Err("test mode does not yet support wasm-bindgen interop modules".to_string());
-    }
 
-    let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
-    let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
+    // A wasm-bindgen interop target takes the same shape, just assembled
+    // differently: the CLI finalizes the module and the entry point is a merged
+    // loader over two glues rather than one. The wasm-bindgen CLI preserves our
+    // custom sections and `__wl_test_*` exports, so discovery and invocation are
+    // unchanged from here on — only how `program.js` and `program.wasm` are
+    // produced differs.
+    let interop = wasm_lite_codegen::uses_wasm_bindgen(&module);
+    let (module, entry_js, extra_routes) = if interop {
+        let bundle = wasm_lite_codegen::build_interop(program)?;
+        let loader =
+            wasm_lite_codegen::interop_harness_loader(PROGRAM_WASM, WL_GLUE_JS, WB_GLUE_JS);
+        let extra = vec![
+            Route {
+                path: WL_GLUE_JS,
+                content_type: "text/javascript; charset=utf-8",
+                body: bundle.wl_glue_js.into_bytes(),
+            },
+            Route {
+                path: WB_GLUE_JS,
+                content_type: "text/javascript; charset=utf-8",
+                body: bundle.wb_glue_js.into_bytes(),
+            },
+        ];
+        (bundle.wasm, loader, extra)
+    } else {
+        let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
+        let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
+        let memory = wasm_lite_codegen::imported_memory(&module)?;
+        // A test binary is the likeliest place to meet this, because it is where
+        // threads first get spawned — and the failure is silent from here: the
+        // worker throws before running the closure, so the test simply never
+        // finishes and reports as a timeout rather than as a bad link line.
+        let missing = wasm_lite_codegen::missing_thread_exports(&module)?;
+        if !missing.is_empty() {
+            return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
+        }
+        let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
+        (module, glue, Vec::new())
+    };
+
+    // Read the harness metadata off the module that will actually run: for
+    // interop that is the finalized one, which is not byte-identical to the
+    // input.
     let memory = wasm_lite_codegen::imported_memory(&module)?;
-    // A test binary is the likeliest place to meet this, because it is where
-    // threads first get spawned — and the failure is silent from here: the
-    // worker throws before running the closure, so the test simply never
-    // finishes and reports as a timeout rather than as a bad link line.
-    let missing = wasm_lite_codegen::missing_thread_exports(&module)?;
-    if !missing.is_empty() {
-        return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
-    }
-    let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
     let tests = wasm_lite_codegen::test_decls(&module)?;
     let benches = wasm_lite_codegen::bench_decls(&module)?;
     // One harness bootstrap covers both shapes, dispatching on the query
@@ -155,7 +187,7 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
         Route {
             path: PROGRAM_JS,
             content_type: "text/javascript; charset=utf-8",
-            body: glue.into_bytes(),
+            body: entry_js.into_bytes(),
         },
         Route {
             path: BOOTSTRAP_JS,
@@ -168,8 +200,11 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
             body: module,
         },
     ];
-    // Shared-memory builds spawn threads onto workers: serve the worker bootstrap.
-    if memory.is_some() {
+    routes.extend(extra_routes);
+    // Shared-memory builds spawn threads onto workers: serve the worker
+    // bootstrap. An interop bundle has no worker path of its own, so this only
+    // ever fires for the plain glue.
+    if memory.is_some() && !interop {
         routes.push(Route {
             path: WL_WORKER_JS,
             content_type: "text/javascript; charset=utf-8",

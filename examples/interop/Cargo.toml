@@ -12,3 +12,9 @@ wasm-bindgen = "=0.2.127"
 # Standalone workspace: pulls in wasm-bindgen, built only for wasm32.
 [workspace]
 members = ["wb_widget"]
+
+# Harness-less: `#[wasm_lite_test]` + `test_main!` drive it, through the
+# interop bundle rather than the plain glue.
+[[test]]
+name = "harness"
+harness = false
