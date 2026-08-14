@@ -103,6 +103,7 @@ fn is_test_run(args: &Args) -> bool {
         .and_then(|p| p.file_name())
         .is_some_and(|n| n == "deps")
         || args.program.to_string_lossy().contains("rustdoctest")
+        || in_build_out_dir(&args.program)
     {
         return true;
     }
@@ -115,6 +116,20 @@ fn is_test_run(args: &Args) -> bool {
                 || wasm_lite_codegen::bench_names(&module).is_ok_and(|names| !names.is_empty())
         })
         .unwrap_or(false)
+}
+
+/// Is the artifact in a cargo build directory (`…/build/<pkg>/<hash>/out/`)?
+///
+/// `deps/` is not the only place a test binary lands. Under `-Z build-std`,
+/// cargo 1.99-nightly emitted one here instead — which older cargo, and so this
+/// runner, had never seen. Misreading a test as a `cargo run` is not a
+/// mislabelled failure but a hang, because the interactive path serves
+/// forever, so it is worth recognizing both layouts.
+fn in_build_out_dir(path: &Path) -> bool {
+    path.parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|n| n == "out")
+        && path.components().any(|c| c.as_os_str() == "build")
 }
 
 /// Serve the program and open a browser; runs until interrupted.
@@ -138,7 +153,16 @@ fn serve_interactive(program: &Path) -> ! {
     // WASM_LITE_NO_OPEN keeps the server up without launching a browser (e.g.
     // when an external automated browser will connect).
     if std::env::var_os("WASM_LITE_NO_OPEN").is_none() {
-        open_browser(&url);
+        // Serving forever is the point interactively, and useless anywhere a
+        // browser cannot be opened: on a headless CI box it turns a runner that
+        // should have failed into a job that hangs until its timeout. Refuse
+        // rather than wait for a viewer that is never going to arrive; someone
+        // who means to attach one themselves says so with WASM_LITE_NO_OPEN.
+        if let Err(err) = open_browser(&url) {
+            eprintln!("error: could not open a browser: {err}");
+            eprintln!("set WASM_LITE_NO_OPEN=1 to serve anyway and connect one yourself");
+            std::process::exit(1);
+        }
         println!("opening browser... (ctrl-c to stop)");
     }
 
@@ -700,7 +724,12 @@ fn respond_range(
 }
 
 /// Open the given URL in the system default browser.
-fn open_browser(url: &str) {
+/// Ask the desktop to open `url`, reporting why if it could not.
+///
+/// A non-zero exit counts as failure, not just a failure to spawn: on a
+/// headless box `xdg-open` runs fine and exits 3 having found no browser to
+/// hand the URL to, which used to read as success.
+fn open_browser(url: &str) -> Result<(), String> {
     let result = if cfg!(target_os = "macos") {
         Command::new("open").arg(url).status()
     } else if cfg!(target_os = "windows") {
@@ -709,8 +738,9 @@ fn open_browser(url: &str) {
         Command::new("xdg-open").arg(url).status()
     };
 
-    if let Err(err) = result {
-        eprintln!("warning: could not open browser automatically: {err}");
-        eprintln!("open this URL manually: {url}");
+    match result {
+        Err(err) => Err(err.to_string()),
+        Ok(status) if !status.success() => Err(format!("the opener exited with {status}")),
+        Ok(_) => Ok(()),
     }
 }
