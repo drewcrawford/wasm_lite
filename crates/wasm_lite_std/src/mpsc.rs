@@ -162,6 +162,11 @@ impl fmt::Display for RecvError {
 impl std::error::Error for RecvError {}
 
 /// An error returned from the `send` methods.
+///
+/// The derived set mirrors `std::sync::mpsc::SendError` exactly, which is why
+/// `Hash` is absent where the sibling [`RecvError`] has it: this type carries
+/// the unsent value, and std does not require that value to be hashable in
+/// order to report that the channel is gone.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct SendError<T>(pub T);
 
