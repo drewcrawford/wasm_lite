@@ -14,6 +14,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+mod signals;
 mod test_runner;
 mod webdriver;
 mod ws_echo;

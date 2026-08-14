@@ -134,7 +134,7 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
         Route {
             path: "/",
             content_type: "text/html; charset=utf-8",
-            body: TEST_HTML.as_bytes().to_vec(),
+            body: test_html().into_bytes(),
         },
         Route {
             path: PROGRAM_JS,
@@ -533,20 +533,48 @@ fn plural(n: usize) -> &'static str {
 /// Script that returns all captured console output joined by newlines.
 const CONSOLE_JOIN: &str = "return (globalThis.__wl_console || []).join(\"\\n\");";
 
+/// How long the page tolerates hearing nothing from the runner before it
+/// assumes the runner is gone and tears itself down.
+///
+/// Only an absent runner can trip this — a live one stamps `__wl_hb` on every
+/// WebDriver script, which is several times a second — so the threshold is set
+/// far above any real gap between polls rather than tuned close to one.
+const WATCHDOG_MS: u64 = 30_000;
+
 /// HTML shell for test mode: captures console output into a global the runner
 /// polls, then loads the program module.
-const TEST_HTML: &str = "<!DOCTYPE html>\n\
-    <html lang=\"en\"><head><meta charset=\"utf-8\"><title>wasm_lite test</title></head>\n\
-    <body>\n\
-    <script>\n\
-    globalThis.__wl_console = [];\n\
-    for (const level of [\"log\", \"error\", \"warn\", \"info\"]) {\n\
-        const original = console[level].bind(console);\n\
-        console[level] = (...args) => { original(...args); globalThis.__wl_console.push(args.join(\" \")); };\n\
-    }\n\
-    </script>\n\
-    <script type=\"module\" src=\"/bootstrap.js\"></script>\n\
-    </body></html>\n";
+///
+/// It also runs the dead-runner watchdog. A `SIGKILL`ed runner cannot close
+/// the browser on its way out — no handler runs — so the page has to notice
+/// on its own; navigating away discards the module and terminates the workers
+/// it spawned, which is what stops a spin-waiting test from pinning a core.
+///
+/// The check is a main-thread timer, so it fires for the blocking work this
+/// matters most for: bodies that block run under `#[wasm_lite_test(worker)]`,
+/// leaving the main thread free to service it. A test that instead spins on
+/// the main thread starves the timer and is beyond the page's reach.
+fn test_html() -> String {
+    format!(
+        "<!DOCTYPE html>\n\
+        <html lang=\"en\"><head><meta charset=\"utf-8\"><title>wasm_lite test</title></head>\n\
+        <body>\n\
+        <script>\n\
+        globalThis.__wl_console = [];\n\
+        for (const level of [\"log\", \"error\", \"warn\", \"info\"]) {{\n\
+            const original = console[level].bind(console);\n\
+            console[level] = (...args) => {{ original(...args); globalThis.__wl_console.push(args.join(\" \")); }};\n\
+        }}\n\
+        globalThis.__wl_hb = Date.now();\n\
+        setInterval(() => {{\n\
+            if (Date.now() - globalThis.__wl_hb <= {WATCHDOG_MS}) return;\n\
+            try {{ window.close(); }} catch (e) {{}}\n\
+            location.replace(\"about:blank\");\n\
+        }}, 1000);\n\
+        </script>\n\
+        <script type=\"module\" src=\"/bootstrap.js\"></script>\n\
+        </body></html>\n"
+    )
+}
 
 /// Bootstrap for a plain `bin`: run `main`, recording success or the error.
 ///

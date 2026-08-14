@@ -13,7 +13,87 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, Once};
 use std::time::{Duration, Instant};
+
+/// What a signal handler needs in order to close a session it does not own.
+///
+/// The driver is identified by pid rather than by [`Child`], because the
+/// cleanup runs on a different thread from the one holding the handle.
+struct Cleanup {
+    port: u16,
+    /// Empty until the session exists: a driver is worth killing before then.
+    session: String,
+    driver_pid: u32,
+}
+
+/// The ephemeral session to close if the runner is signalled, if any.
+static CLEANUP: Mutex<Option<Cleanup>> = Mutex::new(None);
+
+/// Guards one-time setup of the signal handler and its watchdog thread.
+static ARMED: Once = Once::new();
+
+/// Record what to close if a signal arrives, replacing any earlier record.
+fn register_cleanup(cleanup: Cleanup) {
+    *CLEANUP
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(cleanup);
+}
+
+/// Take the registered session, if there is one.
+fn take_cleanup() -> Option<Cleanup> {
+    CLEANUP
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+}
+
+/// Arrange for a signalled runner to close its browser instead of orphaning it.
+///
+/// `Drop` covers every ordinary exit, including a failed test; it does not
+/// cover `SIGTERM`, which is how a CI job or a killed shell ends the runner.
+/// Without this, the driver and browser survive with the test page still
+/// live — and a page that was spin-waiting keeps a core pinned indefinitely.
+///
+/// Called before the driver is spawned so that a signal arriving *during*
+/// startup still terminates the process promptly.
+fn arm() {
+    ARMED.call_once(|| {
+        crate::signals::install();
+        std::thread::spawn(|| {
+            loop {
+                if let Some(sig) = crate::signals::pending() {
+                    if let Some(cleanup) = take_cleanup() {
+                        teardown(cleanup.port, &cleanup.session, Some(cleanup.driver_pid));
+                    }
+                    std::process::exit(128 + sig);
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        });
+    });
+}
+
+/// Close a session and kill its driver.
+///
+/// The `DELETE` runs on its own thread against a deadline: a wedged driver
+/// must not be able to stall a Ctrl-C, and killing it is what actually stops
+/// the browser, so that step has to be reachable even when the graceful close
+/// never answers.
+fn teardown(port: u16, session: &str, driver_pid: Option<u32>) {
+    if !session.is_empty() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let session = session.to_string();
+        std::thread::spawn(move || {
+            let _ = http(port, "DELETE", &format!("/session/{session}"), None);
+            let _ = tx.send(());
+        });
+        let _ = rx.recv_timeout(Duration::from_secs(5));
+    }
+    if let Some(pid) = driver_pid {
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+    }
+}
 
 /// Which browser/driver to use. Defaults to Firefox (geckodriver is the most
 /// version-tolerant); set `WASM_LITE_BROWSER` to `chrome` or `safari`.
@@ -147,18 +227,33 @@ impl Browser {
 
     /// Start a driver + session that close when dropped.
     pub fn launch() -> Result<Browser, String> {
+        arm();
         let kind = Kind::from_env();
         let port = free_port()?;
         let mut driver = spawn_driver(&kind, port)?;
+        // Register before the session exists. Session setup takes seconds —
+        // long enough to be signalled in — and a driver killed at that point
+        // would otherwise outlive the runner with a browser already attached.
+        register_cleanup(Cleanup {
+            port,
+            session: String::new(),
+            driver_pid: driver.id(),
+        });
         // Kill the driver if session setup fails: dropping a Child does not
         // terminate it, so bailing here would leak a driver process (holding
         // its port) on every failed attempt.
         let session = wait_ready(port)
             .and_then(|()| new_session(port, &kind.capabilities()))
             .inspect_err(|_| {
+                let _ = take_cleanup();
                 let _ = driver.kill();
                 let _ = driver.wait();
             })?;
+        register_cleanup(Cleanup {
+            port,
+            session: session.clone(),
+            driver_pid: driver.id(),
+        });
         Ok(Browser {
             driver: Some(driver),
             port,
@@ -243,7 +338,12 @@ impl Browser {
     }
 
     fn execute(&self, script: &str) -> Result<String, String> {
-        let body = format!("{{\"script\":{},\"args\":[]}}", json_str(script));
+        // Every script doubles as the heartbeat the page's watchdog waits on:
+        // the runner polls constantly while it is alive, so "no script for a
+        // long time" means it is not. Stamping it here rather than at each
+        // call site means a new kind of poll cannot forget to do it.
+        let script = format!("globalThis.__wl_hb = Date.now();\n{script}");
+        let body = format!("{{\"script\":{},\"args\":[]}}", json_str(&script));
         let resp = http(
             self.port,
             "POST",
@@ -266,6 +366,9 @@ impl Browser {
 
 impl Drop for Browser {
     fn drop(&mut self) {
+        // Deregister first, so a signal arriving mid-teardown does not send the
+        // watchdog after a session this thread is already closing.
+        let _ = take_cleanup();
         if self.keep_session {
             return; // persistent: leave the session + driver alive for reuse
         }

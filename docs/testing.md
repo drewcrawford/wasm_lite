@@ -102,6 +102,30 @@ rather than an error, which is much harder to notice:
 
 A **timeout** dumps the captured console, so a hang tells you where it hung.
 
+### A killed runner does not leave a browser behind
+
+The runner closes its WebDriver session and kills its driver on the way out, but
+that teardown runs from `Drop` — which a signal does not run. Left alone, a
+killed runner therefore strands a driver and a headless browser still executing
+the test page, and a test that was spin-waiting keeps a core pinned until the
+machine is rebooted. Two mechanisms prevent that:
+
+* **`SIGINT`/`SIGTERM`/`SIGHUP`** are handled. The handler only records the
+  signal; a watchdog thread does the actual close and then exits `128 + signal`.
+  This covers Ctrl-C, a CI job cancellation, and a killed shell.
+* **`SIGKILL` cannot be handled**, so the page defends itself instead. Every
+  WebDriver script the runner sends stamps a heartbeat, and the test shell
+  checks it once a second: 30 s without one means the runner is gone, and the
+  page discards itself, terminating the module and any workers it spawned.
+
+The page-side check is a main-thread timer, so it covers the case it is meant
+to — blocking bodies run under `#[wasm_lite_test(worker)]`, leaving the main
+thread free to service it. A body that instead spins on the main thread starves
+the timer and can only be cleaned up from outside.
+
+If a live-but-stalled runner ever trips the 30 s threshold, it reports
+`no such window: Browsing context has been discarded` rather than hanging.
+
 ## Write a test
 
 Mark a function with `#[wasm_lite_test]`; it is recorded in `__wasm_lite_tests`
