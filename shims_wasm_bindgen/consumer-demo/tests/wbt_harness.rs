@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // A suite written the way an existing wasm-bindgen crate writes one, running
 // on wasm_lite's harness. The only concession is `harness = false` in the
 // manifest — no source change.

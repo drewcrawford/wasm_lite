@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // `async fn` tests in wasm-bindgen's idiom, on wasm_lite's harness.
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
