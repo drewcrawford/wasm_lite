@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The blocking locking strategy behind `Mutex::lock_block` and its timeout form.
+//!
+//! Registers the calling thread on the mutex's waiter list and parks it (native
+//! parking, or `Atomics.wait` on a wasm worker) until the unlock path unparks
+//! it. Parking traps on the browser main thread, so callers who may run there
+//! should go through `lock_sync` or `lock_async` instead.
+
 use super::{Mutex, NotAvailable};
 use crate::guard::Guard;
 

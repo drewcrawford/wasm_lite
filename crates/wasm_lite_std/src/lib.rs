@@ -6,7 +6,7 @@
 )]
 //! A unified cross-platform `std::thread` + `std::sync` replacement for native + wasm32.
 //!
-//! ![logo](https://github.com/drewcrawford/wasm_lite_std/raw/main/art/logo.png)
+//! ![logo](https://github.com/drewcrawford/wasm_lite/raw/main/art/wasm_lite.png)
 //!
 //! # Scope
 //!

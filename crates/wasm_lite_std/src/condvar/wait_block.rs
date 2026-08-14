@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The blocking waiting strategy: the `wait_block*` family.
+//!
+//! Parks the calling thread unconditionally (native thread parking, or
+//! `Atomics.wait` on a wasm worker). This traps on the browser main thread,
+//! where `Atomics.wait` is forbidden — `wait_sync`
+//! is the adaptive wrapper that picks this only when it is legal.
+
 use super::Instant;
 use super::thread;
 use super::{Condvar, WaitTimeoutResult};

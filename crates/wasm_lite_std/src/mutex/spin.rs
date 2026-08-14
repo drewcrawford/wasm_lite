@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The spinning locking strategy behind `Mutex::lock_spin` and its timeout form.
+//!
+//! Busy-waits on the mutex's flag. It burns CPU while contended, but never
+//! parks, which makes it the fallback wherever blocking is illegal — notably the
+//! browser main thread.
+
 use super::Mutex;
 use crate::guard::Guard;
 use std::sync::atomic::Ordering;

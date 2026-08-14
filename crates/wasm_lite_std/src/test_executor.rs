@@ -1,4 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! A minimal executor for this crate's own async tests.
+//!
+//! [`spawn`] blocks until a future completes: natively by polling it on the
+//! calling thread, and on wasm32 by driving it on a spawned worker (where
+//! `atomic.wait` is legal) and blocking on the result.
+//!
+//! It exists because this crate cannot depend on `test_executors` — that crate
+//! depends back on this one, and linking both copies collides on the
+//! `#[no_mangle]` executor exports; see the note in the workspace `Cargo.toml`.
+//! `#[doc(hidden)]`, and not part of the supported surface.
+
 use std::future::Future;
 
 // Native-only: the wasm test path runs through `tests/browser.rs` via the

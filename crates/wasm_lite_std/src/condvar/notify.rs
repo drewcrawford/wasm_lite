@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The notifying half of `Condvar`: `notify_one` and `notify_all`.
+//!
+//! A `Condvar` keeps three separate waiter lists, one per waiting strategy, so
+//! both notifiers walk them in turn: spinning threads (flip their flag), parked
+//! threads (`unpark`), then async waiters (fire their
+//! `AsyncWake`). `notify_one` stops at the first
+//! waiter it actually delivers to, skipping async waiters that have since been
+//! dropped.
+
 use super::Condvar;
 use std::sync::atomic::Ordering;
 

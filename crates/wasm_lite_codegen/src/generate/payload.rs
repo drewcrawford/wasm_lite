@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! Reading and writing sret payloads from the JS side.
+//!
+//! `Option`/`Result` returns travel through an sret buffer: discriminant at
+//! `base`, payload at `base + 8`. Shims write payloads into that buffer (JS is
+//! the producer) and export wrappers read them back out (JS is the consumer),
+//! so both directions live here and stay in step with each other.
 
 use crate::exports::Payload;
 

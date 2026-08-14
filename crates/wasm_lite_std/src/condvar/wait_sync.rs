@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The adaptive synchronous strategy: the `wait_sync*` family.
+//!
+//! Dispatches to `wait_block` where blocking is
+//! legal (native, or a wasm worker with `Atomics.wait`) and to
+//! `wait_spin` where it is not (the browser main
+//! thread). This is the recommended entry point for non-async callers.
+
 use super::Instant;
 use super::{Condvar, WaitTimeoutResult};
 use crate::Guard;

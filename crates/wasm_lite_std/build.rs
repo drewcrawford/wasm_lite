@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! Build script: detects a nightly compiler and sets `cfg(nightly_rustc)`.
+//!
+//! Nightly-only pieces of the crate gate on that cfg, so a stable build simply
+//! compiles without them instead of failing.
 
 use std::process::Command;
 

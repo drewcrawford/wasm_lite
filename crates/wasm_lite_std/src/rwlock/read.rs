@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! Read-side acquisition for `RwLock`: `try_lock_read`, the `lock_*_read`
+//! strategies, and the shared-access `with_*` helpers.
+//!
+//! Readers share the lock, so acquiring only has to lose to an active writer.
+//! As with `Mutex`, the strategies differ only in what they do while contended:
+//! park (`block`), busy-wait (`spin`), await (`async`), or — for
+//! `lock_sync_read` — pick whichever of park/spin the current thread may use.
+
 use super::LOCKED_WRITE;
 use super::inner::RwLock;
 use crate::NotAvailable;

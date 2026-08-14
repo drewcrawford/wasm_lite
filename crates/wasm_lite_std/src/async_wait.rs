@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! A one-shot async wakeup pair, used by the async paths of `Mutex` and `Condvar`.
+//!
+//! `waiter()` hands back an `AsyncWake` for the notifying side and an
+//! `AsyncWait` future for the waiting side. The future resolves once the wake
+//! half fires. Dropping the wait half first cancels the pair, so a later
+//! `AsyncWake::wake` reports `false` and the notifier knows the wakeup was
+//! not delivered and must go to some other waiter.
+
 use atomic_waker::AtomicWaker;
 use std::fmt;
 use std::future::Future;

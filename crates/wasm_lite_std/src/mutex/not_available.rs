@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! `NotAvailable`, the error every non-blocking lock attempt returns.
+
 /// Error returned when a lock cannot be immediately acquired.
 ///
 /// This error is returned by [`Mutex::try_lock`](crate::Mutex::try_lock) when the mutex is already

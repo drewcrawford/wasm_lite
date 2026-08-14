@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The spinning waiting strategy: the `wait_spin*` family.
+//!
+//! Registers an `AtomicBool` flag with the condvar and busy-waits on it. Burns
+//! CPU, but needs neither thread parking nor an async context, which makes it
+//! the fallback wherever `Atomics.wait` is unavailable.
+
 use super::Instant;
 use super::{Condvar, WaitTimeoutResult};
 use crate::Guard;

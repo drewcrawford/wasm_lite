@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! # wasm_lite
 //!
-//! ![logo](https://github.com/drewcrawford/wasm_lite/raw/main/art/logo.png)
+//! ![logo](https://github.com/drewcrawford/wasm_lite/raw/main/art/wasm_lite.png)
 //!
 //! Browser-first Rust/JavaScript bindings for `wasm32-unknown-unknown`, with
 //! real-browser tests/doctests, first-class threads, and zero runtime
@@ -155,7 +155,13 @@
 //! * A Rust toolchain and the wasm target:
 //!   `rustup target add wasm32-unknown-unknown`.
 //! * A WebDriver-capable browser on `PATH`: Firefox + `geckodriver`, or Chrome +
-//!   `chromedriver`. The runner drives a *real* browser.
+//!   `chromedriver`. The runner drives a *real* browser, and defaults to
+//!   **Firefox** — `WASM_LITE_BROWSER=chrome` switches, which anything using
+//!   **WebGPU** needs (Firefox has none headless), along with `WASM_LITE_GPU=1`.
+//!   See
+//!   [configure the runner](https://github.com/drewcrawford/wasm_lite/blob/main/docs/testing.md#configure-the-runner)
+//!   for that and the rest; several of the defaults suit a small DOM test rather
+//!   than a real application.
 //!
 //! ### Run an example
 //!
@@ -281,7 +287,8 @@
 //! | [Threads, async & shared memory](https://github.com/drewcrawford/wasm_lite/blob/main/docs/threads-and-async.md) | `+atomics` builds, [`thread::spawn`], [`wasm_lite_std`] (`Mutex`/`RwLock`/`Condvar`/`mpsc`, sync + async), the `spawn_local` executor, panic surfacing, the `std::time` veneer |
 //! | [wasm-bindgen interop](https://github.com/drewcrawford/wasm_lite/blob/main/docs/interop.md) | the `wasm-bindgen` feature and `.to_wasm_bindgen()` / `.to_wasm_lite()` conversions |
 //! | [Crate layering & roadmap](https://github.com/drewcrawford/wasm_lite/blob/main/docs/roadmap.md) | planned `wasm_lite_js`/`wasm_lite_web` split and known gaps |
-//! | [Design notes](https://github.com/drewcrawford/wasm_lite/blob/main/docs/design-notes.md) | forward-looking strategy for running wasm_lite and wasm-bindgen, including wgpu, in one binary |
+//! | [**Running wgpu / unmodified wasm-bindgen crates**](https://github.com/drewcrawford/wasm_lite/blob/main/shims_wasm_bindgen/README.md) | the **fake-wasm-bindgen shim**: substitute it graph-wide and unmodified `js-sys`/`web-sys`/`wgpu` compile on wasm_lite |
+//! | [Design notes](https://github.com/drewcrawford/wasm_lite/blob/main/docs/design-notes.md) | the coexistence options and which have shipped; strategy for wasm_lite and wasm-bindgen in one binary |
 //! | [wasm-bindgen thread-ownership census](https://github.com/drewcrawford/wasm_lite/blob/main/docs/wasm-thread-ownership-census.md) | db-dump data: about 1% of the wasm-bindgen ecosystem owns wasm threads; backs the interop strategy |
 //! | [Migration guide](https://github.com/drewcrawford/wasm_lite/blob/main/MIGRATION.md) | moving from wasm-bindgen: pros/cons, rosetta stone, gotchas |
 //!
@@ -295,6 +302,8 @@
 //! | `crates/wasm_lite_cli` | the `wasm-lite` binary; writes glue plus bundle-specific worker and wasm-bindgen interop artifacts |
 //! | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync + async); atomics builds use workers while stable non-atomic wasm uses a local event-loop executor |
 //! | `runner` | WebDriver runner; serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
+//! | `shims/` | separate workspace: partial wasm-bindgen-backed substitutes for `wasm_lite` and `wasm_lite_std`, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
+//! | `shims_wasm_bindgen/` | separate workspace: wasm-bindgen's API lowered onto wasm_lite, so unmodified `js-sys`/`web-sys`/`wgpu` compile here; substituted via `[patch.crates-io]` and never published |
 //!
 //! ## Examples
 //!

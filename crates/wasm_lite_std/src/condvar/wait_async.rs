@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The async waiting strategy: the `wait_async*` family.
+//!
+//! Never blocks, so it is the one strategy that is always available — including
+//! the browser main thread. The waiter registers an
+//! `AsyncWake` on the condvar, releases the
+//! guard, awaits the wakeup, then re-acquires the mutex asynchronously before
+//! resolving.
+
 use super::Instant;
 use super::{ASYNC_WAITER_ID_COUNTER, AsyncWaiter, Condvar, WaitTimeoutResult};
 use crate::Guard;

@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The `RwLock` type itself: its state word, waiter lists, and constructors.
+//!
+//! The locking operations live next door in the `read` and
+//! `write` modules; this module holds the shared representation they
+//! both manipulate.
+
 use crate::spinlock::Spinlock;
 use std::cell::UnsafeCell;
 use std::fmt::Display;

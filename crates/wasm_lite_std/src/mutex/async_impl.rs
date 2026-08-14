@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The async locking strategy behind `Mutex::lock_async` and its timeout form.
+//!
+//! A contending task pushes an `AsyncWake` onto
+//! the mutex's waiter queue and awaits it instead of blocking, so this path is
+//! usable on the browser main thread. `RegisteredWait` owns that queue entry and
+//! removes it on drop, so a cancelled (or timed-out) waiter leaves nothing
+//! behind.
+
 use super::{Mutex, NotAvailable};
 use crate::async_wait::{AsyncWait, AsyncWake, waiter};
 use crate::guard::Guard;

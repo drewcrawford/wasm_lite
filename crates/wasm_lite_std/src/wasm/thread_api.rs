@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The wasm32 backend for the crate's `std::thread` veneer.
+//!
+//! Supplies the wasm implementations of `Thread`, `ThreadId`, `JoinHandle`,
+//! `Builder`, `LocalKey`, and the free functions (`spawn`, `current`, `sleep`,
+//! `park`, `yield_now`, …) that `lib.rs` re-exports as `wasm_lite_std::…` on
+//! this target; `stdlib.rs` is the matching native backend. Spawning requires a
+//! shared-memory `+atomics` build, and a spawned thread only starts running once
+//! the caller yields to the JS event loop — the worker is created, not resumed,
+//! by the time `spawn` returns.
 
 use super::*;
 

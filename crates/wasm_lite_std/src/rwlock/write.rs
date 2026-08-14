@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! Write-side acquisition for `RwLock`: `try_lock_write`, the `lock_*_write`
+//! strategies, and the exclusive-access `with_mut_*` helpers.
+//!
+//! Writers are exclusive, so acquiring loses to readers and writers alike. The
+//! strategies mirror the read side: park (`block`), busy-wait (`spin`), await
+//! (`async`), or — for `lock_sync_write` — pick whichever of park/spin the
+//! current thread may use.
+
 use super::inner::RwLock;
 use super::{LOCKED_WRITE, UNLOCKED};
 use crate::NotAvailable;

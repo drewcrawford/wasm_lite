@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! The adaptive synchronous strategy behind `Mutex::lock_sync` and its timeout form.
+//!
+//! Picks `lock_block` where parking is legal
+//! (native, or a wasm worker with `Atomics.wait`) and
+//! `lock_spin` where it is not, so callers get a
+//! blocking-shaped API that never traps on the browser main thread.
+
 use super::Mutex;
 use crate::guard::Guard;
 
