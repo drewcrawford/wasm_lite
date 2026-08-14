@@ -183,13 +183,16 @@ Three misconfigurations used to surface as unreadable runtime failures and are n
 errors; if you touch this area, keep them that way rather than relaxing them into warnings.
 
 - **Missing thread exports.** A threaded build must export all **five** of `__stack_pointer`,
-  `__tls_base`, `__tls_size`, `__tls_align`, `__wasm_init_tls`. The glue reads only three
-  (`__stack_pointer`, `__tls_size`, `__wasm_init_tls`); the other two are required by the
-  **wasm-bindgen CLI's** threading transform, so an interop build without them dies with
-  `failed to find __tls_align`. Do not prune the list to what the glue reads — that was tried,
-  and it broke every interop build. The requirement is unconditional because a wasm-bindgen
-  dependency arrives transitively, so a crate cannot tell from its own manifest whether it is
-  on the interop path.
+  `__tls_base`, `__tls_size`, `__tls_align`, `__wasm_init_tls`. Only three are read by
+  anything here (`__stack_pointer`, `__tls_size`, `__wasm_init_tls`); `__tls_base` and
+  `__tls_align` are required by the **wasm-bindgen CLI's** threading transform, so an interop
+  build without them dies with `failed to find __tls_align`. Do not prune the list to what
+  the glue reads — that was tried, and it broke every interop build while every native
+  threaded test kept passing. The check demands all five unconditionally because a
+  wasm-bindgen dependency arrives transitively (a dev-dependency four levels down is enough),
+  so a crate cannot tell from its own manifest which path it is on. `docs/threads-and-async.md`
+  has the per-symbol breakdown and how to check a graph; that is the reference to point users
+  at, rather than re-deriving it.
 - **`+atomics` without shared memory.** `Builder::spawn` selects on
   `#[cfg(target_feature = "atomics")]`, so enabling atomics compiles *out* the graceful
   `io::ErrorKind::Unsupported` path. A module that imports `__wl_spawn` but has unshared

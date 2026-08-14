@@ -130,15 +130,11 @@ This is the canonical block. Copy it whole; the failure mode for copying part of
 it is bad (see below), and it is the reason this listing exists in one place
 rather than only in the ten example `config.toml`s.
 
-All five exports are needed, for two different reasons, which is worth knowing
-before anyone prunes the list again. The glue reads three of them — the worker
-sets `__stack_pointer` and calls `__wasm_init_tls`, and the spawning side reads
-`__tls_size`. `__tls_base` and `__tls_align` are read by nothing here, but the
-**wasm-bindgen CLI** requires both for its own threading transform: without them
-an interop build stops with `failed to find __tls_align` or `failed to find tls
-base`. Keep them even if your crate has nothing to do with wasm-bindgen — a
-dependency can put you on the interop path without your noticing, since a test
-helper pulling `wasm-bindgen-futures` is enough to do it.
+The five exports are wanted by two different consumers, and only three of them by
+anything in this project — see [Which of the five you actually
+need](#which-of-the-five-you-actually-need) before pruning the list, because the
+other two are load-bearing for interop builds in a way the generated JavaScript
+gives no hint of.
 
 ```toml
 # .cargo/config.toml — threaded wasm32 (nightly: atomics ⇒ std is rebuilt)
@@ -182,6 +178,53 @@ a dependency's build script to a dependent's binaries, and doctests are linked b
 rustdoc, which build scripts do not reach at all. So `wasm_lite build` and
 `wasm_lite run` check the compiled module instead and refuse to generate glue for
 a module that spawns threads without them, naming the flags.
+
+### Which of the five you actually need
+
+Two different consumers want these symbols, which is why the list looks longer
+than the runtime appears to justify:
+
+| symbol | read by | needed when |
+|---|---|---|
+| `__stack_pointer` | the worker bootstrap, to point the new thread's stack | always |
+| `__wasm_init_tls` | the worker bootstrap, to initialize the thread's TLS | always |
+| `__tls_size` | the spawning side, to size the TLS block | always |
+| `__tls_base` | **the wasm-bindgen CLI's** threading transform | interop builds |
+| `__tls_align` | **the wasm-bindgen CLI's** threading transform | interop builds |
+
+A module with no wasm-bindgen anywhere in its wasm32 dependency graph genuinely
+runs on the first three: it spawns and joins threads correctly without the other
+two, which the generated JavaScript never mentions. Add wasm-bindgen and the CLI
+runs its own threading pass over the module, which stops with `failed to find
+__tls_align` — and then, once that is supplied, `failed to find tls base`.
+
+**The trap is that "do I use wasm-bindgen" is a question about the dependency
+graph, not about your source.** It arrives transitively, and a dev-dependency
+counts, because tests and doctests are where threads usually get spawned. One
+real case reached it four levels down with nothing in its own manifest naming
+wasm-bindgen:
+
+```
+your-crate → test_executors → some_executor → js-sys → wasm-bindgen
+```
+
+If you want to know which case you are in:
+
+```bash
+cargo tree -i wasm-bindgen --target wasm32-unknown-unknown   # add --all-features if features gate it
+```
+
+Empty output means the first three suffice. Anything else means all five.
+
+The two shim workspaces sit on opposite sides of this, so "we use the shim" does
+not settle it. `shims/` puts **real** wasm-bindgen underneath a wasm_lite-authored
+crate, so the CLI runs and you need all five. `shims_wasm_bindgen/` goes the other
+way — wasm-bindgen's API surface lowered onto wasm_lite, with no real
+wasm-bindgen in the graph — so three is enough.
+
+Unless you have checked, prefer the full five. They cost two flags, they do no
+harm to a non-interop build, and the alternative is a configuration that works
+until someone bumps a dependency.
 
 ### When it goes wrong
 

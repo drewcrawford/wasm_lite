@@ -77,6 +77,15 @@ Discovery and invocation are therefore unchanged, and
 
 One thing to know: enabling wasm_lite's `wasm-bindgen` feature is what puts the
 schema section in your module, so it also makes the `wasm-bindgen` CLI a build
-requirement, version-matched to your `wasm-bindgen` dependency. Threads are the
+requirement, version-matched to your `wasm-bindgen` dependency.
+
+Being on the interop path also costs you two extra linker exports if you use
+threads. The CLI runs a threading pass of its own that needs `__tls_base` and
+`__tls_align` — symbols the generated JavaScript never touches — so an interop
+build without them stops at `failed to find __tls_align`. Since wasm-bindgen
+reaches a graph transitively, and a dev-dependency is enough, this catches crates
+that never mention it themselves; see
+[which of the five you actually need](./threads-and-async.md#which-of-the-five-you-actually-need)
+for how to tell which case you are in. Threads are the
 current gap — an interop bundle has no worker bootstrap, so a `#[wasm_lite_test(worker)]`
 in an interop module is not supported.
