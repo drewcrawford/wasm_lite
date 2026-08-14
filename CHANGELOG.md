@@ -2,10 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.1.0 - 2026-08-14
+
+The first release. `wasm_lite` binds JavaScript and Rust to each other on
+`wasm32-unknown-unknown` with zero runtime dependencies, moving the work a
+runtime would otherwise do into a host-side codegen step that reads descriptors
+out of custom wasm sections.
+
+Nothing has shipped before this, so everything below is new to anyone arriving
+from crates.io. The **Changed** and **Fixed** sections are kept for the people
+who have been building against the repository: they record where behaviour moved
+during development, and each one is a decision worth knowing about even if you
+never met the bug.
 
 ### Added
 
+- `wasm_lite`, a dependency-light Rust/JavaScript binding system for `wasm32-unknown-unknown`.
+- Descriptor-based import, export, class, and test metadata emitted into custom wasm sections.
+- Host-side `wasm_lite_codegen` for dependency-free descriptor parsing and generated ES module glue.
+- `wasm-lite` CLI and browser runner support for `cargo run`, `cargo test`, and rustdoc doctests through WebDriver.
+- Core ABI support for strings, byte slices, vectors, `JsValue` handles, `Option`, `Result`, and sret payloads.
+- Proc-macro support for `import!`, `#[export]`, `#[wasm_lite_test]`, and `js_class!`.
+- Browser-oriented exports, imports, doctests, test suites, panic reporting, and interop examples.
+- Threading, atomics, async execution, worker bootstrap, and `wasm_lite_std` synchronization/time APIs.
+- CI, formatting, clippy, docs, and wasm test scripts for release validation.
 - `wasm_lite::fetch` — the Fetch API plus the slice of the Streams API a
   response body needs: `fetch`, `origin`, `RequestInit`, `Headers`, `Response`,
   `ReadableStream`, `ReadableStreamDefaultReader`. Every `Headers` method is
@@ -57,7 +77,11 @@ All notable changes to this project will be documented in this file.
   counterpart to `async_doctest!`. A doctest otherwise runs on the main thread,
   where `join`/`park`/`recv_block` trap.
 - `wasm_lite::console::{warn, info, debug, trace}`.
-- `wasm_lite::timer` — `setTimeout`/`clearTimeout`.
+- `wasm_lite::timer` — `setTimeout`/`clearTimeout` and
+  `requestAnimationFrame`/`cancelAnimationFrame`, plus
+  `wasm_lite_std::request_animation_frame`, which takes an `FnOnce` and keeps it
+  alive until the frame fires. `requestAnimationFrame` is main-thread only: a
+  worker has no such global and the call throws there.
 - `wasm_lite::performance::time_origin()` — `performance.timeOrigin`.
 - Runner environment variables, now documented in
   [docs/testing.md](docs/testing.md#configure-the-runner): `WASM_LITE_GPU` (a
@@ -70,9 +94,55 @@ All notable changes to this project will be documented in this file.
 - The `wasm_lite_std` browser suite now runs in **Chrome as well as Firefox**
   (`scripts/wasm32/tests`), with `a_worker_can_spawn_a_worker` and
   `nesting_composes_to_a_third_level` covering nested worker spawn.
+- Bundle-specific artifact names. `wasm_lite_codegen::generate_glue_with_worker`
+  and `interop_loader` let a caller point the generated glue at its own sibling
+  modules, and the CLI uses them: a shared-memory module now writes
+  `<output>.worker.js`, and a wasm-bindgen interop module writes
+  `<output>.wasm`, `<output>.wl.js`, and `<output>.wb.js`. Two bundles in one
+  directory no longer fight over a single `wl_worker.js`.
+- `wasm_lite_codegen::SliceElem` is exported from the crate root. `AbiArg::Slice`
+  carried it as a payload, so callers could match the variant but could not name
+  its type, call `js_array()`, or reach its derived impls. Each variant now
+  documents its JS typed-array counterpart.
+- Rounder trait coverage on public types: `Debug` for `Bencher` and `SleepAsync`,
+  `Hash` for `DeltaMode`, and `Hash`/`Default`/`#[non_exhaustive]` for
+  `BinaryType`.
+- Every module carries a `//!` header. `-D missing_docs` does not reach private
+  modules, so twenty of them had gone undocumented without the docs gate
+  noticing.
 
 ### Changed
 
+- **Ownership transfers across the ABI are `unsafe`.** `JsValue::__wl_from_abi`,
+  `__wl_free`, `__wl_thread_free`, `__wl_thread_entry`, and the closure
+  trampolines are `#[doc(hidden)]` but reachable, and each one takes ownership of
+  something it cannot validate — two owned handles for one table slot corrupt the
+  host free list when both drop. They are now `unsafe` with the precondition
+  written down.
+- **`#[export]` rejects what it cannot lower.** Generic parameters (a lifetime
+  generic could smuggle in a `'static` bound and defeat the dangling-reference
+  check), `unsafe fn` (the generated entry point is callable by arbitrary
+  JavaScript and is intentionally safe), `&'static` borrows hidden inside an
+  `Option`, `&mut` borrows of the temporary argument buffer (the glue has no way
+  to copy mutations back), and numeric ABIs the glue does not implement. Each is
+  a compile error naming the offending parameter rather than glue that reads the
+  wrong bytes.
+- `import!`'s `#[variadic]` is accepted only on functions, methods, and
+  constructors — the shapes that can actually spread arguments — and the
+  descriptor parser enforces the same rule on the host side.
+- **Generated JS treats descriptor text as data, never source.** Import objects
+  are built with `Object.create(null)`, so a binding named `__proto__` or
+  `constructor` defines that import instead of mutating `Object.prototype`;
+  exports are emitted as a stable local identifier plus a quoted alias; and the
+  string escaper covers `U+2028`/`U+2029` and every other control character.
+- The descriptor and export parsers reject malformed lines instead of filling in
+  defaults. A truncated line, an extra field, an unknown variadic flag, or an
+  empty tag between two commas is now an error naming the line — previously
+  several of these produced glue that quietly read the wrong argument.
+- Async timeouts no longer spawn a sleeping thread. `lock_async_timeout` and
+  `Condvar`'s async waits use the cancellable timer service, which is what makes
+  them work on a stable non-atomic build, and a dropped waiter now unregisters
+  itself from the queue instead of being woken forever.
 - `WASM_LITE_RUN_SECONDS` now *selects* headless mode, so it works with
   `cargo run`. It is documented as "watch a long-running bin for N seconds", but
   it is only read on the headless path, and `cargo run` took the interactive one
@@ -91,9 +161,30 @@ All notable changes to this project will be documented in this file.
   untestable. Suffix (`bytes=-500`) and multi-range requests are refused rather
   than mis-answered, and a *backwards* one (`bytes=10-5`) gets a 416 rather than
   panicking the connection thread on a reversed slice.
+- The CLI writes multi-file bundles through sibling temporary files, refuses two
+  artifacts that would land on the same path, and will not replace an implicit
+  worker artifact unless it carries the generated-file marker. A failed run no
+  longer leaves half a bundle behind, and a broken pipe on stdout is not an
+  error.
+- Moved macro parsing onto a unified `syn`/`quote` build-time implementation
+  while keeping runtime crates dependency-free, and moved the proc-macro crates
+  to `syn` 3. `syn`/`quote` cost zero bytes in the `.wasm`.
+- Improved documentation for the binding model, testing flow, threading/async
+  behavior, interop, and migration story.
 
 ### Fixed
 
+- **`&mut` slice arguments lost their mutable provenance.** `import!` passed
+  `as_ptr()` — an immutable reborrow — for `&mut [u8]`, `&mut [T]`, and
+  `Option<&mut [u8]>`, and JS then wrote through a pointer derived from a shared
+  reference. The comment claiming this was fine ("the pointer is only a base
+  address") was wrong about provenance, not about addresses. Now `as_mut_ptr()`,
+  with a compile-checked expansion test for each shape.
+- **sret payloads were written at the wrong width.** `#[export]` wrote every
+  non-`i32`/`u32` scalar as an `f64`, which disagreed with the exact `DataView`
+  width the glue reads back and failed to compile outright for most types. An
+  explicitly written `-> ()` is now accepted as the same ABI as an omitted
+  return.
 - **`Instant` was not comparable across threads.** It was raw
   `performance.now()`, which is per-realm — a Web Worker's zero is the moment
   that worker started, so an `Instant` taken on one thread and read on another
@@ -111,31 +202,42 @@ All notable changes to this project will be documented in this file.
   `onmessageerror` instead of failing silently, and a worker bootstrap that
   throws before the closure runs reports through `error` / `unhandledrejection`
   rather than becoming an invisible unhandled rejection.
+- A worker's stack and TLS are freed by the parent. The worker cannot free the
+  stack it is standing on, so those allocations leaked on every spawn.
+  `__wl_thread_alloc` also aborts on allocation failure rather than returning
+  null, which the glue would have used as address zero and corrupted linear
+  memory with.
+- `js_class!` used the raw identifier as the default JavaScript property name, so
+  `fn r#type(&self)` looked for a property literally called `r#type`. The raw
+  prefix is an escape hatch for the Rust parser; the JS property is `type`.
+- Only the first `__wl_exports` custom section was read. A module that emitted
+  more than one silently lost every export in the others.
+- Member-path generation was quadratic in the number of dotted segments, since
+  each one reformatted the whole accumulated path.
+- **A killed runner orphaned a spinning browser.** The WebDriver session is
+  closed from `Drop`, which a signal never runs, so a killed runner left
+  geckodriver and a headless browser alive with the test page still executing —
+  and a page that was spin-waiting pinned a core until someone noticed.
+  SIGINT/SIGTERM/SIGHUP are now handled by a watchdog thread that closes the
+  session against a 5 s deadline and exits `128 + signal`, and the session is
+  registered as soon as the driver spawns rather than once it is ready. SIGKILL
+  cannot be handled, so the page defends itself: every WebDriver script stamps a
+  heartbeat and the test shell discards itself after 30 s without one.
+- **A test binary could be misread as a `cargo run` and served forever.** Cargo
+  invokes the runner identically for both, so the artifact path is the only
+  signal, and only the `deps/` layout was recognised. Cargo 1.99-nightly emitted
+  a binary under `…/build/<pkg>/<hash>/out/`, which took the interactive path and
+  hung CI rather than failing it. Both layouts are recognised now, and
+  `open_browser` reports a failed launch instead of treating a non-zero exit as
+  success and waiting for a viewer that could not arrive.
 - A timeout now prints the console the program captured before it hung, on all
   three run shapes (`bin`, test suite, bench suite). Previously it printed only
   "timed out".
 - Three held-lock timeout tests raced: a holder that kept the lock for a fixed
   duration while the other side asserted a short attempt failed. They now hold
   until told to release.
-
-## 0.1.0 - 2026-06-30
-
-Initial release.
-
-### Added
-
-- `wasm_lite`, a dependency-light Rust/JavaScript binding system for `wasm32-unknown-unknown`.
-- Descriptor-based import, export, class, and test metadata emitted into custom wasm sections.
-- Host-side `wasm_lite_codegen` for dependency-free descriptor parsing and generated ES module glue.
-- `wasm-lite` CLI and browser runner support for `cargo run`, `cargo test`, and rustdoc doctests through WebDriver.
-- Core ABI support for strings, byte slices, vectors, `JsValue` handles, `Option`, `Result`, and sret payloads.
-- Proc-macro support for `import!`, `#[export]`, `#[wasm_lite_test]`, and `js_class!`.
-- Browser-oriented exports, imports, doctests, test suites, panic reporting, and interop examples.
-- Threading, atomics, async execution, worker bootstrap, and `wasm_lite_std` synchronization/time APIs.
-- CI, formatting, clippy, docs, and wasm test scripts for release validation.
-
-### Changed
-
-- Moved macro parsing onto a unified `syn`/`quote` build-time implementation while keeping runtime crates dependency-free.
-- Improved documentation for the binding model, testing flow, threading/async behavior, interop, and migration story.
-
+- Crate-level docs had drifted: both logo URLs pointed at a nonexistent
+  `art/logo.png` (and `wasm_lite_std`'s at a nonexistent repository), and
+  `wasm_lite`'s workspace table, documentation table, and runner prerequisites
+  were behind the README. Three files in the `shims_wasm_bindgen` workspace were
+  also missing their SPDX headers.
