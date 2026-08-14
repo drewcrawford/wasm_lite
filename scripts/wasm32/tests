@@ -38,6 +38,15 @@ echo "testing examples/tests-demo binding kinds"
 echo "testing examples/interop harness (wasm-bindgen interop, test mode)"
 (cd examples/interop && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test harness)
 
+# The same module under atomics. This combination is its own stage because the
+# wasm-bindgen CLI runs a threading transform that the plain interop build never
+# reaches, and that transform needs two exports the generated glue does not read
+# (__tls_base, __tls_align). Pruning the export list to what the glue reads
+# passed every native threaded test and broke every interop build; nothing here
+# covered the overlap until this stage existed.
+echo "testing examples/interop harness under atomics (wasm-bindgen threading transform)"
+(cd examples/interop && RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" cargo +nightly test --target wasm32-unknown-unknown -Z build-std=std,panic_abort --test harness)
+
 echo "testing examples/tests-demo closures"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test closures)
 

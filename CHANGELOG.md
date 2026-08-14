@@ -56,22 +56,26 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- **The threaded build needs three linker exports, not five.** Every recipe here
-  asked for `__stack_pointer`, `__tls_base`, `__tls_size`, `__tls_align` and
-  `__wasm_init_tls`. Only three are ever read — the worker sets
-  `__stack_pointer` and calls `__wasm_init_tls`, and the spawning side reads
-  `__tls_size` to size the TLS block. `__tls_base` and `__tls_align` appear
-  nowhere in the generated JavaScript, and a build that omits them spawns and
-  joins threads correctly; they were inherited from wasm-bindgen's recipe and
-  carried forward. They are gone from the docs, the example configs, the test
-  scripts, and the build error, so nobody copies them again.
+- **The threaded build's five linker exports are documented rather than
+  guessed at.** The recipes ask for `__stack_pointer`, `__tls_base`,
+  `__tls_size`, `__tls_align` and `__wasm_init_tls`, and it was not written down
+  anywhere why. It is now: the generated glue reads three of them — the worker
+  sets `__stack_pointer` and calls `__wasm_init_tls`, and the spawning side
+  reads `__tls_size` to size the TLS block — while `__tls_base` and
+  `__tls_align` are read by nothing here but are required by the **wasm-bindgen
+  CLI's** threading transform, which otherwise stops with `failed to find
+  __tls_align`.
 
-  Verified by dropping one flag at a time from a working configuration and
-  running a real spawn-and-join in a browser. The same sweep found
-  `+bulk-memory` and `+mutable-globals` are not required either — `+atomics`
-  alone links and runs — but those are kept in the recipes, since they are
-  defaults on current toolchains rather than no-ops, and spelling them out costs
-  nothing on an older one.
+  All five are required unconditionally rather than the last two only for
+  interop, because a crate cannot tell from its own manifest which path it is
+  on: a wasm-bindgen dependency arrives transitively, and a test helper pulling
+  `wasm-bindgen-futures` is enough. A recipe that works until someone adds a
+  dependency is worse than two extra flags.
+
+  A drop-one-flag-at-a-time sweep also found `+bulk-memory` and
+  `+mutable-globals` are not required — `+atomics` alone links and runs — but
+  those are kept, since they are defaults on current toolchains rather than
+  no-ops and cost nothing to name on an older one.
 
 ### Removed
 

@@ -32,18 +32,31 @@ pub use wasm::{MemoryImport, exported_names, imported_memory};
 /// Name of the custom section the `import!` macro writes descriptors into.
 pub const SECTION_NAME: &str = "__wasm_lite_imports";
 
-/// Linker-generated symbols the worker bootstrap needs to start a thread.
+/// Linker-generated symbols a threaded build must export.
 ///
 /// `wasm-ld` does not export any of these on its own — not even in a
 /// `--shared-memory` build — so each one needs an explicit
 /// `-C link-arg=--export=…`.
 ///
-/// Exactly three, and each is read: the worker sets `__stack_pointer` and calls
-/// `__wasm_init_tls`, and the spawning side reads `__tls_size` to size the TLS
-/// block. `__tls_base` and `__tls_align` are conventionally listed alongside
-/// them — wasm-bindgen's recipe carries both — but nothing here has ever read
-/// either, and a build that omits them spawns threads correctly.
-const THREAD_EXPORTS: [&str; 3] = ["__stack_pointer", "__tls_size", "__wasm_init_tls"];
+/// Three of them are read by the generated glue: the worker sets
+/// `__stack_pointer` and calls `__wasm_init_tls`, and the spawning side reads
+/// `__tls_size` to size the TLS block. `__tls_base` and `__tls_align` are read
+/// by nothing here — but the **wasm-bindgen CLI** requires both for its own
+/// threading transform, failing with `failed to find __tls_align` / `failed to
+/// find tls base`, so an interop module cannot be built without them.
+///
+/// All five are required unconditionally rather than the last two only for
+/// interop, because you cannot tell from your own `Cargo.toml` whether you are
+/// on the interop path: a wasm-bindgen dependency arrives transitively (a test
+/// helper pulling `wasm-bindgen-futures` is enough). A recipe that works until
+/// someone adds a dependency is worse than two extra flags.
+const THREAD_EXPORTS: [&str; 5] = [
+    "__stack_pointer",
+    "__tls_base",
+    "__tls_size",
+    "__tls_align",
+    "__wasm_init_tls",
+];
 
 /// The Rust-side entry point a spawned thread lands on.
 ///

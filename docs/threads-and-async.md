@@ -130,6 +130,16 @@ This is the canonical block. Copy it whole; the failure mode for copying part of
 it is bad (see below), and it is the reason this listing exists in one place
 rather than only in the ten example `config.toml`s.
 
+All five exports are needed, for two different reasons, which is worth knowing
+before anyone prunes the list again. The glue reads three of them — the worker
+sets `__stack_pointer` and calls `__wasm_init_tls`, and the spawning side reads
+`__tls_size`. `__tls_base` and `__tls_align` are read by nothing here, but the
+**wasm-bindgen CLI** requires both for its own threading transform: without them
+an interop build stops with `failed to find __tls_align` or `failed to find tls
+base`. Keep them even if your crate has nothing to do with wasm-bindgen — a
+dependency can put you on the interop path without your noticing, since a test
+helper pulling `wasm-bindgen-futures` is enough to do it.
+
 ```toml
 # .cargo/config.toml — threaded wasm32 (nightly: atomics ⇒ std is rebuilt)
 [build]
@@ -140,7 +150,9 @@ rustflags = [
     "-C", "link-arg=--max-memory=1073741824",
     "-C", "link-arg=--import-memory",
     "-C", "link-arg=--export=__stack_pointer",
+    "-C", "link-arg=--export=__tls_base",
     "-C", "link-arg=--export=__tls_size",
+    "-C", "link-arg=--export=__tls_align",
     "-C", "link-arg=--export=__wasm_init_tls",
 ]
 
@@ -155,7 +167,9 @@ rustdocflags = [
     "-C", "link-arg=--max-memory=1073741824",
     "-C", "link-arg=--import-memory",
     "-C", "link-arg=--export=__stack_pointer",
+    "-C", "link-arg=--export=__tls_base",
     "-C", "link-arg=--export=__tls_size",
+    "-C", "link-arg=--export=__tls_align",
     "-C", "link-arg=--export=__wasm_init_tls",
 ]
 

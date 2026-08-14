@@ -182,11 +182,14 @@ the end-to-end check.
 Three misconfigurations used to surface as unreadable runtime failures and are now build
 errors; if you touch this area, keep them that way rather than relaxing them into warnings.
 
-- **Missing thread exports.** A spawning module must export `__stack_pointer`, `__tls_size`
-  and `__wasm_init_tls`. Exactly **three** — `__tls_base` and `__tls_align` are conventional
-  in wasm-bindgen's recipe but are read nowhere here, and were removed after a
-  drop-one-flag-at-a-time sweep confirmed a build without them spawns and joins correctly.
-  Don't reinstate them.
+- **Missing thread exports.** A threaded build must export all **five** of `__stack_pointer`,
+  `__tls_base`, `__tls_size`, `__tls_align`, `__wasm_init_tls`. The glue reads only three
+  (`__stack_pointer`, `__tls_size`, `__wasm_init_tls`); the other two are required by the
+  **wasm-bindgen CLI's** threading transform, so an interop build without them dies with
+  `failed to find __tls_align`. Do not prune the list to what the glue reads — that was tried,
+  and it broke every interop build. The requirement is unconditional because a wasm-bindgen
+  dependency arrives transitively, so a crate cannot tell from its own manifest whether it is
+  on the interop path.
 - **`+atomics` without shared memory.** `Builder::spawn` selects on
   `#[cfg(target_feature = "atomics")]`, so enabling atomics compiles *out* the graceful
   `io::ErrorKind::Unsupported` path. A module that imports `__wl_spawn` but has unshared
