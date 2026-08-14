@@ -125,6 +125,23 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
     // custom sections and `__wl_test_*` exports, so discovery and invocation are
     // unchanged from here on — only how `program.js` and `program.wasm` are
     // produced differs.
+    // Both checks run before the interop branch, on the module as linked. A
+    // test binary is the likeliest place to meet either, because it is where
+    // threads first get spawned, and both are silent from here otherwise: the
+    // worker throws before running the closure, so the run reports a timeout
+    // rather than a bad link line. On the interop path they also pre-empt the
+    // wasm-bindgen CLI, whose own `failed to find __tls_align` names a symbol
+    // but not the flag, the file, or the reason.
+    let missing = wasm_lite_codegen::missing_thread_exports(&module)?;
+    if !missing.is_empty() {
+        return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
+    }
+    if wasm_lite_codegen::spawns_without_shared_memory(&module)? {
+        return Err(wasm_lite_codegen::spawns_without_shared_memory_message(
+            &module,
+        ));
+    }
+
     let interop = wasm_lite_codegen::uses_wasm_bindgen(&module);
     let (module, entry_js, extra_routes) = if interop {
         let bundle = wasm_lite_codegen::build_interop(program)?;
@@ -147,19 +164,6 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
         let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
         let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
         let memory = wasm_lite_codegen::imported_memory(&module)?;
-        // A test binary is the likeliest place to meet this, because it is where
-        // threads first get spawned — and the failure is silent from here: the
-        // worker throws before running the closure, so the test simply never
-        // finishes and reports as a timeout rather than as a bad link line.
-        let missing = wasm_lite_codegen::missing_thread_exports(&module)?;
-        if !missing.is_empty() {
-            return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
-        }
-        // A worker test is the usual way to meet this, and the runtime form is
-        // an import throw that traps the instance mid-suite.
-        if wasm_lite_codegen::spawns_without_shared_memory(&module)? {
-            return Err(wasm_lite_codegen::spawns_without_shared_memory_message());
-        }
         let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
         (module, glue, Vec::new())
     };

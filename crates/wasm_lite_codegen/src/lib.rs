@@ -32,31 +32,23 @@ pub use wasm::{MemoryImport, exported_names, imported_memory};
 /// Name of the custom section the `import!` macro writes descriptors into.
 pub const SECTION_NAME: &str = "__wasm_lite_imports";
 
-/// Linker-generated symbols a threaded build must export.
+/// Thread symbols the **generated glue** reads, needed by every threaded build.
 ///
-/// `wasm-ld` does not export any of these on its own — not even in a
-/// `--shared-memory` build — so each one needs an explicit
-/// `-C link-arg=--export=…`.
+/// `wasm-ld` exports none of these on its own — not even in a `--shared-memory`
+/// build — so each needs an explicit `-C link-arg=--export=…`. The worker sets
+/// `__stack_pointer` and calls `__wasm_init_tls`; the spawning side reads
+/// `__tls_size` to size the TLS block.
+const GLUE_THREAD_EXPORTS: [&str; 3] = ["__stack_pointer", "__tls_size", "__wasm_init_tls"];
+
+/// Thread symbols only the **wasm-bindgen backend** needs, on top of
+/// [`GLUE_THREAD_EXPORTS`].
 ///
-/// Three of them are read by the generated glue: the worker sets
-/// `__stack_pointer` and calls `__wasm_init_tls`, and the spawning side reads
-/// `__tls_size` to size the TLS block. `__tls_base` and `__tls_align` are read
-/// by nothing here — but the **wasm-bindgen CLI** requires both for its own
-/// threading transform, failing with `failed to find __tls_align` / `failed to
-/// find tls base`, so an interop module cannot be built without them.
-///
-/// All five are required unconditionally rather than the last two only for
-/// interop, because you cannot tell from your own `Cargo.toml` whether you are
-/// on the interop path: a wasm-bindgen dependency arrives transitively (a test
-/// helper pulling `wasm-bindgen-futures` is enough). A recipe that works until
-/// someone adds a dependency is worse than two extra flags.
-const THREAD_EXPORTS: [&str; 5] = [
-    "__stack_pointer",
-    "__tls_base",
-    "__tls_size",
-    "__tls_align",
-    "__wasm_init_tls",
-];
+/// Nothing wasm_lite generates ever reads these. They are required by the
+/// `wasm-bindgen` CLI's own threading transform, which runs over any module
+/// carrying wasm-bindgen's schema section, and which fails with `failed to find
+/// __tls_align` and then `failed to find tls base` — in that order, so supplying
+/// only the first just moves the error.
+const BINDGEN_BACKEND_THREAD_EXPORTS: [&str; 2] = ["__tls_base", "__tls_align"];
 
 /// The Rust-side entry point a spawned thread lands on.
 ///
@@ -65,35 +57,89 @@ const THREAD_EXPORTS: [&str; 5] = [
 /// exports it. It is paired with a shared-memory check below.
 const SPAWN_MARKER: &str = "__wl_thread_entry";
 
-/// Which of the linker's thread symbols a thread-spawning module fails to
-/// export: `__stack_pointer`, `__tls_size`, `__wasm_init_tls`. `wasm-ld`
-/// exports none of them on its own, so each needs an explicit
-/// `-C link-arg=--export=…`.
+/// What a thread-spawning module is missing, and which backend it is on.
+///
+/// The two travel together so they cannot disagree: the required list depends on
+/// the backend, and a message that named a different list from the one checked
+/// is exactly how an earlier version told users to apply a fix that could not
+/// work for their module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MissingThreadExports {
+    /// Required symbols this module does not export, in canonical order.
+    pub missing: Vec<&'static str>,
+    /// Whether the `wasm-bindgen` CLI will run over this module — that is,
+    /// whether it is on the wasm-bindgen backend, which additionally requires
+    /// `__tls_base` and `__tls_align` for the CLI's own threading transform.
+    pub wasm_bindgen_backend: bool,
+}
+
+impl MissingThreadExports {
+    /// Nothing missing — the module is correctly linked for its backend.
+    pub fn is_empty(&self) -> bool {
+        self.missing.is_empty()
+    }
+}
+
+/// Which linker thread symbols a thread-spawning module fails to export.
+///
+/// The required set depends on the backend the module ends up on. Every
+/// threaded build needs the three the glue reads; a module carrying
+/// wasm-bindgen's schema section is additionally processed by the `wasm-bindgen`
+/// CLI, whose threading transform needs two more. That is checked rather than
+/// assumed, so a module genuinely clear of wasm-bindgen is not asked for flags it
+/// has no use for — and one that later acquires a wasm-bindgen dependency (they
+/// arrive transitively, and a dev-dependency counts) is told at its next build.
 ///
 /// Empty for a module that cannot spawn threads at all, so a shared-memory
 /// module that only uses atomics is never faulted.
 ///
-/// A module that spawns but is missing these links and runs, then dies inside
-/// the generated worker bootstrap on `instance.exports.__stack_pointer.value =
-/// …` with nothing but a `TypeError` about `undefined` to go on. Checking here
-/// turns that into a build error naming the flag.
-pub fn missing_thread_exports(wasm: &[u8]) -> Result<Vec<&'static str>, String> {
+/// A module that spawns but is missing these links still builds, and then dies
+/// inside the generated worker bootstrap on
+/// `instance.exports.__stack_pointer.value = …` with nothing but a `TypeError`
+/// about `undefined` to go on. Checking here turns that into a build error
+/// naming the flag.
+pub fn missing_thread_exports(wasm: &[u8]) -> Result<MissingThreadExports, String> {
+    let wasm_bindgen_backend = uses_wasm_bindgen(wasm);
+    let none = || MissingThreadExports {
+        missing: Vec::new(),
+        wasm_bindgen_backend,
+    };
+
     // A thread needs a shared memory to land in. Without one the glue never
     // generates `__wl_spawn` at all and `spawn` reports `Unsupported`, so these
     // symbols are genuinely unnecessary — and every ordinary single-threaded
     // module would otherwise be faulted, since the core crate keeps
     // `__wl_thread_entry` alive whether or not anything can spawn.
     if !wasm::imported_memory(wasm)?.is_some_and(|memory| memory.shared) {
-        return Ok(Vec::new());
+        return Ok(none());
     }
     let names = wasm::exported_names(wasm)?;
     if !names.iter().any(|n| n == SPAWN_MARKER) {
-        return Ok(Vec::new());
+        return Ok(none());
     }
-    Ok(THREAD_EXPORTS
-        .into_iter()
-        .filter(|want| !names.iter().any(|have| have == want))
-        .collect())
+    Ok(MissingThreadExports {
+        missing: required_thread_exports(wasm_bindgen_backend)
+            .into_iter()
+            .filter(|want| !names.iter().any(|have| have == want))
+            .collect(),
+        wasm_bindgen_backend,
+    })
+}
+
+/// Every thread symbol a module on this backend must export, canonical order.
+fn required_thread_exports(wasm_bindgen_backend: bool) -> Vec<&'static str> {
+    let mut all = vec![
+        GLUE_THREAD_EXPORTS[0],
+        BINDGEN_BACKEND_THREAD_EXPORTS[0],
+        GLUE_THREAD_EXPORTS[1],
+        BINDGEN_BACKEND_THREAD_EXPORTS[1],
+        GLUE_THREAD_EXPORTS[2],
+    ];
+    if !wasm_bindgen_backend {
+        all.retain(|name| !BINDGEN_BACKEND_THREAD_EXPORTS.contains(name));
+    }
+    all
 }
 
 /// Runtime import a module only carries if its code can reach `thread::spawn`.
@@ -127,7 +173,7 @@ pub fn spawns_without_shared_memory(wasm: &[u8]) -> Result<bool, String> {
 }
 
 /// The build error for a module [`spawns_without_shared_memory`] faults.
-pub fn spawns_without_shared_memory_message() -> String {
+pub fn spawns_without_shared_memory_message(wasm: &[u8]) -> String {
     let mut msg = String::from(
         "this module was built with `+atomics` and can spawn threads, but its \
          memory is not shared, so no thread can actually start.\n\n\
@@ -141,7 +187,9 @@ pub fn spawns_without_shared_memory_message() -> String {
         \x20   \"-C\", \"link-arg=--import-memory\",\n\
         \x20   \"-C\", \"link-arg=--max-memory=1073741824\",\n",
     );
-    for name in THREAD_EXPORTS {
+    // Same list the export check would demand of this module, so following one
+    // diagnostic never contradicts the other.
+    for name in required_thread_exports(uses_wasm_bindgen(wasm)) {
         msg.push_str(&format!("    \"-C\", \"link-arg=--export={name}\",\n"));
     }
     msg.push_str(
@@ -156,15 +204,17 @@ pub fn spawns_without_shared_memory_message() -> String {
 
 /// The build error for a module [`missing_thread_exports`] faults.
 ///
-/// Spells out the flags verbatim, and names `rustdocflags` separately: doctests
-/// are linked by rustdoc, which ignores `rustflags`, so a crate whose tests
-/// spawn threads happily can still have every doctest that spawns one fail.
-pub fn missing_thread_exports_message(missing: &[&str]) -> String {
+/// Takes the whole finding rather than just the list, so the flags it prints are
+/// always the ones that were actually checked. Spells them out verbatim, and
+/// names `rustdocflags` separately: doctests are linked by rustdoc, which
+/// ignores `rustflags`, so a crate whose tests spawn threads happily can still
+/// have every doctest that spawns one fail.
+pub fn missing_thread_exports_message(found: &MissingThreadExports) -> String {
     let mut msg = String::from(
         "this module spawns threads but does not export the linker symbols the \
          worker bootstrap needs:\n",
     );
-    for name in missing {
+    for name in &found.missing {
         msg.push_str(&format!("    {name}\n"));
     }
     msg.push_str(
@@ -172,12 +222,31 @@ pub fn missing_thread_exports_message(missing: &[&str]) -> String {
          [build]\n\
          rustflags = [\n",
     );
-    for name in THREAD_EXPORTS {
+    for name in required_thread_exports(found.wasm_bindgen_backend) {
         msg.push_str(&format!("    \"-C\", \"link-arg=--export={name}\",\n"));
     }
+    msg.push_str("]\n\n");
+    if found.wasm_bindgen_backend {
+        // Say why the list is longer than the symbols the glue reads, or the two
+        // extra look like padding and get pruned again.
+        msg.push_str(
+            "Two of those — `__tls_base` and `__tls_align` — are not read by \
+             wasm_lite. This module carries wasm-bindgen's schema section, so it \
+             is built on the wasm-bindgen backend and the `wasm-bindgen` CLI runs \
+             a threading transform of its own that requires them.\n\n",
+        );
+    } else {
+        // And say why it is shorter than the recipe they may have copied.
+        msg.push_str(
+            "Nothing in this module's graph reaches wasm-bindgen, so the three \
+             symbols wasm_lite reads are all it needs. Recipes commonly list \
+             `__tls_base` and `__tls_align` as well; those are for the \
+             wasm-bindgen backend, are harmless here, and become required if a \
+             dependency ever pulls wasm-bindgen in.\n\n",
+        );
+    }
     msg.push_str(
-        "]\n\n\
-         Repeat the same list under `rustdocflags` — doctests are linked by \
+        "Repeat the same list under `rustdocflags` — doctests are linked by \
          rustdoc, which does not read `rustflags`. Put that copy under the \
          exact triple, `[target.wasm32-unknown-unknown]`: rustdoc ignores \
          `rustdocflags` under a `cfg(...)` predicate, so a `cfg(target_arch = \
@@ -348,27 +417,66 @@ mod tests {
         export_module_with(names, true)
     }
 
+    /// A spawning module on the wasm_lite backend, exporting `names`.
+    fn spawning_module_exporting(names: &[&str]) -> Vec<u8> {
+        let mut all = vec![SPAWN_MARKER];
+        all.extend_from_slice(names);
+        spawning_module(&all)
+    }
+
+    /// The same, but carrying wasm-bindgen's schema section, which is what puts
+    /// a module on the wasm-bindgen backend and makes the CLI run over it.
+    fn bindgen_backend_module_exporting(names: &[&str]) -> Vec<u8> {
+        let mut wasm = spawning_module_exporting(names);
+        // A custom section named `__wasm_bindgen_unstable`; contents unread.
+        let name = b"__wasm_bindgen_unstable";
+        let mut body = vec![name.len() as u8];
+        body.extend(name);
+        wasm.extend([0, body.len() as u8]);
+        wasm.extend(body);
+        wasm
+    }
+
+    #[test]
+    fn the_wasm_lite_backend_needs_only_the_three_the_glue_reads() {
+        let wasm = spawning_module_exporting(&GLUE_THREAD_EXPORTS);
+        let found = missing_thread_exports(&wasm).unwrap();
+        assert!(!found.wasm_bindgen_backend);
+        assert!(
+            found.is_empty(),
+            "wasm_lite backend should not need {:?}",
+            found.missing
+        );
+    }
+
+    #[test]
+    fn the_wasm_bindgen_backend_needs_two_more() {
+        // Same exports, but the CLI will run over this one and its threading
+        // transform reads symbols nothing in wasm_lite ever touches.
+        let wasm = bindgen_backend_module_exporting(&GLUE_THREAD_EXPORTS);
+        let found = missing_thread_exports(&wasm).unwrap();
+        assert!(found.wasm_bindgen_backend);
+        assert_eq!(found.missing, ["__tls_base", "__tls_align"]);
+    }
+
     #[test]
     fn faults_a_spawning_module_missing_stack_pointer() {
         // wasm-ld exports none of these on its own, so a link line that forgot
         // `--export=__stack_pointer` still links and still spawns.
-        let wasm = spawning_module(&[
-            SPAWN_MARKER,
-            "__tls_base",
-            "__tls_size",
-            "__tls_align",
-            "__wasm_init_tls",
-        ]);
-        assert_eq!(missing_thread_exports(&wasm).unwrap(), ["__stack_pointer"]);
+        let wasm = spawning_module_exporting(&["__tls_size", "__wasm_init_tls"]);
+        assert_eq!(
+            missing_thread_exports(&wasm).unwrap().missing,
+            ["__stack_pointer"]
+        );
     }
 
     #[test]
     fn a_module_without_shared_memory_is_never_faulted() {
         // The core crate keeps `__wl_thread_entry` alive whether or not
         // anything can spawn, so its presence alone must not fault a module.
-        // Without a shared memory the glue emits no `__wl_spawn` at all and
-        // `spawn` reports Unsupported — every ordinary single-threaded test
-        // binary looks like this, and faulting them broke all of them.
+        // Without a shared memory the glue emits no `__wl_spawn` and `spawn`
+        // reports Unsupported — every ordinary single-threaded test binary
+        // looks like this, and faulting them broke all of them.
         let wasm = export_module(&[SPAWN_MARKER, "main"]);
         assert!(missing_thread_exports(&wasm).unwrap().is_empty());
     }
@@ -382,73 +490,30 @@ mod tests {
     }
 
     #[test]
-    fn a_correctly_linked_spawning_module_passes() {
-        let mut names = vec![SPAWN_MARKER];
-        names.extend(THREAD_EXPORTS);
-        let wasm = spawning_module(&names);
-        assert!(missing_thread_exports(&wasm).unwrap().is_empty());
-    }
+    fn each_message_lists_the_flags_its_own_check_demanded() {
+        // The two must never disagree: a message naming a different list from
+        // the one checked is how an earlier version told users to apply a fix
+        // that could not work for their module.
+        let wl = missing_thread_exports(&spawning_module_exporting(&[])).unwrap();
+        let wl_msg = missing_thread_exports_message(&wl);
+        // The prose mentions the other two to explain why they are absent, so
+        // check the emitted flag lines rather than any mention of the name.
+        assert!(
+            !wl_msg.contains("link-arg=--export=__tls_align"),
+            "{wl_msg}"
+        );
+        assert!(wl_msg.contains("Nothing in this module's graph reaches wasm-bindgen"));
 
-    /// A module importing `__wasm_lite.__wl_spawn`, optionally with a shared
-    /// memory. Import section only, which is all either check reads.
-    fn spawn_importing_module(shared_memory: bool) -> Vec<u8> {
-        let mut body = Vec::new();
-        let mut count = 1;
-        if shared_memory {
-            count += 1;
-        }
-        body.push(count);
-        if shared_memory {
-            body.extend([0x03, b'e', b'n', b'v']);
-            body.extend([0x06, b'm', b'e', b'm', b'o', b'r', b'y']);
-            body.extend([0x02, 0x03, 0x11, 0x80, 0x80, 0x01]);
-        }
-        body.extend([0x0b]);
-        body.extend(b"__wasm_lite");
-        body.extend([0x0a]);
-        body.extend(b"__wl_spawn");
-        body.extend([0x00, 0x00]); // kind: func, type index 0
-        assert!(body.len() < 128);
-        let mut wasm = b"\0asm\x01\0\0\0".to_vec();
-        wasm.extend([2, body.len() as u8]);
-        wasm.extend(body);
-        wasm
-    }
-
-    #[test]
-    fn faults_a_spawning_module_without_shared_memory() {
-        // `+atomics` compiles out the graceful path and compiles in the call to
-        // __wl_spawn, so this build can only fail at runtime.
-        let wasm = spawn_importing_module(false);
-        assert!(spawns_without_shared_memory(&wasm).unwrap());
-    }
-
-    #[test]
-    fn a_spawning_module_with_shared_memory_is_fine() {
-        let wasm = spawn_importing_module(true);
-        assert!(!spawns_without_shared_memory(&wasm).unwrap());
-    }
-
-    #[test]
-    fn a_module_that_never_reaches_spawn_is_never_faulted() {
-        // Without `+atomics` the call is dead-code-eliminated and the import
-        // never appears, which is the build that degrades gracefully by design.
-        let wasm = export_module(&["main"]);
-        assert!(!spawns_without_shared_memory(&wasm).unwrap());
-    }
-
-    #[test]
-    fn the_shared_memory_message_offers_both_ways_out() {
-        let msg = spawns_without_shared_memory_message();
-        assert!(msg.contains("link-arg=--shared-memory"));
-        assert!(msg.contains("rustdocflags"));
-        // Dropping +atomics is a legitimate fix, not just adding flags.
-        assert!(msg.contains("Unsupported"));
+        let wb = missing_thread_exports(&bindgen_backend_module_exporting(&[])).unwrap();
+        let wb_msg = missing_thread_exports_message(&wb);
+        assert!(wb_msg.contains("link-arg=--export=__tls_align"));
+        assert!(wb_msg.contains("wasm-bindgen backend"));
     }
 
     #[test]
     fn the_message_names_the_flag_and_rustdoc() {
-        let msg = missing_thread_exports_message(&["__stack_pointer"]);
+        let found = missing_thread_exports(&spawning_module_exporting(&[])).unwrap();
+        let msg = missing_thread_exports_message(&found);
         assert!(msg.contains("link-arg=--export=__stack_pointer"));
         assert!(msg.contains("rustdocflags"));
     }

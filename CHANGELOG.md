@@ -56,6 +56,29 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **The thread-export check now asks for what your backend actually needs.** It
+  demanded all five symbols of every threaded build. Three are read by the
+  generated glue; the other two exist for the `wasm-bindgen` CLI's threading
+  transform, so a module with no wasm-bindgen anywhere in its graph was being
+  told to add flags it had no use for. The check reads the module — the same
+  schema section that decides whether the CLI runs at all — and requires three or
+  five accordingly, saying which case it found and why. A crate that later
+  acquires a wasm-bindgen dependency (they arrive transitively, and a
+  dev-dependency counts) is told at its next build rather than silently working
+  until it doesn't.
+
+  Both checks also moved ahead of the interop branch, so they now apply to
+  interop modules too. That is the case they help most: the CLI's own diagnostic
+  is `failed to find __tls_align`, which names one symbol, not the flag, the file,
+  or the second symbol it will ask for once the first is supplied.
+
+  The vocabulary is now **backend** rather than "shim" wherever it decides
+  behaviour, because the shim directories point the wrong way on their own: a
+  shim is named for the API it *provides*, while the backend is what *implements*
+  it. `shims/` puts real wasm-bindgen under your wasm_lite code (wasm-bindgen
+  backend, five exports); `shims_wasm_bindgen/` puts wasm_lite under your
+  wasm-bindgen code (wasm_lite backend, three).
+
 - **The threaded build's five linker exports are documented rather than
   guessed at.** The recipes ask for `__stack_pointer`, `__tls_base`,
   `__tls_size`, `__tls_align` and `__wasm_init_tls`, and it was not written down
@@ -93,7 +116,9 @@ All notable changes to this project will be documented in this file.
   precisely when the tool was already failing. Cleanup is now a destructor, which
   covers every exit path. The name also gained a per-call counter: the pid alone
   meant two `build_interop` calls in one process would share a path and delete
-  each other's in-progress output. The runner detected
+  each other's in-progress output.
+
+- **A worker that failed to start hung until the timeout.** The runner detected
   the failure and logged it, then went on waiting for a verdict that could never
   arrive, and finally reported "timed out after 30s … raise
   `WASM_LITE_TIMEOUT_SECS` if it just needs longer" — advice that could not

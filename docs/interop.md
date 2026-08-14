@@ -40,7 +40,8 @@ There are three options for a wasm_lite-migrated leaf:
   `wasm-bindgen` feature). The app's own `#[wasm_bindgen]` code keeps working
   unchanged — only the build command changes, not the source. Caveat: wasm-pack
   specifics (`--target bundler|nodejs`, `.d.ts`, JS snippets) don't carry over yet.
-* **Patch in the wasm-bindgen-backed wasm_lite shim** from [`shims/`](../shims/).
+* **Switch to the wasm-bindgen backend** with the substitutes in [`shims/`](../shims/) —
+  your code keeps calling wasm_lite APIs, but real wasm-bindgen implements them.
   It lowers a useful subset of `import!`, `#[export]`, `js_class!`,
   `#[wasm_lite_test]`, and `wasm_lite_std` onto wasm-bindgen, so the leaf source
   stays unchanged and the app keeps its existing wasm-bindgen pipeline. It is

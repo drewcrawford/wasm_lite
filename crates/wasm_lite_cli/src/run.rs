@@ -295,6 +295,18 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
         }
         "wasm" => {
             let module = read(program)?;
+            // Before the interop branch: an interop module needs these too, and
+            // reaching the wasm-bindgen CLI first trades our message for its
+            // `failed to find __tls_align`.
+            let missing = wasm_lite_codegen::missing_thread_exports(&module)?;
+            if !missing.is_empty() {
+                return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
+            }
+            if wasm_lite_codegen::spawns_without_shared_memory(&module)? {
+                return Err(wasm_lite_codegen::spawns_without_shared_memory_message(
+                    &module,
+                ));
+            }
             if wasm_lite_codegen::uses_wasm_bindgen(&module) {
                 // The module also contains wasm-bindgen code: codegen finalizes
                 // it with the wasm-bindgen CLI and assembles a merged loader.
@@ -327,13 +339,6 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
                 // Report a misconfigured link line here, where the message is
                 // still attached to the failing target. Left to run, this dies
                 // in the worker as a bare `TypeError` on `undefined`.
-                let missing = wasm_lite_codegen::missing_thread_exports(&module)?;
-                if !missing.is_empty() {
-                    return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
-                }
-                if wasm_lite_codegen::spawns_without_shared_memory(&module)? {
-                    return Err(wasm_lite_codegen::spawns_without_shared_memory_message());
-                }
                 let glue =
                     wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
                 // program.js is the glue ONLY (no auto-run), so a spawned worker

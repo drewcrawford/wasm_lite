@@ -63,8 +63,16 @@ workspace members:
 
 | workspace | role |
 |---|---|
-| `shims/` | partial wasm-bindgen-backed substitutes for `wasm_lite` / `wasm_lite_std`, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
-| `shims_wasm_bindgen/` | substitutes for `wasm-bindgen` / `wasm-bindgen-test` that lower a substantial upstream API subset onto wasm_lite; includes consumer demos and browser tests |
+| `shims/` | **the wasm-bindgen backend.** Substitutes named `wasm_lite` / `wasm_lite_std` but implemented on real wasm-bindgen, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
+| `shims_wasm_bindgen/` | **the wasm_lite backend.** Substitutes named `wasm-bindgen` / `wasm-bindgen-test` implemented on wasm_lite, lowering a substantial upstream API subset onto it; includes consumer demos and browser tests |
+
+Say **backend**, not "shim", whenever it matters which runtime is underneath — the directory
+names point the wrong way on their own. A shim is named for the API it *provides*; the
+backend is what *implements* it, and that is what decides whether the `wasm-bindgen` CLI runs
+over the module and therefore which linker exports are required. `shims/` puts real
+wasm-bindgen underneath your wasm_lite code (wasm-bindgen backend); `shims_wasm_bindgen/`
+puts wasm_lite underneath your wasm-bindgen code (wasm_lite backend). "We use the shim"
+settles nothing; "we are on the wasm-bindgen backend" settles it.
 
 ## Dependency policy (important)
 

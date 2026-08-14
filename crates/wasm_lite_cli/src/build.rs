@@ -84,6 +84,20 @@ fn run(args: Args) -> Result<(), String> {
     let wasm =
         std::fs::read(&input).map_err(|e| format!("failed to read {}: {e}", input.display()))?;
 
+    // Before the interop branch: an interop module needs these too, and more of
+    // them, and reaching the wasm-bindgen CLI first trades our message for its
+    // `failed to find __tls_align`, which names a symbol but not the fix.
+    let missing = wasm_lite_codegen::missing_thread_exports(&wasm)?;
+    if !missing.is_empty() {
+        return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
+    }
+    // Likewise for a module that can spawn but has nowhere to spawn into.
+    if wasm_lite_codegen::spawns_without_shared_memory(&wasm)? {
+        return Err(wasm_lite_codegen::spawns_without_shared_memory_message(
+            &wasm,
+        ));
+    }
+
     if wasm_lite_codegen::uses_wasm_bindgen(&wasm) {
         let output = output
             .ok_or("wasm-bindgen interop emits multiple files and requires -o <output.js>")?;
@@ -93,16 +107,6 @@ fn run(args: Args) -> Result<(), String> {
     let descriptors = wasm_lite_codegen::descriptors_from_wasm(&wasm)?;
     let exports = wasm_lite_codegen::exports_from_wasm(&wasm)?;
     let memory = wasm_lite_codegen::imported_memory(&wasm)?;
-
-    // Fail here rather than letting the worker bootstrap die on `undefined`.
-    let missing = wasm_lite_codegen::missing_thread_exports(&wasm)?;
-    if !missing.is_empty() {
-        return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
-    }
-    // Likewise for a module that can spawn but has nowhere to spawn into.
-    if wasm_lite_codegen::spawns_without_shared_memory(&wasm)? {
-        return Err(wasm_lite_codegen::spawns_without_shared_memory_message());
-    }
 
     match output {
         Some(path) => {

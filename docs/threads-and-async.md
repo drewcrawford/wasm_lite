@@ -216,11 +216,19 @@ cargo tree -i wasm-bindgen --target wasm32-unknown-unknown   # add --all-feature
 
 Empty output means the first three suffice. Anything else means all five.
 
-The two shim workspaces sit on opposite sides of this, so "we use the shim" does
-not settle it. `shims/` puts **real** wasm-bindgen underneath a wasm_lite-authored
-crate, so the CLI runs and you need all five. `shims_wasm_bindgen/` goes the other
-way — wasm-bindgen's API surface lowered onto wasm_lite, with no real
-wasm-bindgen in the graph — so three is enough.
+The word to reach for here is **backend**, not "shim". A shim is named for the API
+it *provides*; the backend is whatever *implements* it, and only the backend
+decides whether the CLI runs. The two shim workspaces sit on opposite sides, and
+their directory names point the wrong way:
+
+| workspace | you write | implemented by | backend | exports |
+|---|---|---|---|---|
+| `shims/` | `wasm_lite` APIs | real wasm-bindgen | **wasm-bindgen** | five |
+| `shims_wasm_bindgen/` | `wasm-bindgen` APIs | real wasm_lite | **wasm_lite** | three |
+
+So "we use the shim" settles nothing — `shims_wasm_bindgen/` is the one where
+wasm-bindgen is *not* the backend. "We are on the wasm-bindgen backend" settles
+it, and is the same question `cargo tree -i wasm-bindgen` answers.
 
 Unless you have checked, prefer the full five. They cost two flags, they do no
 harm to a non-interop build, and the alternative is a configuration that works
