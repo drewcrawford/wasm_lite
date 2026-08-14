@@ -16,4 +16,4 @@ name = "wasm-lite"
 path = "src/main.rs"
 
 [dependencies]
-wasm_lite_codegen = { path = "../wasm_lite_codegen" }
+wasm_lite_codegen = { workspace = true }

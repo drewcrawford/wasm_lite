@@ -35,6 +35,26 @@ categories = ["wasm", "web-programming", "development-tools::ffi", "concurrency"
 repository = "https://github.com/drewcrawford/wasm_lite"
 homepage = "https://sealedabstract.com/code/wasm_lite"
 
+# Internal dependencies, declared once. A path alone is enough to build, but not
+# to publish: `cargo package` rejects a dependency with no version requirement,
+# because the published crate has to name what it needs from the registry rather
+# than from a directory that will not exist. Keeping them here means the version
+# is written in one place instead of drifting across four manifests.
+#
+# The version cannot inherit from `workspace.package` above — cargo has no
+# `version.workspace` inside `workspace.dependencies` — so this literal is the
+# one that has to move at release time.
+#
+# Deliberately absent: `wasm_lite_macro`'s dev-dependencies on `wasm_lite` and
+# `wasm_lite_std`. Those point *back* at crates that depend on it, and a
+# versioned cycle cannot be published in any order. Cargo drops a dev-dependency
+# that carries only a path, so leaving them bare is what makes the cycle
+# publishable.
+[workspace.dependencies]
+wasm_lite = { path = "crates/wasm_lite", version = "0.1.0" }
+wasm_lite_macro = { path = "crates/wasm_lite_macro", version = "0.1.0" }
+wasm_lite_codegen = { path = "crates/wasm_lite_codegen", version = "0.1.0" }
+
 # NOTE: no dev-cycle self-patch here, deliberately. Patching test_executors to
 # the local path makes `wasm_lite_std`'s *lib* tests link two copies of
 # wasm_lite_std -- the cfg(test) one and the rlib reached via test_executors,

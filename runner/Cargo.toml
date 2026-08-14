@@ -12,4 +12,4 @@ homepage.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-wasm_lite_codegen = { path = "../crates/wasm_lite_codegen" }
+wasm_lite_codegen = { workspace = true }
