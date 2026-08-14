@@ -117,9 +117,74 @@ sidesteps the problem entirely.
 
 This requires the worker bootstrap to import the glue *without* re-running
 `main`, so the runner serves the glue (`program.js`) separately from a small
-bootstrap module. A threaded build must export the linker's thread symbols;
-`examples/threads-demo/.cargo/config.toml` shows the flags
-(`--export=__stack_pointer`, `__tls_size`, `__wasm_init_tls`, …).
+bootstrap module.
+
+## The threaded build configuration
+
+A threaded build must export the linker's thread symbols. `wasm-ld` exports none
+of them on its own — not even in a `--shared-memory` build — and a link line that
+omits one still links and still spawns, so the mistake surfaces at runtime or
+not at all.
+
+This is the canonical block. Copy it whole; the failure mode for copying part of
+it is bad (see below), and it is the reason this listing exists in one place
+rather than only in the ten example `config.toml`s.
+
+```toml
+# .cargo/config.toml — threaded wasm32 (nightly: atomics ⇒ std is rebuilt)
+[build]
+target = "wasm32-unknown-unknown"
+rustflags = [
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+    "-C", "link-arg=--shared-memory",
+    "-C", "link-arg=--max-memory=1073741824",
+    "-C", "link-arg=--import-memory",
+    "-C", "link-arg=--export=__stack_pointer",
+    "-C", "link-arg=--export=__tls_base",
+    "-C", "link-arg=--export=__tls_size",
+    "-C", "link-arg=--export=__tls_align",
+    "-C", "link-arg=--export=__wasm_init_tls",
+]
+
+# Doctests are linked by rustdoc, which does not read `rustflags`. This section
+# must be keyed by the *exact triple*: rustdoc ignores `rustdocflags` under a
+# `cfg(...)` predicate, so `[target.'cfg(target_arch = "wasm32")']` silently
+# does nothing here even though it works for `rustflags`.
+[target.wasm32-unknown-unknown]
+rustdocflags = [
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+    "-C", "link-arg=--shared-memory",
+    "-C", "link-arg=--max-memory=1073741824",
+    "-C", "link-arg=--import-memory",
+    "-C", "link-arg=--export=__stack_pointer",
+    "-C", "link-arg=--export=__tls_base",
+    "-C", "link-arg=--export=__tls_size",
+    "-C", "link-arg=--export=__tls_align",
+    "-C", "link-arg=--export=__wasm_init_tls",
+]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+```
+
+Nothing can supply these for you: cargo does not propagate `rustc-link-arg` from
+a dependency's build script to a dependent's binaries, and doctests are linked by
+rustdoc, which build scripts do not reach at all. So `wasm_lite build` and
+`wasm_lite run` check the compiled module instead and refuse to generate glue for
+a module that spawns threads without them, naming the flags.
+
+### When it goes wrong
+
+**`TypeError: Cannot set properties of undefined (setting 'value')` at
+`wl_worker.js`**, usually reported as `wasm_lite: worker failed to start`. The
+module does not export `__stack_pointer`, so the worker bootstrap has nothing to
+set the new thread's stack on. Add `-C link-arg=--export=__stack_pointer` — to
+**both** lists above. Missing it from `rustdocflags` alone fails every doctest
+that spawns a thread while every other test passes, which reads like a threading
+race and is not one.
+
+The same shape applies to the other four symbols, so prefer copying the whole
+block to adding back one line at a time.
 
 The core `spawn` is **detached** (no `JoinHandle`). The std-like layer with
 `spawn -> JoinHandle`, `park`/`unpark`, `Mutex`/`Condvar`/`RwLock`/`mpsc` lives in

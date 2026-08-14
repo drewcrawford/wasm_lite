@@ -94,6 +94,12 @@ fn run(args: Args) -> Result<(), String> {
     let exports = wasm_lite_codegen::exports_from_wasm(&wasm)?;
     let memory = wasm_lite_codegen::imported_memory(&wasm)?;
 
+    // Fail here rather than letting the worker bootstrap die on `undefined`.
+    let missing = wasm_lite_codegen::missing_thread_exports(&wasm)?;
+    if !missing.is_empty() {
+        return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
+    }
+
     match output {
         Some(path) => {
             let glue_name = utf8_file_name(&path)?.to_owned();

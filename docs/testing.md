@@ -126,6 +126,15 @@ by the next waiter.
 `WASM_LITE_REUSE_BROWSER=1` is the complementary lever: instead of N browsers
 capped at some number, one browser serves every invocation.
 
+### Doctests that spawn threads
+
+Doctests are linked by **rustdoc**, which does not read `rustflags` and ignores
+`rustdocflags` under a `cfg(...)` predicate. A crate whose ordinary tests spawn
+threads happily can therefore fail every doctest that spawns one — the symptom
+is `wasm_lite: worker failed to start: TypeError: Cannot set properties of
+undefined (setting 'value')` from `wl_worker.js`. `docs/threads-and-async.md`
+has the configuration to copy and the rest of the diagnosis.
+
 ### A killed runner does not leave a browser behind
 
 The runner closes its WebDriver session and kills its driver on the way out, but

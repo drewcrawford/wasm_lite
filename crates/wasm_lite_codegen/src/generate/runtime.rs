@@ -532,6 +532,16 @@ self.onmessage = async (e) => {{
     imports[\"env\"][\"memory\"] = memory;
     const instance = await WebAssembly.instantiate(module, imports);
     setInstance(instance, memory, module);
+    // These are linker-generated and only exported on request. Without this
+    // check the next line is a bare \"cannot set properties of undefined\",
+    // pointing at generated code rather than at the missing link flag.
+    for (const __s of [\"__stack_pointer\", \"__wasm_init_tls\"]) {{
+        if (instance.exports[__s] === undefined) {{
+            throw new Error(\"wasm_lite: this module does not export `\" + __s +
+                \"`; build it with -C link-arg=--export=\" + __s +
+                \" (in rustdocflags too, for doctests)\");
+        }}
+    }}
     // Give this thread its own stack and TLS, then run the closure.
     instance.exports.__stack_pointer.value = stackTop;
     if (tlsSize) instance.exports.__wasm_init_tls(tlsPtr);

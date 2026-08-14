@@ -122,6 +122,55 @@ fn parse_imports_for_memory(body: &[u8]) -> Result<Option<MemoryImport>, String>
     Ok(memory)
 }
 
+/// Return every name in the module's export section, in module order.
+///
+/// Used to check that a thread-spawning module actually exports the
+/// linker-generated symbols the worker bootstrap needs; see
+/// [`missing_thread_exports`](crate::missing_thread_exports).
+pub fn exported_names(wasm: &[u8]) -> Result<Vec<String>, String> {
+    let mut r = Reader::new(wasm);
+    r.header()?;
+    let mut names = Vec::new();
+    let mut saw_export_section = false;
+
+    while !r.eof() {
+        let id = r.byte()?;
+        let size = r.leb_u32()? as usize;
+        let body = r.take(size)?;
+        // Section id 7 is the export section.
+        if id == 7 {
+            if saw_export_section {
+                return Err("multiple export sections in wasm module".to_string());
+            }
+            saw_export_section = true;
+            names = parse_export_names(body)?;
+        }
+    }
+    Ok(names)
+}
+
+/// Read an export section's body into its list of exported names.
+fn parse_export_names(body: &[u8]) -> Result<Vec<String>, String> {
+    let mut r = Reader::new(body);
+    let count = r.leb_u32()?;
+    let mut names = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        names.push(r.name()?);
+        // Export kind: 0=func, 1=table, 2=memory, 3=global — each followed by
+        // an index into the corresponding space.
+        match r.byte()? {
+            0x00..=0x03 => {
+                r.leb_u32()?;
+            }
+            other => return Err(format!("unknown export kind {other} in export section")),
+        }
+    }
+    if !r.eof() {
+        return Err("trailing bytes in export section".to_string());
+    }
+    Ok(names)
+}
+
 struct Reader<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -275,6 +324,42 @@ mod tests {
     fn no_imported_memory_when_absent() {
         let wasm: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
         assert_eq!(imported_memory(wasm).unwrap(), None);
+    }
+
+    /// A module whose only section is an export section naming `names`, each
+    /// exporting function index 0.
+    fn export_module(names: &[&str]) -> Vec<u8> {
+        let mut body = vec![names.len() as u8];
+        for name in names {
+            assert!(name.len() < 128);
+            body.push(name.len() as u8);
+            body.extend(name.as_bytes());
+            body.extend([0x00, 0x00]); // kind: func, index 0
+        }
+        assert!(body.len() < 128);
+        let mut wasm = b"\0asm\x01\0\0\0".to_vec();
+        wasm.extend([7, body.len() as u8]);
+        wasm.extend(body);
+        wasm
+    }
+
+    #[test]
+    fn reads_export_names() {
+        let wasm = export_module(&["__stack_pointer", "main"]);
+        assert_eq!(exported_names(&wasm).unwrap(), ["__stack_pointer", "main"]);
+    }
+
+    #[test]
+    fn no_export_section_means_no_names() {
+        let wasm: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        assert!(exported_names(wasm).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_truncated_export_section() {
+        let mut wasm = export_module(&["main"]);
+        wasm.pop(); // drop the export's index byte
+        assert!(exported_names(&wasm).is_err());
     }
 
     #[test]

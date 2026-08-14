@@ -300,6 +300,13 @@ fn build_routes(program: &Path) -> Result<Vec<Route>, String> {
                 let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
                 let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
                 let memory = wasm_lite_codegen::imported_memory(&module)?;
+                // Report a misconfigured link line here, where the message is
+                // still attached to the failing target. Left to run, this dies
+                // in the worker as a bare `TypeError` on `undefined`.
+                let missing = wasm_lite_codegen::missing_thread_exports(&module)?;
+                if !missing.is_empty() {
+                    return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
+                }
                 let glue =
                     wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
                 // program.js is the glue ONLY (no auto-run), so a spawned worker

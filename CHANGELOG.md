@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **A threaded build missing a linker export failed unreadably.** The five
+  thread symbols the worker bootstrap needs — `__stack_pointer`, `__tls_base`,
+  `__tls_size`, `__tls_align`, `__wasm_init_tls` — are exported only on request,
+  and `wasm-ld` supplies none of them implicitly, not even in a
+  `--shared-memory` build. A link line that omitted one still linked, still
+  reported a spawned thread, and then died inside generated JavaScript with
+  `TypeError: Cannot set properties of undefined (setting 'value')` at
+  `wl_worker.js` — no symbol named, no flag named, no file of yours mentioned.
+  `wasm_lite build` and `wasm_lite run` now read the module's export section and
+  refuse to generate glue for a module that spawns threads without them, listing
+  what is missing and the flags to add. A module that cannot spawn is never
+  faulted, so atomics-without-threads still builds. Nothing can supply these
+  automatically: cargo does not propagate `rustc-link-arg` from a dependency's
+  build script, and doctests are linked by rustdoc, which build scripts do not
+  reach at all.
+
+  The doctest half of this is its own trap, and `docs/threads-and-async.md` now
+  carries the whole configuration to copy: rustdoc links doctests itself, does
+  not read `rustflags`, and ignores `rustdocflags` under a `cfg(...)` predicate,
+  so the section must be keyed by the exact triple. Miss either half and every
+  doctest that spawns a thread fails while every other test passes — which reads
+  like a threading race and is not one.
+
 - **Parallel doctests started more browsers than the machine could hold.**
   `cargo test --doc` invokes the runner once per doctest and runs those in
   parallel across every core, and each invocation launched its own browser with

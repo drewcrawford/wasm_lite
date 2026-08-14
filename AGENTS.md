@@ -128,7 +128,10 @@ concurrent browsers (free memory / ~1 GiB, clamped to the core count) and makes 
 tests with `os error 11` or a discarded browsing context — see `docs/testing.md`.
 
 **Atomics and thread spawning need nightly + `-Z build-std`** because enabling the `atomics`
-target feature forces recompiling `std`. Those examples ship a `.cargo/config.toml` with the
+target feature forces recompiling `std`. The canonical `.cargo/config.toml` for a threaded
+build — including the `rustdocflags` half, which must be keyed by the exact triple — is in
+`docs/threads-and-async.md`; copy it whole, since a partial copy links fine and fails later.
+Those examples ship a `.cargo/config.toml` with the
 atomics rustflags (`+atomics,+bulk-memory,+mutable-globals`, `--shared-memory`,
 `--import-memory`, etc.) and run with `cargo +nightly run`. Async work that only needs
 `spawn_local`, `JsFuture`, or `sleep_async` also works in an ordinary stable, non-shared wasm
