@@ -77,7 +77,7 @@ honest version.
 | **Browser target** | supports a broad target matrix (`bundler`, `web`, `nodejs`, `no-modules`, Deno, module variants), with behavior that varies by target | targets modern browsers first: one ES-module loader, module workers, COOP/COEP serving, and one runner path |
 | **Testing** | `wasm-bindgen-test` + `wasm-bindgen-test-runner` (separate crates) | built in: `#[wasm_lite_test]`, `cargo test` via a custom runner, **and doctests run in a real browser**. `cargo run --example foo` serves the bin interactively |
 | **Threads** | not in wasm-bindgen proper; you reach for `wasm_thread`/`wasm-bindgen-rayon`, which depend on wasm-bindgen + js-sys | `wasm_lite::thread::spawn` over Web Workers with **no wasm-bindgen/js-sys/web-sys**, plus a `std::thread`-shaped layer (`wasm_lite_std`) with `Mutex`/`RwLock`/`Condvar`/`mpsc`/`JoinHandle` |
-| **Toolchain** | needs the external `wasm-bindgen` CLI *and* (for `wasm-pack`) a Node toolchain | one host binary, `wasm-lite`, that reads the `.wasm` and emits a single ES module. No Node, no bundler required |
+| **Toolchain** | needs the external `wasm-bindgen` CLI *and* (for `wasm-pack`) a Node toolchain | one host binary, `wasm_lite`, that reads the `.wasm` and emits a single ES module. No Node, no bundler required |
 | **Async on the main thread** | `wasm-bindgen-futures` (great for awaiting JS Promises) | an event-loop executor that `Atomics.waitAsync`-sleeps instead of busy-polling, designed for **cross-thread** coordination (`join_async`, `lock_async`) |
 | **`std::time` on wasm** | typically `web-time` (depends on wasm-bindgen/js-sys) | `wasm_lite_std::time` — drop-in `Instant`/`SystemTime`, **no** wasm-bindgen/js-sys |
 | **Runtime deps in your `.wasm`** | pulls `wasm-bindgen` (and usually `js-sys`/`web-sys`) into the dependency graph | **zero** runtime deps; core crate + codegen pull nothing. Proc-macros use `syn`/`quote` but those are build-time only (0 bytes in `.wasm`) |
@@ -117,7 +117,7 @@ honest version.
 
 Each row links to a real, building example in this repo. Build any example with
 `cargo build --target wasm32-unknown-unknown` (threaded ones need
-`cargo +nightly run`), then `wasm-lite app.wasm -o glue.js`.
+`cargo +nightly run`), then `wasm_lite app.wasm -o glue.js`.
 
 ### Project setup
 
@@ -141,11 +141,11 @@ wasm_lite = { path = "…/crates/wasm_lite" }
 ```
 ```bash
 cargo build --target wasm32-unknown-unknown
-wasm-lite target/wasm32-unknown-unknown/debug/app.wasm -o glue.js
+wasm_lite target/wasm32-unknown-unknown/debug/app.wasm -o glue.js
 # import { instantiate, <exports> } from "./glue.js"
 ```
 There is **no all-in-one `#[wasm_bindgen]` macro** and no `wasm-pack`. The flow is
-*compile → run `wasm-lite` over the `.wasm` → import the generated glue*. The
+*compile → run `wasm_lite` over the `.wasm` → import the generated glue*. The
 codegen reads custom sections the macros wrote and emits the import object plus
 one wrapper per export.
 
@@ -306,7 +306,7 @@ wasm_lite::test_main!();             // once per test binary
 Wire the runner up once in `.cargo/config.toml`:
 ```toml
 [target.wasm32-unknown-unknown]
-runner = ["wasm-lite", "run"]
+runner = ["wasm_lite", "run"]
 ```
 Then `cargo test` runs headless in a browser; `cargo run --example foo` serves it
 interactively (the runner distinguishes them by path). **Doctests run too** —
@@ -437,14 +437,14 @@ wasm_lite::console::log_value(&wl_value);
 This is the recommended **incremental** migration path: move modules over one at
 a time while leaving wasm-bindgen-dependent code in place.
 
-**Direction matters.** This works because `wasm-lite` is the *outer* tool. The
+**Direction matters.** This works because `wasm_lite` is the *outer* tool. The
 reverse — you migrate a leaf crate to wasm_lite but your downstream consumers keep
 a `wasm-bindgen`/`wasm-pack` pipeline — is **not** supported today: their
 toolchain never runs the wasm_lite codegen pass, so the leaf's imports go
 unsatisfied and the module won't instantiate. Your options are to have the app
-make `wasm-lite` its final codegen step (its `#[wasm_bindgen]` code keeps working)
+make `wasm_lite` its final codegen step (its `#[wasm_bindgen]` code keeps working)
 or ship the leaf dual-backend. See
-[docs/interop.md](./docs/interop.md#direction-matters-wasm-lite-is-the-outer-tool)
+[docs/interop.md](./docs/interop.md#direction-matters-wasm_lite-is-the-outer-tool)
 and the [roadmap](./docs/roadmap.md).
 
 ---
@@ -457,7 +457,7 @@ and the [roadmap](./docs/roadmap.md).
 [build]
 target = "wasm32-unknown-unknown"
 [target.wasm32-unknown-unknown]
-runner = ["wasm-lite", "run"]   # only if you want `cargo test`/`cargo run` in-browser
+runner = ["wasm_lite", "run"]   # only if you want `cargo test`/`cargo run` in-browser
 ```
 
 ### Threaded / atomics build (nightly)

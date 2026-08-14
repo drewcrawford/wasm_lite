@@ -14,7 +14,7 @@
 //! once against `wasm_lite`; an application that stays on wasm-bindgen patches
 //! `wasm_lite` to this shim, so the leaf's `import!` / `#[export]` /
 //! `js_class!` lower onto wasm-bindgen and the whole binary is an ordinary
-//! wasm-bindgen build. No `wasm-lite` codegen step, no glue merge, no change to
+//! wasm-bindgen build. No `wasm_lite` codegen step, no glue merge, no change to
 //! the app's existing pipeline.
 //!
 //! The payoff for the leaf author is **one source tree, dual deployment**:

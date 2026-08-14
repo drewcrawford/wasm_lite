@@ -23,4 +23,4 @@ rustflags = [
 build-std = ["std", "panic_abort"]
 
 [target.wasm32-unknown-unknown]
-# runner = ["wasm-lite", "run"]
+# runner = ["wasm_lite", "run"]

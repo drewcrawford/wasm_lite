@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! `wasm-lite`: the host-side half of wasm_lite.
+//! `wasm_lite`: the host-side half of wasm_lite.
 //!
 //! Two jobs, one binary:
 //!
-//!     wasm-lite build <input.wasm> [-o out.js]   # generate the JavaScript glue
-//!     wasm-lite run <program>                    # serve it and drive a browser
+//!     wasm_lite build <input.wasm> [-o out.js]   # generate the JavaScript glue
+//!     wasm_lite run <program>                    # serve it and drive a browser
 //!
 //! `run` is meant to be reached through Cargo rather than typed. Point the
 //! target's runner at it and `cargo run` / `cargo test` go through a real
@@ -13,10 +13,10 @@
 //! ```text
 //! # .cargo/config.toml
 //! [target.wasm32-unknown-unknown]
-//! runner = ["wasm-lite", "run"]
+//! runner = ["wasm_lite", "run"]
 //! ```
 //!
-//! or `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="wasm-lite run"`. Cargo
+//! or `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="wasm_lite run"`. Cargo
 //! appends the artifact path, and any harness arguments, after the subcommand.
 
 use std::ffi::OsString;
@@ -24,16 +24,16 @@ use std::ffi::OsString;
 mod build;
 mod run;
 
-const USAGE: &str = "usage: wasm-lite <command> [args]\n\
+const USAGE: &str = "usage: wasm_lite <command> [args]\n\
                      \n\
                      commands:\n\
                      \x20 build <input.wasm> [-o <output.js>]  generate the JavaScript glue\n\
                      \x20 run <program.js|program.wasm>        serve it and drive a browser\n\
                      \n\
-                     `wasm-lite <command> --help` describes each one.\n\
+                     `wasm_lite <command> --help` describes each one.\n\
                      \n\
                      For `cargo run` and `cargo test` on wasm32, set:\n\
-                     \x20 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=\"wasm-lite run\"\n";
+                     \x20 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=\"wasm_lite run\"\n";
 
 fn main() {
     let mut args: Vec<OsString> = std::env::args_os().skip(1).collect();

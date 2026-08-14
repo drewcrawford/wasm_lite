@@ -246,7 +246,7 @@ pub fn import(input: TokenStream) -> TokenStream {
 
 /// Exports a Rust function to JavaScript.
 ///
-/// The wasm_lite version emits a descriptor the `wasm-lite` CLI turns into glue;
+/// The wasm_lite version emits a descriptor the `wasm_lite` CLI turns into glue;
 /// here it is simply `#[wasm_bindgen]`, which produces the same callable export
 /// in a wasm-bindgen build.
 #[proc_macro_attribute]

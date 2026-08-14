@@ -54,7 +54,7 @@ pub fn main(argv: Vec<OsString>) {
         Ok(a) => a,
         Err(msg) => {
             eprintln!("{msg}");
-            eprintln!("usage: wasm-lite run [--serve] <program.js|program.wasm>");
+            eprintln!("usage: wasm_lite run [--serve] <program.js|program.wasm>");
             std::process::exit(2);
         }
     };

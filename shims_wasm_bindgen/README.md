@@ -4,7 +4,7 @@ The **fake-wasm-bindgen shim** from [`docs/design-notes.md`](../docs/design-note
 rather than reconciling two binding systems, or rewriting `wgpu` by hand,
 replace wasm-bindgen itself. An application substitutes this crate graph-wide
 and the *unmodified* upstream crates — `js-sys`, `web-sys`, `wgpu` — compile on
-wasm_lite and emit wasm_lite descriptors, so one `wasm-lite` codegen pass covers
+wasm_lite and emit wasm_lite descriptors, so one `wasm_lite` codegen pass covers
 the whole module.
 
 The mirror of [`shims/`](../shims), which goes the other way: wasm_lite's API
@@ -41,7 +41,7 @@ from crates.io and never learn otherwise.
                            ▼
               descriptor custom sections
                            ▼
-              wasm-lite codegen ──> ES module glue
+              wasm_lite codegen ──> ES module glue
 ```
 
 So there is exactly **one** binding system at runtime. `#[wasm_bindgen]` in

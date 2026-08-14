@@ -15,7 +15,7 @@ different coverage, so read the status line on each:
 | [Reverse interop](#reverse-interop-a-wasm_lite-leaf-under-a-wasm-bindgen-app) | design only |
 | [Porting wgpu by hand](#porting-wgpu-off-wasm-bindgen-the-capstone) | design only; not required for the upstream surface the shim already covers |
 
-Today's [interop](./interop.md) is one-directional: `wasm-lite` is always the
+Today's [interop](./interop.md) is one-directional: `wasm_lite` is always the
 *outer* tool (it runs the wasm-bindgen CLI internally and merges both glues).
 The direct CLI interop remains one-directional; the reverse-direction shim is a
 package substitution, not a glue-merging post-pass.
@@ -66,13 +66,13 @@ keep a `wasm-bindgen`/`wasm-pack` pipeline. This does **not** work today, becaus
 their toolchain never runs the wasm_lite codegen pass that satisfies the leaf's
 imports, so the module fails to instantiate. Two candidate fixes:
 
-* a `wasm-lite patch` **post-pass** the app runs *after* wasm-bindgen (the inverse
+* a `wasm_lite patch` **post-pass** the app runs *after* wasm-bindgen (the inverse
   of `build_interop` — inject wasm_lite's import object into wasm-bindgen's
   loader), so the consumer adds one build command rather than swapping tools; or
 * a codegen mode that re-expresses wasm_lite descriptors as wasm-bindgen **schema**
   so the downstream CLI resolves them with no extra step.
 
-Until then the options are: have the app make `wasm-lite` its final codegen step
+Until then the options are: have the app make `wasm_lite` its final codegen step
 (its `#[wasm_bindgen]` code keeps working), patch the compatible portion of the
 leaf through [`shims/`](../shims/), or ship the leaf **dual-backend**
 (feature-gate a wasm-bindgen binding surface alongside the wasm_lite one). The
@@ -113,7 +113,7 @@ have the app drop it in graph-wide with
 `[patch.crates-io] wasm-bindgen = { … }`. Because js-sys, web-sys,
 wasm-bindgen-futures, and wgpu are all written *against* wasm-bindgen, the
 *unmodified* upstream crates then compile on our foundation and emit wasm_lite
-descriptors — so a single `wasm-lite` codegen pass produces glue for the whole
+descriptors — so a single `wasm_lite` codegen pass produces glue for the whole
 module, WebGPU included. There is no second binding system to subordinate.
 
 The piece this shim deliberately does **not** build is impersonation of
@@ -149,7 +149,7 @@ wasm-bindgen (e.g. anything using wgpu) `[patch]`es `wasm_lite` / `wasm_lite_std
 to shims **backed by wasm-bindgen**, so the leaf's
 `import!`/`#[export]`/`js_class!`/`wasm_lite_std::*` lower onto wasm-bindgen and
 the whole binary is an ordinary wasm-bindgen build — the app's existing
-`wasm-pack` pipeline is unchanged, no `wasm-lite` codegen step, no reverse-interop
+`wasm-pack` pipeline is unchanged, no `wasm_lite` codegen step, no reverse-interop
 loader surgery.
 
 This direction is structurally easier than faking wasm-bindgen, for two reasons:

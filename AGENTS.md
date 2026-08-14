@@ -28,7 +28,7 @@ The whole architecture hinges on this flow — understand it before touching cod
    `exports.rs` = text parsers) and generates matching JS glue (`generate.rs` plus
    `generate/` helpers): one shim per import that unmarshals wasm-level args (e.g. `&str`
    arrives as a `(ptr, len)` pair decoded from linear memory), plus one wrapper per export.
-3. **Run (`wasm-lite run`).** A `cargo` runner that reads the descriptor sections, generates glue,
+3. **Run (`wasm_lite run`).** A `cargo` runner that reads the descriptor sections, generates glue,
    serves it, and drives it in a **real browser over WebDriver**.
 
 Section name constants and the public codegen API live in `crates/wasm_lite_codegen/src/lib.rs`.
@@ -55,7 +55,7 @@ lockstep — a change to one almost always requires a matching change to the oth
 | `crates/wasm_lite` | core runtime: `JsValue`, `Closure`, `JsFuture`, browser benchmarks, `__wl_malloc`/`__wl_free`, panic hook, `thread::spawn`, and `console`/`date`/`performance`/`timer`/`event`/`fetch`/`websocket`/`dom` bindings. Re-exports the macros. |
 | `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`, build-time only): `import!`, `#[export]`, `#[wasm_lite_test]`, `#[wasm_lite_bench]`, `js_class!`. `ty.rs` holds the shared type→ABI dispatch. |
 | `crates/wasm_lite_codegen` | host-side: parse descriptor sections, generate JS glue. Dependency-free. |
-| `crates/wasm_lite_cli` | the `wasm-lite` binary: `build` writes glue, bundle-specific worker modules, and wasm-bindgen interop artifact sets; `run` serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
+| `crates/wasm_lite_cli` | the `wasm_lite` binary: `build` writes glue, bundle-specific worker modules, and wasm-bindgen interop artifact sets; `run` serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
 | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync **and** async) ported from `wasm_safe_thread`; atomics builds use workers + `Atomics.waitAsync`, while stable non-atomic wasm uses a local event-loop executor and host timers |
 
 Two separate shim workspaces deliberately reuse package names and therefore cannot be root
@@ -106,7 +106,7 @@ wasm target's runner at it:
 
 ```bash
 cargo build -p wasm_lite_cli
-export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$PWD/target/debug/wasm-lite run"
+export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$PWD/target/debug/wasm_lite run"
 cd examples/hello-rust
 cargo run     # opens the module in a browser (bin)
 cargo test    # drives #[wasm_lite_test]s headless and exits
@@ -117,7 +117,7 @@ browser must be installed (Firefox + `geckodriver`, or Chrome + `chromedriver`).
 
 Runner knobs (env vars): `WASM_LITE_BROWSER=chrome|chromium|safari` picks a non-default
 browser (default Firefox); `WASM_LITE_REUSE_BROWSER=1` keeps one browser session alive across
-test invocations (stop it with `wasm-lite run --stop-browser`); `WASM_LITE_NO_OPEN=1` serves a bin
+test invocations (stop it with `wasm_lite run --stop-browser`); `WASM_LITE_NO_OPEN=1` serves a bin
 without launching a browser (attach a debugger/browser manually). `WASM_LITE_TIMEOUT_SECS`,
 `WASM_LITE_RUN_SECONDS`, `WASM_LITE_SERVE_DIR`, `WASM_LITE_BROWSER_ARGS`, and
 `WASM_LITE_GPU` cover deadlines, long-running bins, assets, browser flags, and Chrome WebGPU.
@@ -131,7 +131,7 @@ build; spawning a thread there reports `Unsupported`. The canonical full threade
 for the std test suite is `crates/wasm_lite_std/run-browser-tests.sh` — copy its `RUSTFLAGS`
 when running any atomics/threaded wasm test by hand.
 
-Manual `wasm-lite app.wasm -o app.js` output is bundle-specific. Shared-memory modules add
+Manual `wasm_lite app.wasm -o app.js` output is bundle-specific. Shared-memory modules add
 `app.js.worker.js`; wasm-bindgen interop adds `app.js.wasm`, `app.js.wl.js`, and
 `app.js.wb.js`. The CLI writes multi-file outputs through sibling temporary files and refuses
 to replace an implicit worker artifact unless it bears the generated-file marker.

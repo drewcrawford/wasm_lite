@@ -79,7 +79,7 @@ glue behind a single `__wl_spawn` import:
 * The glue allocates a fresh stack + TLS block (`__wl_thread_alloc`) and starts a
   worker, postMessaging `{ module, memory, work, stackTop, tlsPtr }`.
 * The worker (a codegen-emitted bootstrap, `wl_worker.js` in the runner or
-  `<glue>.worker.js` from `wasm-lite -o <glue>`) instantiates the same
+  `<glue>.worker.js` from `wasm_lite -o <glue>`) instantiates the same
   module on the same memory, points `__stack_pointer` at the new stack, calls
   `__wasm_init_tls`, then `__wl_thread_entry` — which reconstitutes the closure
   and runs it. Threads coordinate via `core::sync::atomic`.

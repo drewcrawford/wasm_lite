@@ -12,7 +12,7 @@
 //!
 //! and because `js-sys`, `web-sys`, `wasm-bindgen-futures` and `wgpu` are all
 //! written *against* wasm-bindgen, the **unmodified upstream crates** then
-//! compile on wasm_lite and emit wasm_lite descriptors. One `wasm-lite` codegen
+//! compile on wasm_lite and emit wasm_lite descriptors. One `wasm_lite` codegen
 //! pass covers the whole module, with no second binding system to subordinate.
 //!
 //! It is the mirror of `shims/`, which lowers wasm_lite's API onto

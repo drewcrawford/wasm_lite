@@ -40,7 +40,7 @@ smaller set of browser-first goals:
   such as test filtering, browser session pooling, and deployment bundling are
   runner work because one server/test runner owns the local feedback loop.
 * **Interop is a migration tool, not the destination.** Direct glue merging still
-  requires `wasm-lite` to be the final codegen step; `[patch]` shims now provide
+  requires `wasm_lite` to be the final codegen step; `[patch]` shims now provide
   bounded alternatives in both host directions. The long-term browser-first
   design still wants wasm_lite's runner, atomics, logging, and test semantics to
   remain coherent.
@@ -172,7 +172,7 @@ browser-validated; the next frontier is the binding crates. Items marked
 ### wasm-bindgen coexistence
 
 * **Close the remaining coexistence gaps.** Direct CLI interop works with
-  `wasm-lite` as the outer tool, and `[patch]` shims now exist in both directions:
+  `wasm_lite` as the outer tool, and `[patch]` shims now exist in both directions:
   [`shims_wasm_bindgen/`](../shims_wasm_bindgen/) is substantial enough for
   unmodified js-sys/web-sys and part of wgpu 28 at runtime; [`shims/`](../shims/)
   lowers a bounded wasm_lite subset onto wasm-bindgen. Remaining work includes
@@ -187,9 +187,9 @@ browser-validated; the next frontier is the binding crates. Items marked
   `sleep_async`, and `park`/`unpark`; `scripts/wasm32/tests` runs the threaded
   suites in **both** Firefox and Chrome because they disagree on nested worker
   spawn. Remaining notable lock case: multiple simultaneous `RwLock` readers.
-* **Deployment niceties** — `wasm-lite -o` already emits bundle-specific worker
+* **Deployment niceties** — `wasm_lite -o` already emits bundle-specific worker
   and interop artifact names with guarded multi-file writes. A higher-level
-  `wasm-lite bundle` command and a session-pool idle reaper remain. (Test
+  `wasm_lite bundle` command and a session-pool idle reaper remain. (Test
   filtering already works: `cargo test NAME`, `--exact` and `--list` follow
   libtest.)
 * **Smaller items** — deeply nested generics on imports (`Option<Result<…>>` does

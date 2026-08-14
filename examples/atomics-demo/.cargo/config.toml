@@ -29,4 +29,4 @@ build-std = ["std", "panic_abort"]
 # via CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER:
 #   runner = "/abs/path/to/wasm_lite/target/debug/runner"
 [target.wasm32-unknown-unknown]
-# runner = ["wasm-lite", "run"]
+# runner = ["wasm_lite", "run"]
