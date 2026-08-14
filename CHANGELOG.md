@@ -30,6 +30,13 @@ All notable changes to this project will be documented in this file.
   reported a spawned thread, and then died inside generated JavaScript with
   `TypeError: Cannot set properties of undefined (setting 'value')` at
   `wl_worker.js` — no symbol named, no flag named, no file of yours mentioned.
+  The check keys on a *shared* memory import, not just on the presence of
+  `__wl_thread_entry`: the core crate keeps that symbol alive whether or not
+  anything can spawn, so an ordinary single-threaded module exports it too.
+  Without a shared memory the glue emits no `__wl_spawn` at all and `spawn`
+  reports `Unsupported`, which is a legitimate build that needs none of these
+  flags.
+
   In a **test** binary it was quieter still: the worker throws before running
   the closure, so nothing ever resolves the join and the test reports as a bare
   30-second timeout — reading as "thread spawning is broken" rather than as a

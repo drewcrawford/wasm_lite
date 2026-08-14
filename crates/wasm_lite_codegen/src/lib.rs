@@ -43,9 +43,11 @@ const THREAD_EXPORTS: [&str; 5] = [
     "__wasm_init_tls",
 ];
 
-/// Rust-side symbol that only exists once `wasm_lite`'s thread spawner is
-/// linked in. Its presence is what makes the missing linker exports an error
-/// rather than a module that simply never spawns.
+/// The Rust-side entry point a spawned thread lands on.
+///
+/// Necessary evidence that a module could spawn, but not sufficient: the core
+/// crate keeps this alive unconditionally, so even a single-threaded module
+/// exports it. It is paired with a shared-memory check below.
 const SPAWN_MARKER: &str = "__wl_thread_entry";
 
 /// Which of the linker's thread symbols a thread-spawning module fails to
@@ -61,6 +63,14 @@ const SPAWN_MARKER: &str = "__wl_thread_entry";
 /// …` with nothing but a `TypeError` about `undefined` to go on. Checking here
 /// turns that into a build error naming the flag.
 pub fn missing_thread_exports(wasm: &[u8]) -> Result<Vec<&'static str>, String> {
+    // A thread needs a shared memory to land in. Without one the glue never
+    // generates `__wl_spawn` at all and `spawn` reports `Unsupported`, so these
+    // symbols are genuinely unnecessary — and every ordinary single-threaded
+    // module would otherwise be faulted, since the core crate keeps
+    // `__wl_thread_entry` alive whether or not anything can spawn.
+    if !wasm::imported_memory(wasm)?.is_some_and(|memory| memory.shared) {
+        return Ok(Vec::new());
+    }
     let names = wasm::exported_names(wasm)?;
     if !names.iter().any(|n| n == SPAWN_MARKER) {
         return Ok(Vec::new());
@@ -178,8 +188,9 @@ mod tests {
         wasm
     }
 
-    /// A module whose only section exports `names` (all as function index 0).
-    fn export_module(names: &[&str]) -> Vec<u8> {
+    /// A module exporting `names` (all as function index 0), optionally
+    /// importing a shared memory the way an `+atomics` build does.
+    fn export_module_with(names: &[&str], shared_memory: bool) -> Vec<u8> {
         let mut body = vec![names.len() as u8];
         for name in names {
             assert!(name.len() < 128);
@@ -189,16 +200,36 @@ mod tests {
         }
         assert!(body.len() < 128);
         let mut wasm = b"\0asm\x01\0\0\0".to_vec();
+        if shared_memory {
+            wasm.extend([
+                0x02, 0x12, // import section, body length 18
+                0x01, // one import
+                0x03, b'e', b'n', b'v', // module "env"
+                0x06, b'm', b'e', b'm', b'o', b'r', b'y', // name "memory"
+                0x02, // kind: memory
+                0x03, 0x11, 0x80, 0x80, 0x01, // has_max|shared, min 17, max 16384
+            ]);
+        }
         wasm.extend([7, body.len() as u8]);
         wasm.extend(body);
         wasm
+    }
+
+    /// A module with no imported memory — an ordinary single-threaded build.
+    fn export_module(names: &[&str]) -> Vec<u8> {
+        export_module_with(names, false)
+    }
+
+    /// A shared-memory (`+atomics`) module, which is the only kind that can spawn.
+    fn spawning_module(names: &[&str]) -> Vec<u8> {
+        export_module_with(names, true)
     }
 
     #[test]
     fn faults_a_spawning_module_missing_stack_pointer() {
         // wasm-ld exports none of these on its own, so a link line that forgot
         // `--export=__stack_pointer` still links and still spawns.
-        let wasm = export_module(&[
+        let wasm = spawning_module(&[
             SPAWN_MARKER,
             "__tls_base",
             "__tls_size",
@@ -209,10 +240,21 @@ mod tests {
     }
 
     #[test]
-    fn a_module_that_cannot_spawn_is_never_faulted() {
+    fn a_module_without_shared_memory_is_never_faulted() {
+        // The core crate keeps `__wl_thread_entry` alive whether or not
+        // anything can spawn, so its presence alone must not fault a module.
+        // Without a shared memory the glue emits no `__wl_spawn` and `spawn`
+        // reports Unsupported — every ordinary single-threaded test binary
+        // looks like this, and faulting them broke all of them.
+        let wasm = export_module(&[SPAWN_MARKER, "main"]);
+        assert!(missing_thread_exports(&wasm).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_shared_memory_module_that_cannot_spawn_is_never_faulted() {
         // Atomics without thread spawning is a legitimate build: it never
         // reaches the worker bootstrap, so it needs none of these exports.
-        let wasm = export_module(&["main"]);
+        let wasm = spawning_module(&["main"]);
         assert!(missing_thread_exports(&wasm).unwrap().is_empty());
     }
 
@@ -220,7 +262,7 @@ mod tests {
     fn a_correctly_linked_spawning_module_passes() {
         let mut names = vec![SPAWN_MARKER];
         names.extend(THREAD_EXPORTS);
-        let wasm = export_module(&names);
+        let wasm = spawning_module(&names);
         assert!(missing_thread_exports(&wasm).unwrap().is_empty());
     }
 
