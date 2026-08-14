@@ -48,3 +48,29 @@ fn generated_items_compile() {
     let _ = imports::fill_optional_bytes as fn(Option<&mut [u8]>);
     let _ = imports::fill_floats as fn(&mut [f32]);
 }
+
+// The dual-target shape this workspace uses everywhere: `#[test]` natively,
+// `#[wasm_lite_test]` on wasm32, with one `#[should_panic]`/`#[ignore]` that
+// has to keep meaning what it says on both. The macro reads these and records
+// them in the harness section rather than consuming them, so the native
+// libtest half below still honours them — that is what these cases pin down.
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[should_panic]
+fn should_panic_survives_to_libtest() {
+    panic!("expected");
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[should_panic(expected = "a specific message")]
+fn should_panic_expected_survives_to_libtest() {
+    panic!("a specific message, and then some");
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[ignore = "proves #[ignore] still reaches libtest"]
+fn ignore_survives_to_libtest() {
+    panic!("an #[ignore]d test was executed");
+}

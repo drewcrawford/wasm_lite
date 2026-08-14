@@ -113,8 +113,8 @@ fn is_test_run(args: &Args) -> bool {
     // headless path re-reads the module and reports the real error.
     std::fs::read(&args.program)
         .map(|module| {
-            wasm_lite_codegen::test_names(&module).is_ok_and(|names| !names.is_empty())
-                || wasm_lite_codegen::bench_names(&module).is_ok_and(|names| !names.is_empty())
+            wasm_lite_codegen::test_decls(&module).is_ok_and(|decls| !decls.is_empty())
+                || wasm_lite_codegen::bench_decls(&module).is_ok_and(|decls| !decls.is_empty())
         })
         .unwrap_or(false)
 }
@@ -187,9 +187,25 @@ struct Args {
     /// `cargo bench`, and omits it under `cargo test` — which is exactly the
     /// distinction we want, so there is nothing to infer.
     bench: bool,
+    /// `--include-ignored`: run `#[ignore]`d cases alongside the rest.
+    include_ignored: bool,
+    /// `--ignored`: run *only* the `#[ignore]`d cases, as libtest does.
+    only_ignored: bool,
 }
 
 impl Args {
+    /// Does an `#[ignore]` flag admit this case, following libtest: ignored
+    /// cases are skipped by default, run alongside the rest under
+    /// `--include-ignored`, and run to the exclusion of the rest under
+    /// `--ignored`.
+    fn admits_ignored(&self, ignored: bool) -> bool {
+        if self.only_ignored {
+            ignored
+        } else {
+            !ignored || self.include_ignored
+        }
+    }
+
     /// Does a test name pass the libtest-style filters?
     fn selects(&self, name: &str) -> bool {
         self.filters.is_empty()
@@ -221,6 +237,8 @@ fn parse_args(argv: Vec<OsString>) -> Result<Args, String> {
     let mut exact = false;
     let mut list = false;
     let mut bench = false;
+    let mut include_ignored = false;
+    let mut only_ignored = false;
     for arg in argv {
         let text = arg.to_string_lossy();
         if text == "--serve" {
@@ -233,6 +251,10 @@ fn parse_args(argv: Vec<OsString>) -> Result<Args, String> {
             list = true;
         } else if text == "--bench" {
             bench = true;
+        } else if text == "--include-ignored" {
+            include_ignored = true;
+        } else if text == "--ignored" {
+            only_ignored = true;
         } else if text.starts_with('-') {
             // Ignore other flags (e.g. test-harness arguments).
         } else if program.is_none() {
@@ -249,6 +271,8 @@ fn parse_args(argv: Vec<OsString>) -> Result<Args, String> {
         exact,
         list,
         bench,
+        include_ignored,
+        only_ignored,
     })
 }
 

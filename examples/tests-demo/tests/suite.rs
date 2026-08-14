@@ -18,4 +18,19 @@ fn explicit_panic() {
     panic!("something went terribly wrong");
 }
 
+// The two ways a `#[should_panic]` test fails. Both matter: without them a
+// `#[should_panic]` that never panics would pass, which is the same
+// can't-fail bug as an unpolled `async fn` body.
+#[wasm_lite_test]
+#[should_panic]
+fn should_panic_but_does_not() {
+    // Reported as "test did not panic as expected".
+}
+
+#[wasm_lite_test]
+#[should_panic(expected = "a specific message")]
+fn should_panic_with_the_wrong_message() {
+    panic!("some other message");
+}
+
 wasm_lite::test_main!();

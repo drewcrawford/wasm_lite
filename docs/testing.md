@@ -231,6 +231,41 @@ mod tests {
 }
 ```
 
+## `#[should_panic]` and `#[ignore]`
+
+Both work, and both are read from the ordinary libtest attributes rather than
+from arguments to `#[wasm_lite_test]`:
+
+```rust
+#[wasm_lite_test]
+#[should_panic(expected = "divide by zero")]
+fn rejects_a_zero_divisor() { divide(1, 0); }
+
+#[wasm_lite_test]
+#[ignore = "needs a fixture we don't ship"]
+fn slow_case() { /* … */ }
+```
+
+Reading them off the function rather than consuming them is what makes the
+`cfg_attr` pattern above keep working: the same `#[should_panic]` is honoured by
+libtest natively and by this runner on wasm32, from one attribute.
+
+`#[ignore]`d cases are skipped and reported as `ignored`, exactly as libtest
+does; `--include-ignored` runs them alongside the rest and `--ignored` runs only
+them (`cargo test -- --include-ignored`).
+
+`#[should_panic]` inverts the verdict rather than catching anything. A wasm32
+panic traps and poisons the instance, but every case gets a fresh page load, so
+the instance is discarded regardless — the runner simply treats "trapped" as the
+pass. The `expected = "…"` form matches against the panic message the hook
+logged, so it needs `set_panic_hook()`, which `#[wasm_lite_test]` already calls
+for you. A `#[should_panic]` test that *doesn't* panic fails, which is the point:
+otherwise it could never fail.
+
+`#[wasm_lite_bench]` accepts `#[ignore]` but rejects `#[should_panic]` at compile
+time — a benchmark that panicked recorded no measurement, so there is no result
+to invert.
+
 ## Run doctests
 
 Doctests run too — rustdoc's doctest binaries are detected and driven headless.

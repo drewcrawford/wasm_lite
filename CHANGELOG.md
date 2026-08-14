@@ -6,6 +6,28 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **`#[wasm_lite_test]` now honours `#[should_panic]` and `#[ignore]`.** It used
+  to emit the annotated function verbatim and call it, so both attributes rode
+  along inert: nothing read them, and rustc does not warn about either on a
+  function that isn't a libtest `#[test]`. `#[should_panic]` therefore produced a
+  false *failure* — a correct test reported as broken — and `#[ignore]` ran the
+  test anyway. Both are the same class of bug as the `async fn` and non-`()`
+  return cases the macro already rejected: a result that does not mean what it
+  says.
+
+  They are read from the ordinary libtest attributes and deliberately left on
+  the function, so the `cfg_attr` pattern this project uses everywhere — a
+  native `#[test]` and a wasm32 `#[wasm_lite_test]` on one function — keeps
+  honouring a single `#[should_panic]` on both targets. Rejecting them at
+  compile time would have broken that.
+
+  `#[ignore]` skips and reports as `ignored`, with `--include-ignored` and
+  `--ignored` following libtest. `#[should_panic]` inverts the verdict rather
+  than catching anything: the module traps and each case gets a fresh page load,
+  so the poisoned instance is discarded either way, and `expected = "…"` matches
+  the message the panic hook logged. `#[wasm_lite_bench]` takes `#[ignore]` but
+  rejects `#[should_panic]` — a benchmark that panicked measured nothing.
+
 - **`wasm_lite_std`'s doctests now run on wasm32 in the gate.** They are the
   only place several threading and async APIs are exercised the way a user
   writes them — `worker_doctest!`, `async_doctest!`, the blocking lock and

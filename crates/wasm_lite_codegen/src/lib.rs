@@ -122,42 +122,92 @@ pub fn uses_wasm_bindgen(wasm: &[u8]) -> bool {
     )
 }
 
-/// Rust paths of the tests declared via `#[wasm_lite_test]`, in order.
+/// What `#[should_panic]` on a test asks the runner to check.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ShouldPanic {
+    /// `#[should_panic]` — any panic passes.
+    Any,
+    /// `#[should_panic(expected = "…")]` — the panic message must contain this.
+    Expected(String),
+}
+
+/// One case from a harness section: its Rust path plus the libtest attributes
+/// that change how its result is judged.
+///
+/// These ride along in the section because the runner, not the module, decides
+/// the verdict — a `#[should_panic]` test traps, and only something outside the
+/// instance can tell "trapped as intended" from "trapped".
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct TestDecl {
+    /// Full Rust path, e.g. `my_crate::tests::works`.
+    pub path: String,
+    /// `#[ignore]`: skipped unless the runner is asked to include ignored cases.
+    pub ignored: bool,
+    /// `#[should_panic]`, if present. Always `None` for benchmarks.
+    pub should_panic: Option<ShouldPanic>,
+}
+
+/// Tests declared via `#[wasm_lite_test]`, in order.
 ///
 /// Empty if the module has no test section (i.e. it isn't a test harness).
 /// A malformed module or non-UTF-8 section is an error, not "no tests" —
 /// silently reporting an empty suite would let a corrupted harness pass.
-pub fn test_names(wasm: &[u8]) -> Result<Vec<String>, String> {
-    let mut names = Vec::new();
-    for bytes in wasm::custom_sections(wasm, "__wasm_lite_tests")? {
-        names.extend(
-            std::str::from_utf8(bytes)
-                .map_err(|e| format!("test-name section is not UTF-8: {e}"))?
-                .lines()
-                .filter(|line| !line.is_empty())
-                .map(str::to_string),
-        );
-    }
-    Ok(names)
+pub fn test_decls(wasm: &[u8]) -> Result<Vec<TestDecl>, String> {
+    decls(wasm, "__wasm_lite_tests", "test")
 }
 
-/// Rust paths of the benchmarks declared via `#[wasm_lite_bench]`, in order.
+/// Benchmarks declared via `#[wasm_lite_bench]`, in order.
 ///
-/// Empty if the module has no benchmark section. As with [`test_names`], a
-/// malformed module or non-UTF-8 section is an error rather than an empty
-/// suite: a corrupted harness must fail, not silently report nothing to run.
-pub fn bench_names(wasm: &[u8]) -> Result<Vec<String>, String> {
-    let mut names = Vec::new();
-    for bytes in wasm::custom_sections(wasm, "__wasm_lite_benches")? {
-        names.extend(
-            std::str::from_utf8(bytes)
-                .map_err(|e| format!("bench-name section is not UTF-8: {e}"))?
-                .lines()
-                .filter(|line| !line.is_empty())
-                .map(str::to_string),
-        );
+/// As with [`test_decls`], a malformed module or non-UTF-8 section is an error
+/// rather than an empty suite: a corrupted harness must fail, not silently
+/// report nothing to run. `should_panic` is never set — a benchmark that
+/// panicked measured nothing, so there is no result to invert.
+pub fn bench_decls(wasm: &[u8]) -> Result<Vec<TestDecl>, String> {
+    decls(wasm, "__wasm_lite_benches", "bench")
+}
+
+/// Parse a harness section: one case per line, `path` followed by tab-separated
+/// attribute fields.
+///
+/// Unknown fields are rejected rather than skipped. The macro that writes this
+/// and the parser that reads it ship together, so a field this build does not
+/// recognise means the two are out of step — which is worth a hard error, not a
+/// silently weaker verdict.
+fn decls(wasm: &[u8], section: &str, kind: &str) -> Result<Vec<TestDecl>, String> {
+    let mut out = Vec::new();
+    for bytes in wasm::custom_sections(wasm, section)? {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|e| format!("{kind}-name section is not UTF-8: {e}"))?;
+        for line in text.lines().filter(|line| !line.is_empty()) {
+            let mut fields = line.split('\t');
+            let path = fields.next().unwrap_or_default();
+            if path.is_empty() {
+                return Err(format!("{kind} section has a record with no name"));
+            }
+            let mut decl = TestDecl {
+                path: path.to_string(),
+                ignored: false,
+                should_panic: None,
+            };
+            for field in fields {
+                if field == "ignore" {
+                    decl.ignored = true;
+                } else if field == "should_panic" {
+                    decl.should_panic = Some(ShouldPanic::Any);
+                } else if let Some(expected) = field.strip_prefix("should_panic=") {
+                    decl.should_panic = Some(ShouldPanic::Expected(expected.to_string()));
+                } else {
+                    return Err(format!(
+                        "unknown attribute {field:?} on {kind} {path:?} — the macro and \
+                         this codegen are out of step"
+                    ));
+                }
+            }
+            out.push(decl);
+        }
     }
-    Ok(names)
+    Ok(out)
 }
 
 /// Read import descriptors from a compiled wasm module.
@@ -243,9 +293,9 @@ mod tests {
     fn a_module_without_shared_memory_is_never_faulted() {
         // The core crate keeps `__wl_thread_entry` alive whether or not
         // anything can spawn, so its presence alone must not fault a module.
-        // Without a shared memory the glue emits no `__wl_spawn` and `spawn`
-        // reports Unsupported — every ordinary single-threaded test binary
-        // looks like this, and faulting them broke all of them.
+        // Without a shared memory the glue emits no `__wl_spawn` at all and
+        // `spawn` reports Unsupported — every ordinary single-threaded test
+        // binary looks like this, and faulting them broke all of them.
         let wasm = export_module(&[SPAWN_MARKER, "main"]);
         assert!(missing_thread_exports(&wasm).unwrap().is_empty());
     }
@@ -274,15 +324,59 @@ mod tests {
     }
 
     #[test]
+    fn reads_ignore_and_should_panic_fields() {
+        let wasm = custom_module(
+            "__wasm_lite_tests",
+            &[b"c::plain\nc::skipped\tignore\nc::boom\tshould_panic\nc::msg\tshould_panic=it broke\n"],
+        );
+        let decls = test_decls(&wasm).unwrap();
+        assert_eq!(decls[0].path, "c::plain");
+        assert!(!decls[0].ignored && decls[0].should_panic.is_none());
+        assert!(decls[1].ignored);
+        assert_eq!(decls[2].should_panic, Some(ShouldPanic::Any));
+        assert_eq!(
+            decls[3].should_panic,
+            Some(ShouldPanic::Expected("it broke".into()))
+        );
+    }
+
+    #[test]
+    fn an_expected_message_may_contain_an_equals_sign() {
+        // `strip_prefix` on the first `=` only; the rest is the message.
+        let wasm = custom_module("__wasm_lite_tests", &[b"c::t\tshould_panic=a = b\n"]);
+        assert_eq!(
+            test_decls(&wasm).unwrap()[0].should_panic,
+            Some(ShouldPanic::Expected("a = b".into()))
+        );
+    }
+
+    #[test]
+    fn an_unknown_attribute_field_is_an_error() {
+        // The macro and this parser ship together, so an unrecognised field
+        // means they are out of step — reporting a weaker verdict would let a
+        // should_panic test silently become an ordinary one.
+        let wasm = custom_module("__wasm_lite_tests", &[b"c::t\tunknown\n"]);
+        assert!(test_decls(&wasm).is_err());
+    }
+
+    #[test]
+    fn a_record_with_no_name_is_an_error() {
+        let wasm = custom_module("__wasm_lite_tests", &[b"\tignore\n"]);
+        assert!(test_decls(&wasm).is_err());
+    }
+
+    #[test]
     fn test_names_include_repeated_custom_sections() {
         let wasm = custom_module(
             "__wasm_lite_tests",
             &[b"crate::first\n", b"crate::second\n"],
         );
-        assert_eq!(
-            test_names(&wasm).unwrap(),
-            ["crate::first", "crate::second"]
-        );
+        let paths: Vec<String> = test_decls(&wasm)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+        assert_eq!(paths, ["crate::first", "crate::second"]);
     }
 
     #[test]

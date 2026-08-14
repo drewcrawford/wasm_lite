@@ -14,6 +14,7 @@ use super::webdriver::Browser;
 use super::{Args, BOOTSTRAP_JS, PROGRAM_JS, PROGRAM_WASM, Route, WL_WORKER_JS, bind, read, serve};
 use std::path::Path;
 use std::time::{Duration, Instant};
+use wasm_lite_codegen::{ShouldPanic, TestDecl};
 
 /// Run a wasm program headless in a browser and return a process exit code.
 ///
@@ -29,28 +30,35 @@ pub fn run(args: &Args) -> i32 {
         }
     };
 
-    let all = module.test_names.clone();
-    let names: Vec<String> = all.iter().filter(|n| args.selects(n)).cloned().collect();
-    let filtered_out = all.len() - names.len();
+    // Name filters and `#[ignore]` are counted differently, as libtest does: a
+    // name that a filter excluded is "filtered out", while an ignored case that
+    // matched is reported as ignored so it stays visible in the summary.
+    let all = module.tests.clone();
+    let tests: Vec<TestDecl> = all
+        .iter()
+        .filter(|t| args.selects(&t.path))
+        .cloned()
+        .collect();
+    let filtered_out = all.len() - tests.len();
 
-    let all_benches = module.bench_names.clone();
+    let all_benches = module.benches.clone();
     let benches: Vec<String> = all_benches
         .iter()
-        .filter(|n| args.selects(n))
-        .cloned()
+        .filter(|b| args.selects(&b.path) && args.admits_ignored(b.ignored))
+        .map(|b| b.path.clone())
         .collect();
     let benches_filtered_out = all_benches.len() - benches.len();
 
     // `cargo test -- --list` / IDE test discovery: report names, don't run.
     if args.list {
-        for name in &names {
-            println!("{name}: test");
+        for test in &tests {
+            println!("{}: test", test.path);
         }
         for name in &benches {
             println!("{name}: bench");
         }
         println!();
-        println!("{} tests, {} benchmarks", names.len(), benches.len());
+        println!("{} tests, {} benchmarks", tests.len(), benches.len());
         return 0;
     }
 
@@ -84,7 +92,7 @@ pub fn run(args: &Args) -> i32 {
     } else if all.is_empty() {
         run_bench_suite(&browser, port, &benches, benches_filtered_out, args.bench)
     } else {
-        run_suite(&browser, port, &names, filtered_out)
+        run_suite(&browser, port, &tests, filtered_out, args)
     };
     match result {
         Ok(code) => code,
@@ -95,11 +103,11 @@ pub fn run(args: &Args) -> i32 {
     }
 }
 
-/// Routes to serve plus the discovered test and benchmark names.
+/// Routes to serve plus the discovered tests and benchmarks.
 struct Prepared {
     routes: Vec<Route>,
-    test_names: Vec<String>,
-    bench_names: Vec<String>,
+    tests: Vec<TestDecl>,
+    benches: Vec<TestDecl>,
 }
 
 fn prepare(program: &Path) -> Result<Prepared, String> {
@@ -123,13 +131,13 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
         return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
     }
     let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
-    let test_names = wasm_lite_codegen::test_names(&module)?;
-    let bench_names = wasm_lite_codegen::bench_names(&module)?;
+    let tests = wasm_lite_codegen::test_decls(&module)?;
+    let benches = wasm_lite_codegen::bench_decls(&module)?;
     // One harness bootstrap covers both shapes, dispatching on the query
     // parameter rather than on which section exists — a target may declare
     // tests and benchmarks in the same file, and picking by section would make
     // one of them unreachable.
-    let body = if test_names.is_empty() && bench_names.is_empty() {
+    let body = if tests.is_empty() && benches.is_empty() {
         MAIN_BOOTSTRAP
     } else {
         HARNESS_BOOTSTRAP
@@ -171,8 +179,8 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
 
     Ok(Prepared {
         routes,
-        test_names,
-        bench_names,
+        tests,
+        benches,
     })
 }
 
@@ -297,13 +305,22 @@ fn surface_worker_panics(browser: &Browser) -> Result<(), String> {
 fn run_suite(
     browser: &Browser,
     port: u16,
-    names: &[String],
+    tests: &[TestDecl],
     filtered_out: usize,
+    args: &Args,
 ) -> Result<i32, String> {
-    println!("\nrunning {} test{}", names.len(), plural(names.len()));
+    println!("\nrunning {} test{}", tests.len(), plural(tests.len()));
     let mut failed = 0;
+    let mut ignored = 0;
 
-    for name in names {
+    for test in tests {
+        let name = &test.path;
+        if !args.admits_ignored(test.ignored) {
+            ignored += 1;
+            println!("test {name} ... ignored");
+            continue;
+        }
+
         let encoded_name = encode_query_component(name);
         browser.goto(&format!("http://127.0.0.1:{port}/?test={encoded_name}"))?;
         // A hung test is that test's failure, not the suite's: report it and
@@ -321,14 +338,42 @@ fn run_suite(
             continue;
         }
 
-        if browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
+        let completed = browser.eval_bool("return globalThis.__wl_done.ok === true;")?;
+        // The panic hook logged the message through console.error, which the
+        // page captured. It is both what we print on failure and what
+        // `should_panic(expected = "…")` matches against.
+        let output = browser.eval_string(CONSOLE_JOIN)?;
+
+        // A `#[should_panic]` test inverts the verdict: the module traps, and
+        // only the runner can tell "trapped as intended" from "trapped". Each
+        // test gets a fresh page, so the poisoned instance is discarded anyway.
+        if let Some(should_panic) = &test.should_panic {
+            if completed {
+                failed += 1;
+                println!("test {name} ... FAILED");
+                println!("    note: test did not panic as expected");
+            } else if let ShouldPanic::Expected(expected) = should_panic
+                && !output.contains(expected.as_str())
+            {
+                failed += 1;
+                println!("test {name} ... FAILED");
+                println!("    note: panic did not contain the expected message");
+                println!("    expected: {expected}");
+                for line in output.lines() {
+                    println!("    panicked: {line}");
+                }
+            } else {
+                println!("test {name} ... ok");
+            }
+            continue;
+        }
+
+        if completed {
             surface_worker_panics(browser)?;
             println!("test {name} ... ok");
         } else {
             failed += 1;
             println!("test {name} ... FAILED");
-            // The panic hook logged the message via console.error.
-            let output = browser.eval_string(CONSOLE_JOIN)?;
             for line in output.lines() {
                 println!("    {line}");
             }
@@ -341,14 +386,16 @@ fn run_suite(
         }
     }
 
-    let passed = names.len() - failed;
+    let passed = tests.len() - failed - ignored;
     println!();
     if failed == 0 {
-        println!("test result: ok. {passed} passed; 0 failed; {filtered_out} filtered out");
+        println!(
+            "test result: ok. {passed} passed; 0 failed; {ignored} ignored; {filtered_out} filtered out"
+        );
         Ok(0)
     } else {
         println!(
-            "test result: FAILED. {passed} passed; {failed} failed; {filtered_out} filtered out"
+            "test result: FAILED. {passed} passed; {failed} failed; {ignored} ignored; {filtered_out} filtered out"
         );
         Ok(1)
     }

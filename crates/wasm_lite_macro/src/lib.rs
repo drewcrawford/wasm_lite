@@ -11,7 +11,7 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
-use syn::{Error, Ident, ItemFn, ReturnType, Token, Type, parse_macro_input};
+use syn::{Attribute, Error, Ident, ItemFn, Meta, ReturnType, Token, Type, parse_macro_input};
 
 mod export;
 mod import;
@@ -78,6 +78,12 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
 
+    let verdict = match Verdict::read(&func.attrs) {
+        Ok(verdict) => verdict,
+        Err(err) => return err.to_compile_error().into(),
+    };
+    let fields = verdict.fields();
+
     let name = &func.sig.ident;
     let entry = format_ident!("__wl_test_{}", name);
 
@@ -122,11 +128,11 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             #entry_body
         }
         const _: () = {
-            const __WL_TEST_NAME_LEN: usize = concat!(module_path!(), "::", stringify!(#name), "\n").len();
+            const __WL_TEST_NAME_LEN: usize = concat!(module_path!(), "::", stringify!(#name), #fields, "\n").len();
             #[used]
             #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wasm_lite_tests"))]
             static __WL_TEST_NAME: [u8; __WL_TEST_NAME_LEN] = {
-                let bytes = concat!(module_path!(), "::", stringify!(#name), "\n").as_bytes();
+                let bytes = concat!(module_path!(), "::", stringify!(#name), #fields, "\n").as_bytes();
                 let mut out = [0u8; __WL_TEST_NAME_LEN];
                 let mut i = 0;
                 while i < __WL_TEST_NAME_LEN {
@@ -199,6 +205,25 @@ pub fn wasm_lite_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
 
+    let verdict = match Verdict::read(&func.attrs) {
+        Ok(verdict) => verdict,
+        Err(err) => return err.to_compile_error().into(),
+    };
+    // `#[ignore]` means the same thing for a benchmark as for a test, but
+    // `#[should_panic]` does not: a benchmark that panicked produced no
+    // measurement, so there is no result to invert into a pass.
+    if verdict.should_panic.is_some() {
+        return Error::new_spanned(
+            &func.sig.ident,
+            "#[wasm_lite_bench] does not support `#[should_panic]`: a benchmark \
+             that panics has recorded no measurement, so there is nothing to \
+             report. Use #[wasm_lite_test] to assert that something panics.",
+        )
+        .to_compile_error()
+        .into();
+    }
+    let fields = verdict.fields();
+
     let name = &func.sig.ident;
     let entry = format_ident!("__wl_bench_{}", name);
 
@@ -235,11 +260,11 @@ pub fn wasm_lite_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
             #body
         }
         const _: () = {
-            const __WL_BENCH_NAME_LEN: usize = concat!(module_path!(), "::", stringify!(#name), "\n").len();
+            const __WL_BENCH_NAME_LEN: usize = concat!(module_path!(), "::", stringify!(#name), #fields, "\n").len();
             #[used]
             #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wasm_lite_benches"))]
             static __WL_BENCH_NAME: [u8; __WL_BENCH_NAME_LEN] = {
-                let bytes = concat!(module_path!(), "::", stringify!(#name), "\n").as_bytes();
+                let bytes = concat!(module_path!(), "::", stringify!(#name), #fields, "\n").as_bytes();
                 let mut out = [0u8; __WL_BENCH_NAME_LEN];
                 let mut i = 0;
                 while i < __WL_BENCH_NAME_LEN {
@@ -278,6 +303,112 @@ impl Parse for BenchArgs {
         }
         Ok(args)
     }
+}
+
+/// The libtest attributes that change how a case's result is judged.
+///
+/// Read off the function rather than taken as macro arguments, and deliberately
+/// *left on* the emitted function. The usual shape in this workspace is
+///
+/// ```ignore
+/// #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+/// #[cfg_attr(not(target_arch = "wasm32"), test)]
+/// #[should_panic(expected = "boom")]
+/// ```
+///
+/// where the same `#[should_panic]` has to keep meaning what it says under
+/// libtest on the host. Consuming it here would break the native half; ignoring
+/// it — which is what this macro used to do — made the wasm32 half report a
+/// correct test as failing.
+#[derive(Default)]
+struct Verdict {
+    ignored: bool,
+    /// `None` absent; `Some(None)` bare; `Some(Some(msg))` an expected message.
+    should_panic: Option<Option<String>>,
+}
+
+impl Verdict {
+    fn read(attrs: &[Attribute]) -> syn::Result<Verdict> {
+        let mut verdict = Verdict::default();
+        for attr in attrs {
+            if attr.path().is_ident("ignore") {
+                verdict.ignored = true;
+            } else if attr.path().is_ident("should_panic") {
+                verdict.should_panic = Some(expected_message(attr)?);
+            }
+        }
+        Ok(verdict)
+    }
+
+    /// The trailing tab-separated fields for this case's harness-section record.
+    fn fields(&self) -> String {
+        let mut fields = String::new();
+        if self.ignored {
+            fields.push_str("\tignore");
+        }
+        match &self.should_panic {
+            None => {}
+            Some(None) => fields.push_str("\tshould_panic"),
+            Some(Some(message)) => {
+                fields.push_str("\tshould_panic=");
+                fields.push_str(message);
+            }
+        }
+        fields
+    }
+}
+
+/// The `expected = "…"` of a `#[should_panic]`, if it carries one.
+///
+/// Accepts both spellings libtest does: `#[should_panic(expected = "…")]` and
+/// the older `#[should_panic = "…"]`.
+fn expected_message(attr: &Attribute) -> syn::Result<Option<String>> {
+    let literal = match &attr.meta {
+        Meta::Path(_) => return Ok(None),
+        Meta::NameValue(nv) => match &nv.value {
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) => s.value(),
+            other => {
+                return Err(Error::new_spanned(
+                    other,
+                    "#[should_panic = ...] expects a string literal",
+                ));
+            }
+        },
+        Meta::List(_) => {
+            let nv: syn::MetaNameValue = attr.parse_args()?;
+            if !nv.path.is_ident("expected") {
+                return Err(Error::new_spanned(
+                    &nv.path,
+                    "#[should_panic(...)] only accepts `expected = \"...\"`",
+                ));
+            }
+            match &nv.value {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) => s.value(),
+                other => {
+                    return Err(Error::new_spanned(
+                        other,
+                        "#[should_panic(expected = ...)] expects a string literal",
+                    ));
+                }
+            }
+        }
+    };
+    // The harness section is one record per line, fields split on tabs, so a
+    // message carrying either would be read back as a different record.
+    if literal.contains('\t') || literal.contains('\n') {
+        return Err(Error::new_spanned(
+            attr,
+            "#[should_panic] expected message must not contain a tab or newline: \
+             it is recorded in a line-oriented custom wasm section",
+        ));
+    }
+    Ok(Some(literal))
 }
 
 /// Arguments to `#[wasm_lite_test]`: nothing (main thread) or `(worker)`.
