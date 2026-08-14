@@ -116,9 +116,13 @@ casualties are arbitrary — tests with no threading in them at all — and that
 they pass under `--test-threads=1`.
 
 So the runner admits only so many browsers at once, waiting for a slot rather
-than piling on. The default is free memory (`MemAvailable`) divided by about a
-gigabyte per browser, clamped to the core count; `WASM_LITE_MAX_BROWSERS`
-overrides it outright. Slots are files in a temp directory, so the limit holds
+than piling on. The default is free memory (`MemAvailable`), less a
+reserve for everything that is not a browser, divided by a generous per-browser
+estimate and clamped to the core count; `WASM_LITE_MAX_BROWSERS` overrides it
+outright. Both numbers err on the cautious side, and the reserve exists because
+the load competing for memory is usually a build that grows *after* the reading
+is taken. On a memory-tight host this legitimately resolves to one browser —
+that is the mechanism working, not failing. Slots are files in a temp directory, so the limit holds
 across the separate runner *processes* rustdoc spawns — a lock inside one
 process would not see the others. A slot whose holder was killed is reclaimed
 by the next waiter.

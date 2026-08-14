@@ -125,7 +125,16 @@ All notable changes to this project will be documented in this file.
   under `--test-threads=1`. The runner now admits a bounded number of browsers
   and makes the rest wait: free memory divided by roughly a gigabyte each,
   clamped to the core count, overridable with `WASM_LITE_MAX_BROWSERS`. The
-  limit lives in slot files rather than in process memory, because rustdoc
+  The per-browser estimate is deliberately generous (1.5 GiB) and a further
+  1.5 GiB is held back for everything that is not a browser: the competing load
+  is usually a build, and `cargo` and `rustc` can take gigabytes *after* the
+  free-memory reading is taken. The limit is also re-read on every attempt
+  rather than sampled once, because a runner can wait minutes for a slot and the
+  memory that justified four browsers on arrival may justify one by the time it
+  is served. An estimate that admits one browser too many costs a confusing
+  failure; one too few costs a little time.
+
+  The limit lives in slot files rather than in process memory, because rustdoc
   spawns a separate runner *process* per doctest and an in-process lock would
   not see the others; a slot whose holder was killed is reclaimed by the next
   waiter.

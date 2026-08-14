@@ -515,7 +515,20 @@ fn free_port() -> Result<u16, String> {
 /// its own browser, and a browser that gets its content processes OOM-killed
 /// reports as `no such window: Browsing context has been discarded` rather than
 /// as memory pressure, so erring small here buys nothing.
-const MIB_PER_BROWSER: u64 = 1024;
+///
+/// Generous on purpose. A headless Firefox is a parent plus content processes
+/// plus a driver, and the number that matters is the peak while a page runs, not
+/// the resident size at startup. An estimate that admits one browser too many
+/// costs a confusing failure; one that admits one too few costs a little time.
+const MIB_PER_BROWSER: u64 = 1536;
+
+/// Memory to leave for everything that is not a browser.
+///
+/// The cap is derived from free memory at the moment a slot is taken, but the
+/// competing load is usually a build: `cargo` and `rustc` can take gigabytes
+/// *after* the reading is taken. Holding this much back keeps a full-tilt build
+/// alongside the browsers from pushing the host into swap.
+const MIB_RESERVED: u64 = 1536;
 
 /// Cap when the host's free memory cannot be read: enough to keep a laptop
 /// busy, low enough not to melt a small CI box.
@@ -538,7 +551,10 @@ fn max_browsers() -> usize {
     }
     let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
     match available_mib() {
-        Some(mib) => ((mib / MIB_PER_BROWSER) as usize).clamp(1, cpus),
+        Some(mib) => {
+            let usable = mib.saturating_sub(MIB_RESERVED);
+            ((usable / MIB_PER_BROWSER) as usize).clamp(1, cpus)
+        }
         None => DEFAULT_MAX_BROWSERS.min(cpus),
     }
 }
@@ -576,22 +592,28 @@ impl Admission {
     /// browser to an already-thrashing host.
     fn acquire() -> Admission {
         let dir = std::env::temp_dir().join(format!("wasm_lite_browsers_{}", user_suffix()));
-        Admission::acquire_in(&dir, max_browsers())
+        Admission::acquire_in(&dir, || max_browsers())
     }
 
     /// [`Admission::acquire`] against an explicit directory and limit.
-    fn acquire_in(dir: &std::path::Path, limit: usize) -> Admission {
+    ///
+    /// `limit` is re-evaluated on every attempt rather than sampled once. A
+    /// runner can wait minutes for a slot, and what it is usually waiting behind
+    /// is a build; the free memory that justified a limit of four when it
+    /// arrived may well justify two by the time it is served.
+    fn acquire_in(dir: &std::path::Path, limit: impl Fn() -> usize) -> Admission {
         if fs::create_dir_all(dir).is_err() {
             return Admission(None); // no temp dir to coordinate through: proceed uncapped
         }
         let mut announced = false;
         loop {
-            if let Some(admission) = Admission::try_acquire_in(dir, limit) {
+            let now = limit();
+            if let Some(admission) = Admission::try_acquire_in(dir, now) {
                 return admission;
             }
             if !announced {
                 announced = true;
-                eprintln!("wasm_lite: waiting for a browser slot ({limit} in use)");
+                eprintln!("wasm_lite: waiting for a browser slot ({now} in use)");
             }
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -827,8 +849,8 @@ mod tests {
     #[test]
     fn admission_caps_concurrent_browsers() {
         let dir = scratch("cap");
-        let _first = Admission::acquire_in(&dir, 2);
-        let _second = Admission::acquire_in(&dir, 2);
+        let _first = Admission::acquire_in(&dir, || 2);
+        let _second = Admission::acquire_in(&dir, || 2);
         // Both slots are taken; a third caller must wait rather than launch.
         assert!(Admission::try_acquire_in(&dir, 2).is_none());
         let _ = fs::remove_dir_all(&dir);
@@ -837,7 +859,7 @@ mod tests {
     #[test]
     fn dropping_an_admission_frees_its_slot() {
         let dir = scratch("free");
-        let first = Admission::acquire_in(&dir, 1);
+        let first = Admission::acquire_in(&dir, || 1);
         assert!(Admission::try_acquire_in(&dir, 1).is_none());
         drop(first);
         assert!(Admission::try_acquire_in(&dir, 1).is_some());
