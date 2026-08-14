@@ -84,7 +84,16 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **A worker that failed to start hung until the timeout.** The runner detected
+- **A failed interop build leaked its scratch directory.** `build_interop`
+  removed the wasm-bindgen CLI's output directory at the end of the successful
+  path, but the CLI invocation and its error returns sit between creating that
+  directory and reading the output — so a missing CLI, a version mismatch, or a
+  module the CLI rejects each left one behind. The directories are empty, so the
+  cost is entries rather than disk, but they accumulated unboundedly and did so
+  precisely when the tool was already failing. Cleanup is now a destructor, which
+  covers every exit path. The name also gained a per-call counter: the pid alone
+  meant two `build_interop` calls in one process would share a path and delete
+  each other's in-progress output. The runner detected
   the failure and logged it, then went on waiting for a verdict that could never
   arrive, and finally reported "timed out after 30s … raise
   `WASM_LITE_TIMEOUT_SECS` if it just needs longer" — advice that could not

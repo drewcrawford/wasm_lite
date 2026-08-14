@@ -7,8 +7,9 @@
 //! root (the dev runner) and as flat files in one directory (deployment).
 
 use crate::{descriptors_from_wasm, generate_glue};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The assembled JS + wasm pieces of an interop bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -102,23 +103,55 @@ pub fn interop_harness_loader(wasm: &str, wl_glue: &str, wb_glue: &str) -> Strin
         .replace("\"./wb_glue.js\"", &js_string(wb_glue))
 }
 
+/// A scratch directory for the wasm-bindgen CLI's output, removed on drop.
+///
+/// Cleanup has to be a destructor rather than a line at the end of the happy
+/// path: most of what can go wrong here goes wrong *between* creating the
+/// directory and reading the output — the CLI is missing, or version-mismatched,
+/// or rejects the module — and each of those returns early. A tool leaking
+/// scratch directories exactly when it starts failing is a poor trade.
+struct TempDir(PathBuf);
+
+/// Distinguishes concurrent calls within one process. The pid alone does not:
+/// two `build_interop` calls in the same process would land on the same path and
+/// delete each other's in-progress output.
+static NEXT_INTEROP_DIR: AtomicU64 = AtomicU64::new(0);
+
+impl TempDir {
+    fn new() -> Result<TempDir, String> {
+        let unique = NEXT_INTEROP_DIR.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "wasm_lite_bindgen_out_{}_{unique}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).map_err(|e| format!("creating temp dir: {e}"))?;
+        Ok(TempDir(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Run the wasm-bindgen CLI on `input`, then assemble the interop bundle.
 ///
 /// Requires `wasm-bindgen` on `PATH`, version-matched to the crate's
 /// `wasm-bindgen` dependency.
 pub fn build_interop(input: &Path) -> Result<InteropBundle, String> {
-    // Per-process dir: a fixed name would let two concurrent builds (parallel
-    // cargo runners) delete each other's in-progress output.
-    let out_dir =
-        std::env::temp_dir().join(format!("wasm_lite_bindgen_out_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&out_dir);
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("creating temp dir: {e}"))?;
+    let out_dir = TempDir::new()?;
 
     let status = Command::new("wasm-bindgen")
         .arg(input)
         .args(["--target", "web", "--out-name", "app"])
         .arg("--out-dir")
-        .arg(&out_dir)
+        .arg(out_dir.path())
         .status()
         .map_err(|e| {
             format!(
@@ -130,11 +163,10 @@ pub fn build_interop(input: &Path) -> Result<InteropBundle, String> {
         return Err("wasm-bindgen CLI failed to process the module".to_string());
     }
 
-    let wasm = std::fs::read(out_dir.join("app_bg.wasm"))
+    let wasm = std::fs::read(out_dir.path().join("app_bg.wasm"))
         .map_err(|e| format!("reading wasm-bindgen output: {e}"))?;
-    let wb_js = std::fs::read_to_string(out_dir.join("app.js"))
+    let wb_js = std::fs::read_to_string(out_dir.path().join("app.js"))
         .map_err(|e| format!("reading wasm-bindgen glue: {e}"))?;
-    let _ = std::fs::remove_dir_all(&out_dir);
 
     // Our descriptors survive the CLI in the finalized module.
     let descriptors = descriptors_from_wasm(&wasm)?;
@@ -211,5 +243,30 @@ mod tests {
         assert!(loader.contains("fetch(\"./app%23v1.js.wasm\")"));
         assert!(loader.contains("from \"./app%23v1.js.wl.js\""));
         assert!(loader.contains("from \"./app%23v1.js.wb.js\""));
+    }
+
+    #[test]
+    fn a_scratch_directory_is_removed_even_when_the_build_fails() {
+        // The leak this pins was on the *error* path: the CLI missing, or
+        // version-mismatched, or rejecting the module all return between
+        // creating the directory and reading the output. Ten empty directories
+        // accumulated in one afternoon of reproducing a wasm-bindgen failure.
+        let path = {
+            let dir = TempDir::new().unwrap();
+            let path = dir.path().to_path_buf();
+            assert!(path.is_dir());
+            path
+        };
+        assert!(!path.exists(), "scratch directory outlived its guard");
+    }
+
+    #[test]
+    fn concurrent_scratch_directories_do_not_collide() {
+        // Two live guards in one process must not share a path, or each would
+        // delete the other's in-progress output.
+        let first = TempDir::new().unwrap();
+        let second = TempDir::new().unwrap();
+        assert_ne!(first.path(), second.path());
+        assert!(first.path().is_dir() && second.path().is_dir());
     }
 }
