@@ -167,14 +167,23 @@ pub enum AbiArg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SliceElem {
+    /// `i8` — `Int8Array`.
     I8,
+    /// `i16` — `Int16Array`.
     I16,
+    /// `u16` — `Uint16Array`.
     U16,
+    /// `i32`/`isize` — `Int32Array`.
     I32,
+    /// `u32`/`usize` — `Uint32Array`.
     U32,
+    /// `i64` — `BigInt64Array`.
     I64,
+    /// `u64` — `BigUint64Array`.
     U64,
+    /// `f32` — `Float32Array`.
     F32,
+    /// `f64` — `Float64Array`.
     F64,
 }
 

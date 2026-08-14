@@ -21,7 +21,7 @@ mod generate;
 mod interop;
 mod wasm;
 
-pub use descriptor::{AbiArg, Descriptor, Kind, Ret};
+pub use descriptor::{AbiArg, Descriptor, Kind, Ret, SliceElem};
 pub use exports::{Export, ExportArg, ExportRet, Payload, exports_from_wasm};
 pub use generate::{generate_glue, generate_glue_with_worker, generate_worker};
 pub use interop::{InteropBundle, build_interop, interop_loader, patch_wasm_bindgen_glue};
