@@ -223,10 +223,10 @@ their directory names point the wrong way:
 
 | workspace | you write | implemented by | backend | exports |
 |---|---|---|---|---|
-| `shims/` | `wasm_lite` APIs | real wasm-bindgen | **wasm-bindgen** | five |
-| `shims_wasm_bindgen/` | `wasm-bindgen` APIs | real wasm_lite | **wasm_lite** | three |
+| `backend-wasm-bindgen/` | `wasm_lite` APIs | real wasm-bindgen | **wasm-bindgen** | five |
+| `backend-wasm-lite/` | `wasm-bindgen` APIs | real wasm_lite | **wasm_lite** | three |
 
-So "we use the shim" settles nothing — `shims_wasm_bindgen/` is the one where
+So "we use the shim" settles nothing — `backend-wasm-lite/` is the one where
 wasm-bindgen is *not* the backend. "We are on the wasm-bindgen backend" settles
 it, and is the same question `cargo tree -i wasm-bindgen` answers.
 

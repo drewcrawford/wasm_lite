@@ -62,8 +62,8 @@ into JS (`Closure`, zero- and one-argument signatures), awaiting JS promises
 (`JsFuture`), and the `fetch` API built on both. The `wasm-bindgen` feature
 supports incremental migration in the direction where `wasm_lite` is the final
 codegen step. Bounded package-substitution shims cover both host directions too:
-[`shims/`](./shims) runs a wasm_lite-authored leaf on the **wasm-bindgen backend**,
-while [`shims_wasm_bindgen/`](./shims_wasm_bindgen) is the **wasm_lite backend** for
+[`backend-wasm-bindgen/`](./backend-wasm-bindgen) runs a wasm_lite-authored leaf on the **wasm-bindgen backend**,
+while [`backend-wasm-lite/`](./backend-wasm-lite) is the **wasm_lite backend** for
 wasm-bindgen code, lowering the supported
 wasm-bindgen ecosystem surface onto wasm_lite.
 
@@ -278,7 +278,7 @@ The core crate also exposes these modules:
 | [Threads, async & shared memory](./docs/threads-and-async.md) | `+atomics` builds, `thread::spawn`, `wasm_lite_std` (`Mutex`/`RwLock`/`Condvar`/`mpsc`, sync + async), the `spawn_local` executor, panic surfacing, the `std::time` veneer |
 | [wasm-bindgen interop](./docs/interop.md) | the `wasm-bindgen` feature and `.to_wasm_bindgen()` / `.to_wasm_lite()` conversions |
 | [Crate layering & roadmap](./docs/roadmap.md) | planned `wasm_lite_js`/`wasm_lite_web` split and known gaps |
-| [**Running wgpu / unmodified wasm-bindgen crates**](./shims_wasm_bindgen/README.md) | the **fake-wasm-bindgen shim**: substitute it graph-wide and unmodified `js-sys`/`web-sys`/`wgpu` compile on wasm_lite |
+| [**Running wgpu / unmodified wasm-bindgen crates**](./backend-wasm-lite/README.md) | the **fake-wasm-bindgen shim**: substitute it graph-wide and unmodified `js-sys`/`web-sys`/`wgpu` compile on wasm_lite |
 | [Design notes](./docs/design-notes.md) | the coexistence options and which have shipped; strategy for wasm_lite and wasm-bindgen in one binary |
 | [wasm-bindgen thread-ownership census](./docs/wasm-thread-ownership-census.md) | db-dump data: about 1% of the wasm-bindgen ecosystem owns wasm threads; backs the interop strategy |
 | [Migration guide](./MIGRATION.md) | moving from wasm-bindgen: pros/cons, rosetta stone, gotchas |
@@ -292,8 +292,8 @@ The core crate also exposes these modules:
 | `crates/wasm_lite_codegen` | host-side: read binding/test/benchmark sections; generate export wrappers, worker glue, and interop bundles |
 | `crates/wasm_lite_cli` | the `wasm_lite` binary: `build` writes glue plus bundle-specific worker and wasm-bindgen interop artifacts; `run` serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
 | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync + async); atomics builds use workers while stable non-atomic wasm uses a local event-loop executor |
-| `shims/` | separate workspace: the **wasm-bindgen backend** — substitutes named `wasm_lite` / `wasm_lite_std` but implemented on real wasm-bindgen, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
-| `shims_wasm_bindgen/` | separate workspace: wasm-bindgen's API lowered onto wasm_lite, so unmodified `js-sys`/`web-sys`/`wgpu` compile here; substituted via `[patch.crates-io]` and never published |
+| `backend-wasm-bindgen/` | separate workspace: the **wasm-bindgen backend** — substitutes named `wasm_lite` / `wasm_lite_std` but implemented on real wasm-bindgen, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
+| `backend-wasm-lite/` | separate workspace: wasm-bindgen's API lowered onto wasm_lite, so unmodified `js-sys`/`web-sys`/`wgpu` compile here; substituted via `[patch.crates-io]` and never published |
 
 ## Examples
 

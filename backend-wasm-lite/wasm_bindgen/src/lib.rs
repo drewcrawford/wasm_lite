@@ -7,7 +7,7 @@
 //!
 //! ```toml
 //! [patch.crates-io]
-//! wasm-bindgen = { path = ".../shims_wasm_bindgen/wasm_bindgen" }
+//! wasm-bindgen = { path = ".../backend-wasm-lite/wasm_bindgen" }
 //! ```
 //!
 //! and because `js-sys`, `web-sys`, `wasm-bindgen-futures` and `wgpu` are all
@@ -15,7 +15,7 @@
 //! compile on wasm_lite and emit wasm_lite descriptors. One `wasm_lite` codegen
 //! pass covers the whole module, with no second binding system to subordinate.
 //!
-//! It is the mirror of `shims/`, which lowers wasm_lite's API onto
+//! It is the mirror of `backend-wasm-bindgen/`, which lowers wasm_lite's API onto
 //! wasm-bindgen for an app that stays on wasm-bindgen.
 //!
 //! # Status
@@ -25,7 +25,7 @@
 //! `web-sys` 0.3.85; all 135 web-sys WebGPU features compile; and wgpu 28
 //! constructs an `Instance` and reaches `navigator.gpu` through
 //! `request_adapter`. See the workspace
-//! [coverage table](https://github.com/drewcrawford/wasm_lite/blob/main/shims_wasm_bindgen/README.md#what-works)
+//! [coverage table](https://github.com/drewcrawford/wasm_lite/blob/main/backend-wasm-lite/README.md#what-works)
 //! for the version-pinning and test details.
 //!
 //! [`macro@wasm_bindgen`] translates the attribute grammar those crates use,

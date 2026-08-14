@@ -40,7 +40,7 @@ There are three options for a wasm_lite-migrated leaf:
   `wasm-bindgen` feature). The app's own `#[wasm_bindgen]` code keeps working
   unchanged — only the build command changes, not the source. Caveat: wasm-pack
   specifics (`--target bundler|nodejs`, `.d.ts`, JS snippets) don't carry over yet.
-* **Switch to the wasm-bindgen backend** with the substitutes in [`shims/`](../shims/) —
+* **Switch to the wasm-bindgen backend** with the substitutes in [`backend-wasm-bindgen/`](../backend-wasm-bindgen/) —
   your code keeps calling wasm_lite APIs, but real wasm-bindgen implements them.
   It lowers a useful subset of `import!`, `#[export]`, `js_class!`,
   `#[wasm_lite_test]`, and `wasm_lite_std` onto wasm-bindgen, so the leaf source
@@ -56,7 +56,7 @@ There are three options for a wasm_lite-migrated leaf:
 
 Note that "keep the leaf pure Rust" does **not** sidestep this: `wasm_lite_std`
 threads still emit imports (`__wl_spawn`, atomics runtime) that need the codegen
-pass in a real wasm_lite build. The `shims/wasm_lite_std` substitute routes that
+pass in a real wasm_lite build. The `backend-wasm-bindgen/wasm_lite_std` substitute routes that
 public surface through `wasm_safe_thread` instead. A leaf with no
 `import!`/`#[export]`/threads needs no wasm_lite at all.
 

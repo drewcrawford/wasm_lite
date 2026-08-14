@@ -1,4 +1,4 @@
-# `shims_wasm_bindgen` — wasm-bindgen's API, on wasm_lite
+# `backend-wasm-lite` — wasm-bindgen's API, on wasm_lite
 
 The **fake-wasm-bindgen shim** from [`docs/design-notes.md`](../docs/design-notes.md):
 rather than reconciling two binding systems, or rewriting `wgpu` by hand,
@@ -7,7 +7,7 @@ and the *unmodified* upstream crates — `js-sys`, `web-sys`, `wgpu` — compile
 wasm_lite and emit wasm_lite descriptors, so one `wasm_lite` codegen pass covers
 the whole module.
 
-The mirror of [`shims/`](../shims), which goes the other way: wasm_lite's API
+The mirror of [`backend-wasm-bindgen/`](../backend-wasm-bindgen), which goes the other way: wasm_lite's API
 lowered onto wasm-bindgen, for an app that stays on wasm-bindgen.
 
 ## How it sits in the graph
@@ -30,7 +30,7 @@ from crates.io and never learn otherwise.
                            ▼
    ┌──────────────────────────────────────────────────────┐
    │  package `wasm-bindgen` v0.2.108   ←── THE SHIM      │
-   │  shims_wasm_bindgen/wasm_bindgen                     │
+   │  backend-wasm-lite/wasm_bindgen                     │
    │  JsValue · JsCast · #[wasm_bindgen] · Closure        │
    └───────────────────────┬──────────────────────────────┘
                            ▼
@@ -56,9 +56,9 @@ you are not going to rewrite.
 
 ```toml
 [patch.crates-io]
-wasm-bindgen = { path = ".../shims_wasm_bindgen/wasm_bindgen" }
+wasm-bindgen = { path = ".../backend-wasm-lite/wasm_bindgen" }
 # Only if your suites use `#[wasm_bindgen_test]`:
-wasm-bindgen-test = { path = ".../shims_wasm_bindgen/wasm_bindgen_test" }
+wasm-bindgen-test = { path = ".../backend-wasm-lite/wasm_bindgen_test" }
 ```
 
 Two things routinely go wrong here:

@@ -71,9 +71,9 @@
 //! JS promises ([`JsFuture`]), and the [`fetch`] API built on both. The
 //! `wasm-bindgen` feature supports incremental migration in the direction where
 //! `wasm_lite` is the final codegen step. Bounded package-substitution shims
-//! cover both host directions too: [`shims/`](https://github.com/drewcrawford/wasm_lite/tree/main/shims)
+//! cover both host directions too: [`backend-wasm-bindgen/`](https://github.com/drewcrawford/wasm_lite/tree/main/backend-wasm-bindgen)
 //! lowers a wasm_lite-authored leaf onto a wasm-bindgen host, while
-//! [`shims_wasm_bindgen/`](https://github.com/drewcrawford/wasm_lite/tree/main/shims_wasm_bindgen)
+//! [`backend-wasm-lite/`](https://github.com/drewcrawford/wasm_lite/tree/main/backend-wasm-lite)
 //! lowers the supported wasm-bindgen ecosystem surface onto wasm_lite.
 //!
 //! Prefer `wasm-bindgen` when you need its mature ecosystem surface today.
@@ -294,7 +294,7 @@
 //! | [Threads, async & shared memory](https://github.com/drewcrawford/wasm_lite/blob/main/docs/threads-and-async.md) | `+atomics` builds, [`thread::spawn`], [`wasm_lite_std`] (`Mutex`/`RwLock`/`Condvar`/`mpsc`, sync + async), the `spawn_local` executor, panic surfacing, the `std::time` veneer |
 //! | [wasm-bindgen interop](https://github.com/drewcrawford/wasm_lite/blob/main/docs/interop.md) | the `wasm-bindgen` feature and `.to_wasm_bindgen()` / `.to_wasm_lite()` conversions |
 //! | [Crate layering & roadmap](https://github.com/drewcrawford/wasm_lite/blob/main/docs/roadmap.md) | planned `wasm_lite_js`/`wasm_lite_web` split and known gaps |
-//! | [**Running wgpu / unmodified wasm-bindgen crates**](https://github.com/drewcrawford/wasm_lite/blob/main/shims_wasm_bindgen/README.md) | the **fake-wasm-bindgen shim**: substitute it graph-wide and unmodified `js-sys`/`web-sys`/`wgpu` compile on wasm_lite |
+//! | [**Running wgpu / unmodified wasm-bindgen crates**](https://github.com/drewcrawford/wasm_lite/blob/main/backend-wasm-lite/README.md) | the **fake-wasm-bindgen shim**: substitute it graph-wide and unmodified `js-sys`/`web-sys`/`wgpu` compile on wasm_lite |
 //! | [Design notes](https://github.com/drewcrawford/wasm_lite/blob/main/docs/design-notes.md) | the coexistence options and which have shipped; strategy for wasm_lite and wasm-bindgen in one binary |
 //! | [wasm-bindgen thread-ownership census](https://github.com/drewcrawford/wasm_lite/blob/main/docs/wasm-thread-ownership-census.md) | db-dump data: about 1% of the wasm-bindgen ecosystem owns wasm threads; backs the interop strategy |
 //! | [Migration guide](https://github.com/drewcrawford/wasm_lite/blob/main/MIGRATION.md) | moving from wasm-bindgen: pros/cons, rosetta stone, gotchas |
@@ -308,8 +308,8 @@
 //! | `crates/wasm_lite_codegen` | host-side: read binding/test/benchmark sections; generate export wrappers, worker glue, and interop bundles |
 //! | `crates/wasm_lite_cli` | the `wasm_lite` binary: `build` writes glue plus bundle-specific worker and wasm-bindgen interop artifacts; `run` serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
 //! | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync + async); atomics builds use workers while stable non-atomic wasm uses a local event-loop executor |
-//! | `shims/` | separate workspace: partial wasm-bindgen-backed substitutes for `wasm_lite` and `wasm_lite_std`, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
-//! | `shims_wasm_bindgen/` | separate workspace: wasm-bindgen's API lowered onto wasm_lite, so unmodified `js-sys`/`web-sys`/`wgpu` compile here; substituted via `[patch.crates-io]` and never published |
+//! | `backend-wasm-bindgen/` | separate workspace: partial wasm-bindgen-backed substitutes for `wasm_lite` and `wasm_lite_std`, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
+//! | `backend-wasm-lite/` | separate workspace: wasm-bindgen's API lowered onto wasm_lite, so unmodified `js-sys`/`web-sys`/`wgpu` compile here; substituted via `[patch.crates-io]` and never published |
 //!
 //! ## Examples
 //!

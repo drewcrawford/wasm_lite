@@ -56,6 +56,20 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **The shim workspaces are named for their backend.** `shims/` is now
+  `backend-wasm-bindgen/` and `shims_wasm_bindgen/` is now `backend-wasm-lite/`.
+  The old names described the API each one *provides*, which is the opposite of
+  what callers need to know: `shims_wasm_bindgen/` was the one where wasm-bindgen
+  is **not** the backend. Since the backend is what decides whether the
+  `wasm-bindgen` CLI runs — and so which linker exports a threaded build needs —
+  naming them for the API actively pointed the wrong way.
+
+  Nothing in either workspace is published, and nothing can be: both reuse the
+  exact package names of the crates they substitute, because `[patch]` matches on
+  package name. They are consumed by patching to a path or git, so this renames
+  the paths in a `[patch.crates-io]` block rather than breaking a release.
+
+
 - **The thread-export check now asks for what your backend actually needs.** It
   demanded all five symbols of every threaded build. Three are read by the
   generated glue; the other two exist for the `wasm-bindgen` CLI's threading
@@ -75,8 +89,8 @@ All notable changes to this project will be documented in this file.
   The vocabulary is now **backend** rather than "shim" wherever it decides
   behaviour, because the shim directories point the wrong way on their own: a
   shim is named for the API it *provides*, while the backend is what *implements*
-  it. `shims/` puts real wasm-bindgen under your wasm_lite code (wasm-bindgen
-  backend, five exports); `shims_wasm_bindgen/` puts wasm_lite under your
+  it. `backend-wasm-bindgen/` puts real wasm-bindgen under your wasm_lite code (wasm-bindgen
+  backend, five exports); `backend-wasm-lite/` puts wasm_lite under your
   wasm-bindgen code (wasm_lite backend, three).
 
 - **The threaded build's five linker exports are documented rather than
@@ -483,5 +497,5 @@ never met the bug.
 - Crate-level docs had drifted: both logo URLs pointed at a nonexistent
   `art/logo.png` (and `wasm_lite_std`'s at a nonexistent repository), and
   `wasm_lite`'s workspace table, documentation table, and runner prerequisites
-  were behind the README. Three files in the `shims_wasm_bindgen` workspace were
+  were behind the README. Three files in the `backend-wasm-lite` workspace were
   also missing their SPDX headers.

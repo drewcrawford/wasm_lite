@@ -56,14 +56,14 @@ echo "testing examples/tests-demo closures"
 echo "running examples/bench-demo benchmarks (unmeasured: CI timings are noise)"
 (cd examples/bench-demo && RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" cargo +nightly test --target wasm32-unknown-unknown -Z build-std=std,panic_abort --benches)
 
-echo "testing shims_wasm_bindgen/consumer-demo (depends only on the shim)"
-(cd shims_wasm_bindgen/consumer-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test bindings)
+echo "testing backend-wasm-lite/consumer-demo (depends only on the shim)"
+(cd backend-wasm-lite/consumer-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test bindings)
 
-echo "testing shims_wasm_bindgen/consumer-demo wasm-bindgen-test harness"
-(cd shims_wasm_bindgen/consumer-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test wbt_harness)
+echo "testing backend-wasm-lite/consumer-demo wasm-bindgen-test harness"
+(cd backend-wasm-lite/consumer-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test wbt_harness)
 
-echo "testing shims_wasm_bindgen/consumer-async (async tests, atomics)"
-(cd shims_wasm_bindgen/consumer-async && RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" cargo +nightly test --target wasm32-unknown-unknown -Z build-std=std,panic_abort --test async_harness)
+echo "testing backend-wasm-lite/consumer-async (async tests, atomics)"
+(cd backend-wasm-lite/consumer-async && RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" cargo +nightly test --target wasm32-unknown-unknown -Z build-std=std,panic_abort --test async_harness)
 
 echo "testing examples/doctest-demo doctests"
 (cd examples/doctest-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --doc)

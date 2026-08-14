@@ -173,8 +173,8 @@ browser-validated; the next frontier is the binding crates. Items marked
 
 * **Close the remaining coexistence gaps.** Direct CLI interop works with
   `wasm_lite` as the outer tool, and `[patch]` shims now exist in both directions:
-  [`shims_wasm_bindgen/`](../shims_wasm_bindgen/) is substantial enough for
-  unmodified js-sys/web-sys and part of wgpu 28 at runtime; [`shims/`](../shims/)
+  [`backend-wasm-lite/`](../backend-wasm-lite/) is substantial enough for
+  unmodified js-sys/web-sys and part of wgpu 28 at runtime; [`backend-wasm-bindgen/`](../backend-wasm-bindgen/)
   lowers a bounded wasm_lite subset onto wasm-bindgen. Remaining work includes
   block-level wasm-bindgen module/snippet attributes, parity for newer wasm_lite
   APIs in the reverse shim, and (if still useful) a true reverse glue post-pass.

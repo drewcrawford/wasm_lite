@@ -63,14 +63,14 @@ workspace members:
 
 | workspace | role |
 |---|---|
-| `shims/` | **the wasm-bindgen backend.** Substitutes named `wasm_lite` / `wasm_lite_std` but implemented on real wasm-bindgen, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
-| `shims_wasm_bindgen/` | **the wasm_lite backend.** Substitutes named `wasm-bindgen` / `wasm-bindgen-test` implemented on wasm_lite, lowering a substantial upstream API subset onto it; includes consumer demos and browser tests |
+| `backend-wasm-bindgen/` | **the wasm-bindgen backend.** Substitutes named `wasm_lite` / `wasm_lite_std` but implemented on real wasm-bindgen, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
+| `backend-wasm-lite/` | **the wasm_lite backend.** Substitutes named `wasm-bindgen` / `wasm-bindgen-test` implemented on wasm_lite, lowering a substantial upstream API subset onto it; includes consumer demos and browser tests |
 
 Say **backend**, not "shim", whenever it matters which runtime is underneath — the directory
 names point the wrong way on their own. A shim is named for the API it *provides*; the
 backend is what *implements* it, and that is what decides whether the `wasm-bindgen` CLI runs
-over the module and therefore which linker exports are required. `shims/` puts real
-wasm-bindgen underneath your wasm_lite code (wasm-bindgen backend); `shims_wasm_bindgen/`
+over the module and therefore which linker exports are required. `backend-wasm-bindgen/` puts real
+wasm-bindgen underneath your wasm_lite code (wasm-bindgen backend); `backend-wasm-lite/`
 puts wasm_lite underneath your wasm-bindgen code (wasm_lite backend). "We use the shim"
 settles nothing; "we are on the wasm-bindgen backend" settles it.
 
@@ -87,11 +87,11 @@ and prefer crates by `drewcrawford`.
 
 **The full gate is `scripts/check_all`** — fmt, check, clippy, tests, and docs across *both*
 worlds (native and wasm32), including the script-selected examples, browser binding suites,
-bench smoke, `wasm_lite_std`'s doctests under atomics, and `shims_wasm_bindgen` consumers.
+bench smoke, `wasm_lite_std`'s doctests under atomics, and `backend-wasm-lite` consumers.
 Run it before considering a change done. Note that `scripts/wasm32/docs` only *builds* docs —
 doctests are *executed* by `scripts/wasm32/tests`, which is where a new doctest suite belongs.
-The reverse `shims/` workspace is not currently part of that gate and needs an explicit
-`cargo test --manifest-path shims/Cargo.toml --workspace` when touched. Each stage is also
+The reverse `backend-wasm-bindgen/` workspace is not currently part of that gate and needs an explicit
+`cargo test --manifest-path backend-wasm-bindgen/Cargo.toml --workspace` when touched. Each stage is also
 runnable alone (`scripts/fmt`, `scripts/check`, `scripts/clippy`, `scripts/tests`,
 `scripts/docs`), and each splits into `scripts/native/*` and `scripts/wasm32/*` halves.
 Everything runs with `-D warnings`; pass `--relaxed` to allow warnings. Note

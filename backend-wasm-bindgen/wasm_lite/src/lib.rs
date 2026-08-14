@@ -26,8 +26,8 @@
 //!
 //! ```toml
 //! [patch.crates-io]
-//! wasm_lite     = { path = "../wasm_lite/shims/wasm_lite" }
-//! wasm_lite_std = { path = "../wasm_lite/shims/wasm_lite_std" }
+//! wasm_lite     = { path = "../wasm_lite/backend-wasm-bindgen/wasm_lite" }
+//! wasm_lite_std = { path = "../wasm_lite/backend-wasm-bindgen/wasm_lite_std" }
 //! ```
 //!
 //! Leaf crates depend on `wasm_lite` normally and need no conditional code.

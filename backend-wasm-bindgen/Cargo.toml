@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # The shim workspace is deliberately separate from the root wasm_lite workspace:
-# `shims/wasm_lite` and `shims/wasm_lite_std` reuse the *package names* of the
+# `backend-wasm-bindgen/wasm_lite` and `backend-wasm-bindgen/wasm_lite_std` reuse the *package names* of the
 # real crates, because `[patch]` matches on package name. Two packages with the
 # same name cannot live in one workspace, so these get their own.
 [workspace]
