@@ -10,8 +10,8 @@
 //!     one page load per benchmark, reporting ns/iter;
 //!   * a plain `bin`: run `main` once (pass = ran to completion).
 
-use crate::webdriver::Browser;
-use crate::{Args, BOOTSTRAP_JS, PROGRAM_JS, PROGRAM_WASM, Route, WL_WORKER_JS, bind, read, serve};
+use super::webdriver::Browser;
+use super::{Args, BOOTSTRAP_JS, PROGRAM_JS, PROGRAM_WASM, Route, WL_WORKER_JS, bind, read, serve};
 use std::path::Path;
 use std::time::{Duration, Instant};
 

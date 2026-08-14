@@ -14,7 +14,7 @@ for arg in "$@"; do
     fi
 done
 
-cargo build -p runner
+cargo build -p wasm_lite_cli
 
 # The standard Rust-stable build has no shared memory or atomics. Exercise its
 # event-loop executor and local host timer separately from the nightly threaded

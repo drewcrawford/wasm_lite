@@ -20,7 +20,11 @@ never met the bug.
 - `wasm_lite`, a dependency-light Rust/JavaScript binding system for `wasm32-unknown-unknown`.
 - Descriptor-based import, export, class, and test metadata emitted into custom wasm sections.
 - Host-side `wasm_lite_codegen` for dependency-free descriptor parsing and generated ES module glue.
-- `wasm-lite` CLI and browser runner support for `cargo run`, `cargo test`, and rustdoc doctests through WebDriver.
+- `wasm-lite`, one CLI with two subcommands: `build` generates the JavaScript
+  glue for a compiled module, and `run` serves it and drives a real browser.
+  `run` is what `cargo run`, `cargo test`, and rustdoc doctests go through —
+  point the target at it with `runner = ["wasm-lite", "run"]`. A single
+  `cargo install wasm_lite_cli` provides both, so nothing needs a checkout.
 - Core ABI support for strings, byte slices, vectors, `JsValue` handles, `Option`, `Result`, and sret payloads.
 - Proc-macro support for `import!`, `#[export]`, `#[wasm_lite_test]`, and `js_class!`.
 - Browser-oriented exports, imports, doctests, test suites, panic reporting, and interop examples.

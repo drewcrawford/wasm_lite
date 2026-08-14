@@ -52,7 +52,7 @@ Set the runner as the wasm target's test/run command (see the
 ```toml
 # .cargo/config.toml
 [target.wasm32-unknown-unknown]
-runner = "path/to/runner"
+runner = ["wasm-lite", "run"]
 ```
 
 Then `cargo test` runs headless and exits, while `cargo run` serves a bin

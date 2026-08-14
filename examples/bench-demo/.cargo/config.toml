@@ -7,4 +7,4 @@ target = "wasm32-unknown-unknown"
 # via CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER, e.g.:
 #   runner = "/abs/path/to/wasm_lite/target/debug/runner"
 [target.wasm32-unknown-unknown]
-# runner = "..."  # uncomment + set, or use the env var
+# runner = ["wasm-lite", "run"]  # uncomment, or use the env var

@@ -10,6 +10,7 @@
 //!
 //! The runner is intentionally dependency-free and built on `std` only.
 
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -41,19 +42,19 @@ struct Route {
     body: Vec<u8>,
 }
 
-fn main() {
+pub fn main(argv: Vec<OsString>) {
     // Stop a persistent (reused) browser started via `WASM_LITE_REUSE_BROWSER`.
-    if std::env::args().any(|a| a == "--stop-browser") {
+    if argv.iter().any(|a| a == "--stop-browser") {
         webdriver::Browser::stop_persistent();
         println!("stopped the persistent browser");
         return;
     }
 
-    let args = match parse_args() {
+    let args = match parse_args(argv) {
         Ok(a) => a,
         Err(msg) => {
             eprintln!("{msg}");
-            eprintln!("usage: runner [--serve] <program.js|program.wasm>");
+            eprintln!("usage: wasm-lite run [--serve] <program.js|program.wasm>");
             std::process::exit(2);
         }
     };
@@ -212,7 +213,7 @@ impl Args {
 /// under `cargo test`); `--exact` and `--list` follow libtest. Other flags (e.g. `--nocapture`) are ignored, so
 /// the runner works directly as a Cargo runner
 /// (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER`).
-fn parse_args() -> Result<Args, String> {
+fn parse_args(argv: Vec<OsString>) -> Result<Args, String> {
     let mut program = None;
     let mut filters = Vec::new();
     let mut serve = false;
@@ -220,7 +221,7 @@ fn parse_args() -> Result<Args, String> {
     let mut exact = false;
     let mut list = false;
     let mut bench = false;
-    for arg in std::env::args_os().skip(1) {
+    for arg in argv {
         let text = arg.to_string_lossy();
         if text == "--serve" {
             serve = true;

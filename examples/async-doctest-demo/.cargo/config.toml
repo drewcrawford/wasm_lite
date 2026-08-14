@@ -37,4 +37,4 @@ rustdocflags = [
 build-std = ["std", "panic_abort"]
 
 [target.wasm32-unknown-unknown]
-# runner = "/abs/path/to/wasm_lite/target/debug/runner"
+# runner = ["wasm-lite", "run"]

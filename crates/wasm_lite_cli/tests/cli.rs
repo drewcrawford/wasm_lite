@@ -99,6 +99,7 @@ fn write_input(dir: &TempDir, wasm: &[u8]) -> PathBuf {
 
 fn run_cli(input: &Path, output: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_wasm-lite"))
+        .arg("build")
         .arg(input)
         .arg("-o")
         .arg(output)
@@ -247,6 +248,7 @@ fn a_closed_stdout_pipe_is_not_a_panic() {
     );
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_wasm-lite"))
+        .arg("build")
         .arg(input)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -306,7 +306,7 @@ wasm_lite::test_main!();             // once per test binary
 Wire the runner up once in `.cargo/config.toml`:
 ```toml
 [target.wasm32-unknown-unknown]
-runner = "path/to/runner"
+runner = ["wasm-lite", "run"]
 ```
 Then `cargo test` runs headless in a browser; `cargo run --example foo` serves it
 interactively (the runner distinguishes them by path). **Doctests run too** —
@@ -457,7 +457,7 @@ and the [roadmap](./docs/roadmap.md).
 [build]
 target = "wasm32-unknown-unknown"
 [target.wasm32-unknown-unknown]
-runner = "path/to/runner"   # only if you want `cargo test`/`cargo run` in-browser
+runner = ["wasm-lite", "run"]   # only if you want `cargo test`/`cargo run` in-browser
 ```
 
 ### Threaded / atomics build (nightly)

@@ -20,8 +20,8 @@ through every layer.
 The proc-macros (`wasm_lite_macro`) use `syn`/`quote`, which are build-time-only
 and add zero bytes to the final `.wasm`.
 
-**Coming from wasm-bindgen?** See [MIGRATION.md](./MIGRATION.md) for a detailed
-pros/cons comparison, a side-by-side "rosetta stone" of how to do X in each, and
+**Coming from wasm-bindgen?** See the [migration guide](./MIGRATION.md) for a
+detailed pros/cons comparison, a side-by-side "rosetta stone" of how to do X in each, and
 the design trade-offs and gotchas to expect.
 
 ## Why wasm_lite?
@@ -150,23 +150,26 @@ glue.
 
 ### Run an example
 
-The `runner` is a `cargo` runner: it reads descriptor sections from your
+`wasm-lite run` is a `cargo` runner: it reads descriptor sections from your
 compiled `.wasm`, generates the JS glue, serves it, and opens it in a browser
 for `cargo run` or drives it headless for `cargo test`.
 
 ```bash
-# 1. Build the runner once from the workspace root.
-cargo build -p runner
+# 1. Build the CLI once from the workspace root.
+cargo build -p wasm_lite_cli
 
 # 2. Point the wasm target at it. The examples already ship a .cargo/config.toml
-#    that defaults `--target` to wasm32; you just supply the runner path.
-export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$PWD/target/debug/runner"
+#    that defaults `--target` to wasm32; you just supply the command.
+export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$PWD/target/debug/wasm-lite run"
 
 # 3. Run an example in the browser.
 cd examples/hello-rust
 cargo run
 cargo test
 ```
+
+Working from a checkout, that is; anywhere else, `cargo install wasm_lite_cli`
+and use `wasm-lite run`, which needs no path at all.
 
 `examples/hello-rust` covers imports, handles, strings, bytes, and `js_class!`.
 The other examples build the same way. Examples that spawn workers need
@@ -184,17 +187,21 @@ non-atomic build. See
 wasm_lite = "0.1"
 ```
 
+```bash
+cargo install wasm_lite_cli    # provides the `wasm-lite` command
+```
+
 ```toml
 # .cargo/config.toml
 [build]
 target = "wasm32-unknown-unknown"
 
 [target.wasm32-unknown-unknown]
-runner = "/abs/path/to/wasm_lite/target/debug/runner"
+runner = ["wasm-lite", "run"]
 ```
 
-You can also set `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER` instead of putting
-the runner path in `.cargo/config.toml`.
+You can also set `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="wasm-lite run"`
+instead of putting it in `.cargo/config.toml`.
 
 ### Generate glue manually
 
@@ -202,9 +209,9 @@ The runner automates this, but the `wasm-lite` CLI can generate the JS glue
 directly:
 
 ```bash
-cargo install --path crates/wasm_lite_cli
+cargo install wasm_lite_cli
 cargo build --target wasm32-unknown-unknown
-wasm-lite app.wasm -o glue.js
+wasm-lite build app.wasm -o glue.js
 # import { instantiate, <your exports> } from "./glue.js"
 ```
 
@@ -217,15 +224,15 @@ There is no `#[wasm_bindgen]`-style all-in-one macro. Instead:
    (`__wasm_lite_imports`, `__wl_exports`) describing each binding's ABI.
    `#[wasm_lite_test]` and `#[wasm_lite_bench]` record harness entries in their
    own discovery sections.
-2. **Codegen.** The `wasm-lite` CLI reads those sections from the compiled
+2. **Codegen.** `wasm-lite build` reads those sections from the compiled
    `.wasm` and generates a matching JavaScript glue module: the import object
    the wasm expects, plus one wrapper per `#[export]`.
-3. **Run.** The `runner` launches the module in a real browser over WebDriver,
-   and doubles as a `cargo` test/run runner.
+3. **Run.** `wasm-lite run` launches the module in a real browser over
+   WebDriver, and doubles as a `cargo` test/run runner.
 
 ```bash
 cargo build --target wasm32-unknown-unknown
-wasm-lite app.wasm -o glue.js
+wasm-lite build app.wasm -o glue.js
 ```
 
 See the [binding model](./docs/binding-model.md) docs for the full ABI story.
@@ -282,9 +289,8 @@ The core crate also exposes these modules:
 | `crates/wasm_lite` | core: `import!`, `#[export]`, `js_class!`, `JsValue`, runtime (`__wl_malloc`/`__wl_free`, panic hook), `thread::spawn`, `console`/`performance`/`date`/`fetch`/`websocket`/`dom` bindings |
 | `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`): `import!`, `#[export]`, `#[wasm_lite_test]`, `#[wasm_lite_bench]`, `js_class!`; shared type-to-ABI dispatch lives in `ty` |
 | `crates/wasm_lite_codegen` | host-side: read binding/test/benchmark sections; generate export wrappers, worker glue, and interop bundles |
-| `crates/wasm_lite_cli` | the `wasm-lite` binary; writes glue plus bundle-specific worker and wasm-bindgen interop artifacts |
+| `crates/wasm_lite_cli` | the `wasm-lite` binary: `build` writes glue plus bundle-specific worker and wasm-bindgen interop artifacts; `run` serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
 | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync + async); atomics builds use workers while stable non-atomic wasm uses a local event-loop executor |
-| `runner` | WebDriver runner; serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
 | `shims/` | separate workspace: partial wasm-bindgen-backed substitutes for `wasm_lite` and `wasm_lite_std`, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
 | `shims_wasm_bindgen/` | separate workspace: wasm-bindgen's API lowered onto wasm_lite, so unmodified `js-sys`/`web-sys`/`wgpu` compile here; substituted via `[patch.crates-io]` and never published |
 

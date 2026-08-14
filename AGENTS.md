@@ -28,7 +28,7 @@ The whole architecture hinges on this flow — understand it before touching cod
    `exports.rs` = text parsers) and generates matching JS glue (`generate.rs` plus
    `generate/` helpers): one shim per import that unmarshals wasm-level args (e.g. `&str`
    arrives as a `(ptr, len)` pair decoded from linear memory), plus one wrapper per export.
-3. **Run (`runner`).** A `cargo` runner that reads the descriptor sections, generates glue,
+3. **Run (`wasm-lite run`).** A `cargo` runner that reads the descriptor sections, generates glue,
    serves it, and drives it in a **real browser over WebDriver**.
 
 Section name constants and the public codegen API live in `crates/wasm_lite_codegen/src/lib.rs`.
@@ -55,9 +55,8 @@ lockstep — a change to one almost always requires a matching change to the oth
 | `crates/wasm_lite` | core runtime: `JsValue`, `Closure`, `JsFuture`, browser benchmarks, `__wl_malloc`/`__wl_free`, panic hook, `thread::spawn`, and `console`/`date`/`performance`/`timer`/`event`/`fetch`/`websocket`/`dom` bindings. Re-exports the macros. |
 | `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`, build-time only): `import!`, `#[export]`, `#[wasm_lite_test]`, `#[wasm_lite_bench]`, `js_class!`. `ty.rs` holds the shared type→ABI dispatch. |
 | `crates/wasm_lite_codegen` | host-side: parse descriptor sections, generate JS glue. Dependency-free. |
-| `crates/wasm_lite_cli` | the `wasm-lite` binary wrapping codegen; writes glue, bundle-specific worker modules, and wasm-bindgen interop artifact sets |
+| `crates/wasm_lite_cli` | the `wasm-lite` binary: `build` writes glue, bundle-specific worker modules, and wasm-bindgen interop artifact sets; `run` serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
 | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync **and** async) ported from `wasm_safe_thread`; atomics builds use workers + `Atomics.waitAsync`, while stable non-atomic wasm uses a local event-loop executor and host timers |
-| `runner` | WebDriver runner: serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
 
 Two separate shim workspaces deliberately reuse package names and therefore cannot be root
 workspace members:
@@ -91,10 +90,10 @@ manifests explicitly.
 
 Two distinct worlds:
 
-**Host-side crates** (`wasm_lite_codegen`, `runner`, `wasm_lite_macro`) build and test natively:
+**Host-side crates** (`wasm_lite_codegen`, `wasm_lite_cli`, `wasm_lite_macro`) build and test natively:
 
 ```bash
-cargo build -p runner
+cargo build -p wasm_lite_cli
 cargo test -p wasm_lite_codegen           # parser/codegen unit tests (in #[cfg(test)] mods)
 cargo test -p wasm_lite_codegen wasm::    # a single module's tests
 ```
@@ -102,12 +101,12 @@ cargo test -p wasm_lite_codegen wasm::    # a single module's tests
 Note: `wasm_lite` is an rlib that also builds on the host (kept as a workspace member for
 IDE/CI coverage), but its binding behavior only means anything on wasm32.
 
-**Wasm-side code** must run in a browser via the runner. Build the runner once, then point the
+**Wasm-side code** must run in a browser via the runner. Build the CLI once, then point the
 wasm target's runner at it:
 
 ```bash
-cargo build -p runner
-export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$PWD/target/debug/runner"
+cargo build -p wasm_lite_cli
+export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$PWD/target/debug/wasm-lite run"
 cd examples/hello-rust
 cargo run     # opens the module in a browser (bin)
 cargo test    # drives #[wasm_lite_test]s headless and exits
@@ -118,7 +117,7 @@ browser must be installed (Firefox + `geckodriver`, or Chrome + `chromedriver`).
 
 Runner knobs (env vars): `WASM_LITE_BROWSER=chrome|chromium|safari` picks a non-default
 browser (default Firefox); `WASM_LITE_REUSE_BROWSER=1` keeps one browser session alive across
-test invocations (stop it with `runner --stop-browser`); `WASM_LITE_NO_OPEN=1` serves a bin
+test invocations (stop it with `wasm-lite run --stop-browser`); `WASM_LITE_NO_OPEN=1` serves a bin
 without launching a browser (attach a debugger/browser manually). `WASM_LITE_TIMEOUT_SECS`,
 `WASM_LITE_RUN_SECONDS`, `WASM_LITE_SERVE_DIR`, `WASM_LITE_BROWSER_ARGS`, and
 `WASM_LITE_GPU` cover deadlines, long-running bins, assets, browser flags, and Chrome WebGPU.

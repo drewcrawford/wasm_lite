@@ -59,10 +59,10 @@ fn take_cleanup() -> Option<Cleanup> {
 /// startup still terminates the process promptly.
 fn arm() {
     ARMED.call_once(|| {
-        crate::signals::install();
+        super::signals::install();
         std::thread::spawn(|| {
             loop {
-                if let Some(sig) = crate::signals::pending() {
+                if let Some(sig) = super::signals::pending() {
                     if let Some(cleanup) = take_cleanup() {
                         teardown(cleanup.port, &cleanup.session, Some(cleanup.driver_pid));
                     }
