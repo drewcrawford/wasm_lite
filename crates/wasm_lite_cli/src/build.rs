@@ -99,6 +99,10 @@ fn run(args: Args) -> Result<(), String> {
     if !missing.is_empty() {
         return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
     }
+    // Likewise for a module that can spawn but has nowhere to spawn into.
+    if wasm_lite_codegen::spawns_without_shared_memory(&wasm)? {
+        return Err(wasm_lite_codegen::spawns_without_shared_memory_message());
+    }
 
     match output {
         Some(path) => {

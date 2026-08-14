@@ -592,7 +592,7 @@ impl Admission {
     /// browser to an already-thrashing host.
     fn acquire() -> Admission {
         let dir = std::env::temp_dir().join(format!("wasm_lite_browsers_{}", user_suffix()));
-        Admission::acquire_in(&dir, || max_browsers())
+        Admission::acquire_in(&dir, max_browsers)
     }
 
     /// [`Admission::acquire`] against an explicit directory and limit.

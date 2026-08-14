@@ -37,13 +37,13 @@ pub const SECTION_NAME: &str = "__wasm_lite_imports";
 /// `wasm-ld` does not export any of these on its own — not even in a
 /// `--shared-memory` build — so each one needs an explicit
 /// `-C link-arg=--export=…`.
-const THREAD_EXPORTS: [&str; 5] = [
-    "__stack_pointer",
-    "__tls_base",
-    "__tls_size",
-    "__tls_align",
-    "__wasm_init_tls",
-];
+///
+/// Exactly three, and each is read: the worker sets `__stack_pointer` and calls
+/// `__wasm_init_tls`, and the spawning side reads `__tls_size` to size the TLS
+/// block. `__tls_base` and `__tls_align` are conventionally listed alongside
+/// them — wasm-bindgen's recipe carries both — but nothing here has ever read
+/// either, and a build that omits them spawns threads correctly.
+const THREAD_EXPORTS: [&str; 3] = ["__stack_pointer", "__tls_size", "__wasm_init_tls"];
 
 /// The Rust-side entry point a spawned thread lands on.
 ///
@@ -53,9 +53,9 @@ const THREAD_EXPORTS: [&str; 5] = [
 const SPAWN_MARKER: &str = "__wl_thread_entry";
 
 /// Which of the linker's thread symbols a thread-spawning module fails to
-/// export: `__stack_pointer`, `__tls_base`, `__tls_size`, `__tls_align`,
-/// `__wasm_init_tls`. `wasm-ld` exports none of them on its own, so each needs
-/// an explicit `-C link-arg=--export=…`.
+/// export: `__stack_pointer`, `__tls_size`, `__wasm_init_tls`. `wasm-ld`
+/// exports none of them on its own, so each needs an explicit
+/// `-C link-arg=--export=…`.
 ///
 /// Empty for a module that cannot spawn threads at all, so a shared-memory
 /// module that only uses atomics is never faulted.
@@ -81,6 +81,64 @@ pub fn missing_thread_exports(wasm: &[u8]) -> Result<Vec<&'static str>, String> 
         .into_iter()
         .filter(|want| !names.iter().any(|have| have == want))
         .collect())
+}
+
+/// Runtime import a module only carries if its code can reach `thread::spawn`.
+const SPAWN_IMPORT: (&str, &str) = ("__wasm_lite", "__wl_spawn");
+
+/// Whether a module can spawn threads but its memory cannot hold one.
+///
+/// This is the `+atomics`-without-shared-memory build. It is a genuine
+/// contradiction rather than a lesser configuration: `Builder::spawn` picks its
+/// implementation on `#[cfg(target_feature = "atomics")]`, so enabling the
+/// feature compiles *out* the graceful `Unsupported` path and compiles *in* the
+/// one that calls `__wl_spawn`. Meanwhile the glue only wires a real spawner for
+/// a shared memory, and otherwise supplies a stub that throws.
+///
+/// Left alone it surfaces as a JS exception from an import, which traps the
+/// instance and takes the whole run down mid-test — and the generic advice that
+/// accompanies an import throw ("bind it as `Result<_, JsValue>`") is useless
+/// here, because the import is wasm_lite's own and the user never bound it.
+/// Everything needed to say so is known at generation time.
+///
+/// A module built *without* `+atomics` never imports `__wl_spawn` at all — the
+/// call is dead-code-eliminated — so this cannot fault the single-threaded
+/// build that degrades gracefully by design.
+pub fn spawns_without_shared_memory(wasm: &[u8]) -> Result<bool, String> {
+    if wasm::imported_memory(wasm)?.is_some_and(|memory| memory.shared) {
+        return Ok(false);
+    }
+    Ok(wasm::imported_functions(wasm)?
+        .iter()
+        .any(|(module, name)| (module.as_str(), name.as_str()) == SPAWN_IMPORT))
+}
+
+/// The build error for a module [`spawns_without_shared_memory`] faults.
+pub fn spawns_without_shared_memory_message() -> String {
+    let mut msg = String::from(
+        "this module was built with `+atomics` and can spawn threads, but its \
+         memory is not shared, so no thread can actually start.\n\n\
+         `+atomics` compiles out the fallback that would report \
+         `io::ErrorKind::Unsupported`, so this cannot degrade gracefully — it \
+         would fail at runtime as a JS exception that traps the instance.\n\n\
+         Add the shared-memory link args:\n\n\
+         [build]\n\
+         rustflags = [\n\
+        \x20   \"-C\", \"link-arg=--shared-memory\",\n\
+        \x20   \"-C\", \"link-arg=--import-memory\",\n\
+        \x20   \"-C\", \"link-arg=--max-memory=1073741824\",\n",
+    );
+    for name in THREAD_EXPORTS {
+        msg.push_str(&format!("    \"-C\", \"link-arg=--export={name}\",\n"));
+    }
+    msg.push_str(
+        "]\n\n\
+         Repeat the list under `rustdocflags`, keyed by the exact triple \
+         `[target.wasm32-unknown-unknown]`. Or drop `+atomics`, if this program \
+         does not need threads: `spawn` then reports `Unsupported` instead of \
+         failing.\n",
+    );
+    msg
 }
 
 /// The build error for a module [`missing_thread_exports`] faults.
@@ -316,6 +374,63 @@ mod tests {
         names.extend(THREAD_EXPORTS);
         let wasm = spawning_module(&names);
         assert!(missing_thread_exports(&wasm).unwrap().is_empty());
+    }
+
+    /// A module importing `__wasm_lite.__wl_spawn`, optionally with a shared
+    /// memory. Import section only, which is all either check reads.
+    fn spawn_importing_module(shared_memory: bool) -> Vec<u8> {
+        let mut body = Vec::new();
+        let mut count = 1;
+        if shared_memory {
+            count += 1;
+        }
+        body.push(count);
+        if shared_memory {
+            body.extend([0x03, b'e', b'n', b'v']);
+            body.extend([0x06, b'm', b'e', b'm', b'o', b'r', b'y']);
+            body.extend([0x02, 0x03, 0x11, 0x80, 0x80, 0x01]);
+        }
+        body.extend([0x0b]);
+        body.extend(b"__wasm_lite");
+        body.extend([0x0a]);
+        body.extend(b"__wl_spawn");
+        body.extend([0x00, 0x00]); // kind: func, type index 0
+        assert!(body.len() < 128);
+        let mut wasm = b"\0asm\x01\0\0\0".to_vec();
+        wasm.extend([2, body.len() as u8]);
+        wasm.extend(body);
+        wasm
+    }
+
+    #[test]
+    fn faults_a_spawning_module_without_shared_memory() {
+        // `+atomics` compiles out the graceful path and compiles in the call to
+        // __wl_spawn, so this build can only fail at runtime.
+        let wasm = spawn_importing_module(false);
+        assert!(spawns_without_shared_memory(&wasm).unwrap());
+    }
+
+    #[test]
+    fn a_spawning_module_with_shared_memory_is_fine() {
+        let wasm = spawn_importing_module(true);
+        assert!(!spawns_without_shared_memory(&wasm).unwrap());
+    }
+
+    #[test]
+    fn a_module_that_never_reaches_spawn_is_never_faulted() {
+        // Without `+atomics` the call is dead-code-eliminated and the import
+        // never appears, which is the build that degrades gracefully by design.
+        let wasm = export_module(&["main"]);
+        assert!(!spawns_without_shared_memory(&wasm).unwrap());
+    }
+
+    #[test]
+    fn the_shared_memory_message_offers_both_ways_out() {
+        let msg = spawns_without_shared_memory_message();
+        assert!(msg.contains("link-arg=--shared-memory"));
+        assert!(msg.contains("rustdocflags"));
+        // Dropping +atomics is a legitimate fix, not just adding flags.
+        assert!(msg.contains("Unsupported"));
     }
 
     #[test]

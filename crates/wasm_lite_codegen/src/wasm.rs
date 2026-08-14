@@ -122,6 +122,53 @@ fn parse_imports_for_memory(body: &[u8]) -> Result<Option<MemoryImport>, String>
     Ok(memory)
 }
 
+/// Return every imported function as `(module, name)`, in module order.
+///
+/// The import section is the honest record of what a module's code can reach:
+/// an import only survives linking if something references it, so a program
+/// that never calls `thread::spawn` does not import `__wl_spawn`.
+pub fn imported_functions(wasm: &[u8]) -> Result<Vec<(String, String)>, String> {
+    let mut r = Reader::new(wasm);
+    r.header()?;
+    let mut found = Vec::new();
+
+    while !r.eof() {
+        let id = r.byte()?;
+        let size = r.leb_u32()? as usize;
+        let body = r.take(size)?;
+        // Section id 2 is the import section.
+        if id == 2 {
+            let mut br = Reader::new(body);
+            let count = br.leb_u32()?;
+            for _ in 0..count {
+                let module = br.name()?;
+                let name = br.name()?;
+                match br.byte()? {
+                    0x00 => {
+                        br.leb_u32()?; // type index
+                        found.push((module, name));
+                    }
+                    0x01 => {
+                        br.byte()?; // reftype
+                        br.skip_limits()?;
+                    }
+                    0x02 => {
+                        br.read_limits()?;
+                    }
+                    0x03 => {
+                        br.byte()?; // valtype
+                        br.byte()?; // mutability
+                    }
+                    other => {
+                        return Err(format!("unknown import kind {other} in import section"));
+                    }
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Return every name in the module's export section, in module order.
 ///
 /// Used to check that a thread-spawning module actually exports the

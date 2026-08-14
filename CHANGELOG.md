@@ -54,12 +54,56 @@ All notable changes to this project will be documented in this file.
   how a whole class of threading bug reached users. `scripts/wasm32/tests` now
   runs them under atomics.
 
+### Changed
+
+- **The threaded build needs three linker exports, not five.** Every recipe here
+  asked for `__stack_pointer`, `__tls_base`, `__tls_size`, `__tls_align` and
+  `__wasm_init_tls`. Only three are ever read — the worker sets
+  `__stack_pointer` and calls `__wasm_init_tls`, and the spawning side reads
+  `__tls_size` to size the TLS block. `__tls_base` and `__tls_align` appear
+  nowhere in the generated JavaScript, and a build that omits them spawns and
+  joins threads correctly; they were inherited from wasm-bindgen's recipe and
+  carried forward. They are gone from the docs, the example configs, the test
+  scripts, and the build error, so nobody copies them again.
+
+  Verified by dropping one flag at a time from a working configuration and
+  running a real spawn-and-join in a browser. The same sweep found
+  `+bulk-memory` and `+mutable-globals` are not required either — `+atomics`
+  alone links and runs — but those are kept in the recipes, since they are
+  defaults on current toolchains rather than no-ops, and spelling them out costs
+  nothing on an older one.
+
 ### Removed
 
 - The `test_executors` dev-dependency of `wasm_lite_std`. It was only ever
   reached from doctests, and `async_doctest!` covers that job on every target.
 
 ### Fixed
+
+- **The documented atomics build recipe did not produce a working worker.**
+  `wasm_lite_std`'s module docs gave `RUSTFLAGS='-C
+  target-feature=+atomics,+bulk-memory'` and nothing else. That enables the
+  feature without sharing the memory, so following it exactly produced a module
+  whose every spawn failed at runtime with `imported JS function
+  __wasm_lite.__wl_spawn threw: __wl_spawn_unavailable`. The recipe now carries
+  the link args and points at the full `.cargo/config.toml`.
+
+- **A build that can spawn but has nowhere to spawn into is now a build error.**
+  The above failed as a JS exception thrown from an import, which traps the
+  instance — taking down a whole test run mid-suite — and arrived with generic
+  advice to "bind the import as `Result<_, JsValue>`", which is no help at all
+  when the import is wasm_lite's own and you never bound it. Everything needed
+  to say so is known when the glue is generated: the module imports `__wl_spawn`
+  only if its code can reach `thread::spawn`, and its memory either is shared or
+  is not.
+
+  This is a real contradiction rather than a lesser configuration, which is why
+  it is an error and not a warning: `Builder::spawn` selects its implementation
+  on `#[cfg(target_feature = "atomics")]`, so enabling atomics compiles *out*
+  the path that would report `io::ErrorKind::Unsupported` and compiles *in* the
+  one that calls `__wl_spawn`. There is no graceful degradation left to
+  preserve. A module built without `+atomics` never imports `__wl_spawn` at all,
+  so the single-threaded build that does degrade gracefully is never faulted.
 
 - **A threaded build missing a linker export failed unreadably.** The five
   thread symbols the worker bootstrap needs — `__stack_pointer`, `__tls_base`,

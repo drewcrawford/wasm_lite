@@ -155,6 +155,11 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
         if !missing.is_empty() {
             return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
         }
+        // A worker test is the usual way to meet this, and the runtime form is
+        // an import throw that traps the instance mid-suite.
+        if wasm_lite_codegen::spawns_without_shared_memory(&module)? {
+            return Err(wasm_lite_codegen::spawns_without_shared_memory_message());
+        }
         let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
         (module, glue, Vec::new())
     };

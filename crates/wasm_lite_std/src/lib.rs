@@ -390,11 +390,22 @@
 //! rustup toolchain install nightly
 //! rustup component add rust-src --toolchain nightly
 //!
-//! # Build with atomics
-//! RUSTFLAGS='-C target-feature=+atomics,+bulk-memory' \
+//! # Build with atomics. The link args are not optional: `+atomics` alone
+//! # compiles in the spawning path but leaves memory unshared, so every spawn
+//! # fails at runtime. The three exports are what the worker bootstrap reads.
+//! RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+mutable-globals \
+//!   -C link-arg=--shared-memory -C link-arg=--import-memory \
+//!   -C link-arg=--max-memory=1073741824 \
+//!   -C link-arg=--export=__stack_pointer \
+//!   -C link-arg=--export=__tls_size \
+//!   -C link-arg=--export=__wasm_init_tls' \
 //! cargo +nightly build -Z build-std=std,panic_abort \
 //!     --target wasm32-unknown-unknown
 //! ```
+//!
+//! For doctests the same flags must be repeated under `rustdocflags`, keyed by
+//! the exact triple. `docs/threads-and-async.md` has the whole configuration as
+//! a `.cargo/config.toml` to copy.
 //!
 
 extern crate alloc;
