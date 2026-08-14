@@ -14,10 +14,17 @@ All notable changes to this project will be documented in this file.
   reported a spawned thread, and then died inside generated JavaScript with
   `TypeError: Cannot set properties of undefined (setting 'value')` at
   `wl_worker.js` — no symbol named, no flag named, no file of yours mentioned.
-  `wasm_lite build` and `wasm_lite run` now read the module's export section and
-  refuse to generate glue for a module that spawns threads without them, listing
-  what is missing and the flags to add. A module that cannot spawn is never
-  faulted, so atomics-without-threads still builds. Nothing can supply these
+  In a **test** binary it was quieter still: the worker throws before running
+  the closure, so nothing ever resolves the join and the test reports as a bare
+  30-second timeout — reading as "thread spawning is broken" rather than as a
+  bad link line.
+
+  `wasm_lite build`, `wasm_lite run`, and the test/benchmark harness now read
+  the module's export section and refuse to generate glue for a module that
+  spawns threads without them, listing what is missing and the flags to add.
+  The harness path matters most, since a test binary is usually where a project
+  spawns its first thread. A module that cannot spawn is never faulted, so
+  atomics-without-threads still builds. Nothing can supply these
   automatically: cargo does not propagate `rustc-link-arg` from a dependency's
   build script, and doctests are linked by rustdoc, which build scripts do not
   reach at all.

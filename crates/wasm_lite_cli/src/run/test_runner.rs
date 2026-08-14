@@ -114,6 +114,14 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
     let descriptors = wasm_lite_codegen::descriptors_from_wasm(&module)?;
     let exports = wasm_lite_codegen::exports_from_wasm(&module)?;
     let memory = wasm_lite_codegen::imported_memory(&module)?;
+    // A test binary is the likeliest place to meet this, because it is where
+    // threads first get spawned — and the failure is silent from here: the
+    // worker throws before running the closure, so the test simply never
+    // finishes and reports as a timeout rather than as a bad link line.
+    let missing = wasm_lite_codegen::missing_thread_exports(&module)?;
+    if !missing.is_empty() {
+        return Err(wasm_lite_codegen::missing_thread_exports_message(&missing));
+    }
     let glue = wasm_lite_codegen::generate_glue(&descriptors, &exports, memory.as_ref());
     let test_names = wasm_lite_codegen::test_names(&module)?;
     let bench_names = wasm_lite_codegen::bench_names(&module)?;
