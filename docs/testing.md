@@ -72,6 +72,7 @@ rather than per-project.
 | `WASM_LITE_TIMEOUT_SECS` | per-page deadline; default 30 |
 | `WASM_LITE_RUN_SECONDS` | watch a long-running `bin` for N seconds (selects headless mode) |
 | `WASM_LITE_REUSE_BROWSER` | keep one browser across invocations (`--stop-browser` ends it) |
+| `WASM_LITE_MAX_BROWSERS` | cap concurrent browsers; default derived from free memory |
 | `WASM_LITE_NO_OPEN` | serve without launching a browser |
 
 Three of these exist because their defaults produce a *plausible wrong answer*
@@ -101,6 +102,29 @@ rather than an error, which is much harder to notice:
   diagnosis.
 
 A **timeout** dumps the captured console, so a hang tells you where it hung.
+
+### How many browsers run at once
+
+`cargo test --doc` invokes the runner **once per doctest** and runs those in
+parallel across every core. Each invocation is its own browser, so a machine
+with more cores than spare gigabytes tries to start more browsers than it can
+hold — and the failures that follow do not look like memory pressure. They look
+like `read: Resource temporarily unavailable (os error 11)` from a thread the
+browser could not spawn, or `no such window: Browsing context has been
+discarded` after the OOM killer took a content process. The giveaway is that the
+casualties are arbitrary — tests with no threading in them at all — and that
+they pass under `--test-threads=1`.
+
+So the runner admits only so many browsers at once, waiting for a slot rather
+than piling on. The default is free memory (`MemAvailable`) divided by about a
+gigabyte per browser, clamped to the core count; `WASM_LITE_MAX_BROWSERS`
+overrides it outright. Slots are files in a temp directory, so the limit holds
+across the separate runner *processes* rustdoc spawns — a lock inside one
+process would not see the others. A slot whose holder was killed is reclaimed
+by the next waiter.
+
+`WASM_LITE_REUSE_BROWSER=1` is the complementary lever: instead of N browsers
+capped at some number, one browser serves every invocation.
 
 ### A killed runner does not leave a browser behind
 

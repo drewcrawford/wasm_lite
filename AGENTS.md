@@ -122,6 +122,11 @@ without launching a browser (attach a debugger/browser manually). `WASM_LITE_TIM
 `WASM_LITE_RUN_SECONDS`, `WASM_LITE_SERVE_DIR`, `WASM_LITE_BROWSER_ARGS`, and
 `WASM_LITE_GPU` cover deadlines, long-running bins, assets, browser flags, and Chrome WebGPU.
 
+Doctests invoke the runner once per test, in parallel across every core, so the runner caps
+concurrent browsers (free memory / ~1 GiB, clamped to the core count) and makes the rest wait.
+`WASM_LITE_MAX_BROWSERS` overrides the cap. Without it, a memory-tight machine fails arbitrary
+tests with `os error 11` or a discarded browsing context — see `docs/testing.md`.
+
 **Atomics and thread spawning need nightly + `-Z build-std`** because enabling the `atomics`
 target feature forces recompiling `std`. Those examples ship a `.cargo/config.toml` with the
 atomics rustflags (`+atomics,+bulk-memory,+mutable-globals`, `--shared-memory`,

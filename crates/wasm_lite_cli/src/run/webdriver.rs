@@ -212,6 +212,10 @@ pub struct Browser {
     keep_session: bool,
     /// Held for a persistent session to serialize shared use across processes.
     _lock: Option<Lock>,
+    /// Held for an ephemeral session: one slot in the host-wide browser cap.
+    /// A reused session is a single browser shared by all comers, so it needs
+    /// no slot — `_lock` already serializes it.
+    _admission: Option<Admission>,
 }
 
 impl Browser {
@@ -228,6 +232,9 @@ impl Browser {
     /// Start a driver + session that close when dropped.
     pub fn launch() -> Result<Browser, String> {
         arm();
+        // Before the driver, not after: the whole point is to not be the
+        // process that starts an eighth browser on a host with room for four.
+        let admission = Admission::acquire();
         let kind = Kind::from_env();
         let port = free_port()?;
         let mut driver = spawn_driver(&kind, port)?;
@@ -260,6 +267,7 @@ impl Browser {
             session,
             keep_session: false,
             _lock: None,
+            _admission: Some(admission),
         })
     }
 
@@ -278,6 +286,7 @@ impl Browser {
                 session,
                 keep_session: true,
                 _lock: Some(lock),
+                _admission: None,
             });
         }
 
@@ -303,6 +312,7 @@ impl Browser {
             session,
             keep_session: true,
             _lock: Some(lock),
+            _admission: None,
         })
     }
 
@@ -497,6 +507,158 @@ fn free_port() -> Result<u16, String> {
     Ok(listener.local_addr().map_err(|e| e.to_string())?.port())
 }
 
+// --- concurrent-browser admission -------------------------------------------
+
+/// Roughly what one browser + driver + loaded page costs, in MiB.
+///
+/// Deliberately whole-browser rather than per-tab: each admitted runner starts
+/// its own browser, and a browser that gets its content processes OOM-killed
+/// reports as `no such window: Browsing context has been discarded` rather than
+/// as memory pressure, so erring small here buys nothing.
+const MIB_PER_BROWSER: u64 = 1024;
+
+/// Cap when the host's free memory cannot be read: enough to keep a laptop
+/// busy, low enough not to melt a small CI box.
+const DEFAULT_MAX_BROWSERS: usize = 2;
+
+/// How many browsers this host may run at once.
+///
+/// `cargo test --doc` invokes the runner once per doctest and runs those in
+/// parallel across every core, so without a cap an 8-core, 8 GB machine
+/// launches 8 browsers and fails tests that pass serially — as `os error 11`
+/// on a thread the browser could not spawn, or as a discarded browsing context.
+/// Since the limit is memory, not CPU, derive it from free memory and only then
+/// clamp to the core count.
+fn max_browsers() -> usize {
+    if let Some(n) = std::env::var("WASM_LITE_MAX_BROWSERS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        return n.max(1);
+    }
+    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+    match available_mib() {
+        Some(mib) => ((mib / MIB_PER_BROWSER) as usize).clamp(1, cpus),
+        None => DEFAULT_MAX_BROWSERS.min(cpus),
+    }
+}
+
+/// Memory available for new processes, in MiB.
+///
+/// `MemAvailable` rather than `MemFree`: reclaimable page cache is usable, and
+/// `MemFree` alone would under-report badly on any box that has run a build.
+/// `None` anywhere without procfs, which the caller treats as "unknown".
+fn available_mib() -> Option<u64> {
+    let text = fs::read_to_string("/proc/meminfo").ok()?;
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("MemAvailable:"))?
+        .strip_prefix("MemAvailable:")?;
+    // "MemAvailable:   4615141 kB"
+    let kib: u64 = line.split_whitespace().next()?.parse().ok()?;
+    Some(kib / 1024)
+}
+
+/// A held slot in the cross-process browser semaphore. Released on drop.
+struct Admission(Option<PathBuf>);
+
+/// How long a slot file may go untouched before a waiter reclaims it. Only
+/// reached when the pid check cannot settle it (a non-Linux host, or a pid the
+/// OS has since recycled).
+const SLOT_STALE_AFTER: Duration = Duration::from_secs(900);
+
+impl Admission {
+    /// Block until one of `max_browsers()` slots is free, then claim it.
+    ///
+    /// Slots are files in a shared directory, claimed by exclusive create — the
+    /// same trick as [`Lock`], but N-deep instead of 1. Waiting here is the
+    /// point: the caller is a runner process that would otherwise add another
+    /// browser to an already-thrashing host.
+    fn acquire() -> Admission {
+        let dir = std::env::temp_dir().join(format!("wasm_lite_browsers_{}", user_suffix()));
+        Admission::acquire_in(&dir, max_browsers())
+    }
+
+    /// [`Admission::acquire`] against an explicit directory and limit.
+    fn acquire_in(dir: &std::path::Path, limit: usize) -> Admission {
+        if fs::create_dir_all(dir).is_err() {
+            return Admission(None); // no temp dir to coordinate through: proceed uncapped
+        }
+        let mut announced = false;
+        loop {
+            if let Some(admission) = Admission::try_acquire_in(dir, limit) {
+                return admission;
+            }
+            if !announced {
+                announced = true;
+                eprintln!("wasm_lite: waiting for a browser slot ({limit} in use)");
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    /// Claim a slot if one is free right now, else `None`.
+    fn try_acquire_in(dir: &std::path::Path, limit: usize) -> Option<Admission> {
+        fs::create_dir_all(dir).ok()?;
+        (0..limit)
+            .find_map(|slot| Admission::claim(&dir.join(format!("slot{slot}"))))
+            .map(|path| Admission(Some(path)))
+    }
+
+    /// Take one specific slot, reclaiming it first if its holder is gone.
+    fn claim(path: &std::path::Path) -> Option<PathBuf> {
+        let write_pid = |mut file: fs::File| {
+            let _ = file.write_all(std::process::id().to_string().as_bytes());
+            Some(path.to_path_buf())
+        };
+        let create = || OpenOptions::new().write(true).create_new(true).open(path);
+        if let Ok(file) = create() {
+            return write_pid(file);
+        }
+        // Retry the same slot after reclaiming it: skipping to the next one
+        // would report a full pool while holding a slot nobody owns.
+        if slot_is_dead(path) {
+            let _ = fs::remove_file(path);
+            if let Ok(file) = create() {
+                return write_pid(file);
+            }
+        }
+        None
+    }
+}
+
+impl Drop for Admission {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            // Only reclaim a slot still recorded as ours: if a waiter judged it
+            // dead and took it, deleting would evict that innocent holder.
+            if fs::read_to_string(path).is_ok_and(|pid| pid == std::process::id().to_string()) {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
+/// Whether a slot's holder is gone, so the slot can be reclaimed.
+///
+/// A runner killed with `SIGKILL` runs no destructor, so slots do leak; left
+/// alone they would permanently shrink the pool. Prefer the pid check — it is
+/// exact and immediate — and fall back to file age where procfs is absent.
+fn slot_is_dead(path: &std::path::Path) -> bool {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return false;
+    };
+    if let Ok(pid) = contents.trim().parse::<u32>()
+        && cfg!(target_os = "linux")
+        && PathBuf::from("/proc").is_dir()
+    {
+        return !PathBuf::from(format!("/proc/{pid}")).exists();
+    }
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .is_ok_and(|t| t.elapsed().is_ok_and(|age| age > SLOT_STALE_AFTER))
+}
+
 // --- shared-browser state + lock --------------------------------------------
 
 /// A per-user filename component: the temp dir may be world-writable and
@@ -649,4 +811,74 @@ fn parse_json_string(s: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch directory of our own, so concurrent tests never share slots.
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wl_admit_test_{}_{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn admission_caps_concurrent_browsers() {
+        let dir = scratch("cap");
+        let _first = Admission::acquire_in(&dir, 2);
+        let _second = Admission::acquire_in(&dir, 2);
+        // Both slots are taken; a third caller must wait rather than launch.
+        assert!(Admission::try_acquire_in(&dir, 2).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dropping_an_admission_frees_its_slot() {
+        let dir = scratch("free");
+        let first = Admission::acquire_in(&dir, 1);
+        assert!(Admission::try_acquire_in(&dir, 1).is_none());
+        drop(first);
+        assert!(Admission::try_acquire_in(&dir, 1).is_some());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_slot_left_by_a_dead_holder_is_reclaimed() {
+        let dir = scratch("stale");
+        fs::create_dir_all(&dir).unwrap();
+        // A pid that cannot be running: a SIGKILLed runner leaves exactly this,
+        // and without reclamation the pool would shrink by one for good.
+        fs::write(dir.join("slot0"), "4294967295").unwrap();
+        assert!(Admission::try_acquire_in(&dir, 1).is_some());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_slot_held_by_a_live_holder_is_kept() {
+        let dir = scratch("live");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("slot0"), std::process::id().to_string()).unwrap();
+        assert!(Admission::try_acquire_in(&dir, 1).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn browser_limit_stays_within_one_and_the_core_count() {
+        // A memory-starved host must still make progress, one browser at a
+        // time; a roomy one must not exceed the cores it can actually drive.
+        let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let limit = max_browsers();
+        assert!((1..=cpus).contains(&limit), "limit {limit} for {cpus} cpus");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn available_memory_is_readable_and_sane() {
+        // The whole cap rests on this parse; a silent `None` would quietly
+        // demote every host to DEFAULT_MAX_BROWSERS.
+        let mib = available_mib().expect("MemAvailable on a Linux host");
+        assert!(mib > 0 && mib < 1024 * 1024, "{mib} MiB");
+    }
 }

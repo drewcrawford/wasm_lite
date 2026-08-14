@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.1 - unreleased
+
+### Fixed
+
+- **Parallel doctests started more browsers than the machine could hold.**
+  `cargo test --doc` invokes the runner once per doctest and runs those in
+  parallel across every core, and each invocation launched its own browser with
+  nothing coordinating them. On a host with more cores than spare gigabytes the
+  result was not an out-of-memory message but arbitrary, unrelated tests failing
+  with `read: Resource temporarily unavailable (os error 11)` from a thread the
+  browser could not spawn, or `no such window: Browsing context has been
+  discarded` after a content process was killed — while the same tests passed
+  under `--test-threads=1`. The runner now admits a bounded number of browsers
+  and makes the rest wait: free memory divided by roughly a gigabyte each,
+  clamped to the core count, overridable with `WASM_LITE_MAX_BROWSERS`. The
+  limit lives in slot files rather than in process memory, because rustdoc
+  spawns a separate runner *process* per doctest and an in-process lock would
+  not see the others; a slot whose holder was killed is reclaimed by the next
+  waiter.
+
 ## 0.1.0 - 2026-08-14
 
 The first release. `wasm_lite` binds JavaScript and Rust to each other on
