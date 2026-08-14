@@ -271,15 +271,10 @@ fn run_main(browser: &Browser, port: u16) -> Result<i32, String> {
     // A hang is a failure of this program, not of the runner, so report what it
     // logged before it stopped. Without this a timeout says only "timed out",
     // which is the least informative thing we know about it.
-    if let Err(err) = wait_done(browser) {
+    let mut console = Console::default();
+    if let Err(err) = wait_done(browser, &mut console) {
         eprintln!("error: {err}");
-        let console = browser.eval_string(CONSOLE_JOIN)?;
-        if console.is_empty() {
-            eprintln!("(the program logged nothing before it stopped)");
-        } else {
-            eprintln!("--- console output before the timeout ---");
-            eprintln!("{console}");
-        }
+        console.report("--- console output before it stopped ---", &err);
         println!("test result: FAILED");
         return Ok(1);
     }
@@ -366,13 +361,18 @@ fn run_suite(
         // A hung test is that test's failure, not the suite's: report it and
         // move on so the remaining tests still run and get a summary. (Errors
         // from goto/eval still abort — those mean the browser session is gone.)
-        if let Err(err) = wait_done(browser) {
+        let mut watch = Console::default();
+        if let Err(err) = wait_done(browser, &mut watch) {
             failed += 1;
             println!("test {name} ... FAILED");
-            println!("    {err}");
-            // Same reasoning as `run_main`: what it logged before hanging is
-            // usually the only clue to where it hung.
-            for line in browser.eval_string(CONSOLE_JOIN)?.lines() {
+            for line in err.lines() {
+                println!("    {line}");
+            }
+            // Same reasoning as `run_main`: what it logged before it stopped is
+            // usually the only clue to what happened, and if the page was
+            // discarded this snapshot is the only copy left. The failure that
+            // ended the run is normally in both, so print it once.
+            for line in watch.0.lines().filter(|l| !err.contains(*l)) {
                 println!("    {line}");
             }
             continue;
@@ -465,11 +465,14 @@ fn run_bench_suite(
     for name in names {
         let encoded_name = encode_query_component(name);
         browser.goto(&format!("http://127.0.0.1:{port}/?bench={encoded_name}"))?;
-        if let Err(err) = wait_done(browser) {
+        let mut watch = Console::default();
+        if let Err(err) = wait_done(browser, &mut watch) {
             failed += 1;
             println!("test {name} ... FAILED");
-            println!("    {err}");
-            for line in browser.eval_string(CONSOLE_JOIN)?.lines() {
+            for line in err.lines() {
+                println!("    {line}");
+            }
+            for line in watch.0.lines() {
                 println!("    {line}");
             }
             continue;
@@ -586,13 +589,87 @@ fn timeout_secs() -> u64 {
 }
 
 /// Poll until the page records a result (or time out).
-fn wait_done(browser: &Browser) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs());
-    loop {
-        if browser.eval_bool("return !!globalThis.__wl_done;")? {
-            return Ok(());
+/// The last console text the page was seen to hold.
+///
+/// Kept as we go because a page that dies takes its console with it: once a
+/// browsing context is discarded every later `eval` fails with a WebDriver
+/// error, so reading the log *after* noticing the failure gets nothing. Firefox
+/// discards the context where Chrome reports the exception, which is why the
+/// same crash used to be diagnosable in one browser and silent in the other.
+#[derive(Default)]
+struct Console(String);
+
+impl Console {
+    /// Refresh from the page, keeping the previous text if it can no longer be
+    /// read (which is itself usually the interesting case).
+    fn refresh(&mut self, browser: &Browser) {
+        if let Ok(text) = browser.eval_string(CONSOLE_JOIN) {
+            self.0 = text;
         }
+    }
+
+    /// Print what the page logged, however the run ended.
+    fn report(&self, heading: &str, already_said: &str) {
+        // The failure that ended the run is usually both the error and the last
+        // console line; saying it twice reads like two problems.
+        let rest: Vec<&str> = self
+            .0
+            .lines()
+            .filter(|l| !already_said.contains(*l))
+            .collect();
+        if rest.is_empty() {
+            return;
+        }
+        eprintln!("{heading}");
+        eprintln!("{}", rest.join("\n"));
+    }
+}
+
+/// Is this the browser telling us the page is gone rather than a real fault?
+///
+/// Firefox reports a crashed or self-discarded page this way and says nothing
+/// else, so the raw WebDriver text is a poor thing to hand a user.
+fn is_discarded_context(err: &str) -> bool {
+    err.contains("no such window") || err.contains("Browsing context has been discarded")
+}
+
+fn wait_done(browser: &Browser, console: &mut Console) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs());
+    let mut next_console_read = Instant::now();
+    loop {
+        match browser.eval_bool("return !!globalThis.__wl_done;") {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(err) if is_discarded_context(&err) => {
+                return Err(
+                    "the page was discarded before the run finished — it crashed, or ran out \
+                     of memory. What it logged first is below."
+                        .to_string(),
+                );
+            }
+            Err(err) => return Err(err),
+        }
+
+        // A worker that failed to start will never resolve whatever is waiting
+        // on it, so this is an ending, not a delay. Reporting it as a timeout
+        // told users to raise the timeout, which could never help.
+        let start_error = browser.eval_string("return globalThis.__wl_worker_start_error || \"\";");
+        if let Ok(text) = start_error
+            && !text.is_empty()
+        {
+            console.refresh(browser);
+            return Err(text);
+        }
+
+        // Cheap enough at this cadence, and the only way to have the log at all
+        // if the page dies between polls.
+        if Instant::now() >= next_console_read {
+            console.refresh(browser);
+            next_console_read = Instant::now() + Duration::from_millis(500);
+        }
+
         if Instant::now() > deadline {
+            console.refresh(browser);
             return Err(format!(
                 "timed out after {}s waiting for the program to finish \
                  (raise WASM_LITE_TIMEOUT_SECS if it just needs longer)",

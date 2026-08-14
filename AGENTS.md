@@ -163,3 +163,35 @@ the end-to-end check.
   run the body on a Web Worker for blocking/threaded code.
 - Doctests run in-browser too; call `wasm_lite::set_panic_hook()` at the top of a doctest so
   failures report the panic message instead of a bare "unreachable" trap.
+- The prevailing idiom is one function that is a native `#[test]` and a wasm32
+  `#[wasm_lite_test]`, via paired `cfg_attr`s (see `crates/wasm_lite_std/src/sync_tests.rs`).
+  `#[should_panic]` and `#[ignore]` are therefore *read* off the function and left on it, so
+  the same attribute keeps meaning what it says under libtest — never consume them. They
+  travel to the runner as tab-separated fields on the harness-section record, which the
+  codegen parses strictly: an unrecognised field is a hard error, because it means the macro
+  and the parser are out of step.
+- `#[wasm_lite_bench]` accepts `#[ignore]` but rejects `#[should_panic]` — a benchmark that
+  panicked recorded no measurement.
+- `cargo test` works on wasm-bindgen interop modules: the runner builds the interop bundle
+  and serves a loader exporting `instantiate` instead of running on import. The wasm-bindgen
+  CLI preserves our custom sections and `__wl_test_*` exports, which is what makes discovery
+  work. Threads are the gap — an interop bundle has no worker bootstrap.
+
+## Failure modes the runner diagnoses at build time
+
+Three misconfigurations used to surface as unreadable runtime failures and are now build
+errors; if you touch this area, keep them that way rather than relaxing them into warnings.
+
+- **Missing thread exports.** A spawning module must export `__stack_pointer`, `__tls_size`
+  and `__wasm_init_tls`. Exactly **three** — `__tls_base` and `__tls_align` are conventional
+  in wasm-bindgen's recipe but are read nowhere here, and were removed after a
+  drop-one-flag-at-a-time sweep confirmed a build without them spawns and joins correctly.
+  Don't reinstate them.
+- **`+atomics` without shared memory.** `Builder::spawn` selects on
+  `#[cfg(target_feature = "atomics")]`, so enabling atomics compiles *out* the graceful
+  `io::ErrorKind::Unsupported` path. A module that imports `__wl_spawn` but has unshared
+  memory can therefore only fail at runtime — it is a contradiction, not a lesser build.
+- Both checks key on evidence that cannot false-positive: a **shared** memory import, and the
+  `__wl_spawn` import (absent when dead-code-eliminated). `__wl_thread_entry` is *not* usable
+  as a marker — the core crate keeps it alive unconditionally, so keying on it faults every
+  single-threaded module.

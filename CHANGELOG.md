@@ -80,6 +80,27 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **A worker that failed to start hung until the timeout.** The runner detected
+  the failure and logged it, then went on waiting for a verdict that could never
+  arrive, and finally reported "timed out after 30s … raise
+  `WASM_LITE_TIMEOUT_SECS` if it just needs longer" — advice that could not
+  possibly help, since nothing was still running. Eight such doctests cost four
+  minutes of pure timeout and pointed away from the real cause. A worker that
+  never starts will never resolve the join waiting on it, so it is now reported
+  as an ending rather than a delay: the glue records the failure where the
+  runner can see it, and the run stops immediately with the reason.
+
+- **The default browser lost the output that explained the failure.** On the
+  same crash Chrome reported the underlying `TypeError` while Firefox — the
+  default — gave `no such window: Browsing context has been discarded`, twice,
+  and nothing else. The cause is that a discarded context makes every later
+  `eval` fail, so reading the console *after* noticing the failure got nothing;
+  Chrome only looked better because it happened not to discard the page. The
+  runner now keeps a rolling snapshot of the console as it waits, so whatever
+  the page logged survives the page, and reports a discarded context as "the
+  page was discarded — it crashed, or ran out of memory" rather than as raw
+  WebDriver text.
+
 - **The documented atomics build recipe did not produce a working worker.**
   `wasm_lite_std`'s module docs gave `RUSTFLAGS='-C
   target-feature=+atomics,+bulk-memory'` and nothing else. That enables the

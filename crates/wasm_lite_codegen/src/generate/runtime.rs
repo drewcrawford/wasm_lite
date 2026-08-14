@@ -410,6 +410,18 @@ const __WL_STACK = 1 << 20;
 // Keep live workers referenced so they are not garbage-collected mid-run.
 const __wl_workers = new Set();
 
+// A worker that never starts is terminal, not slow: nothing will resolve the
+// join that is waiting on it. Record the first such failure where the runner can
+// see it, so a run ends with the reason instead of with a timeout that suggests
+// raising the timeout. Still logged, so an interactive session sees it too.
+function __wl_worker_start_failed(reason) {{
+    const text = \"wasm_lite: worker failed to start: \" + reason;
+    if (globalThis.__wl_worker_start_error === undefined) {{
+        globalThis.__wl_worker_start_error = text;
+    }}
+    __wl_sink_log(\"error\", text);
+}}
+
 // Runtime import: spawn a Web Worker for the boxed closure `work`. Allocates a
 // fresh stack + TLS block, then hands the worker this module + shared memory.
 //
@@ -450,8 +462,8 @@ function __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize) {{
     // `onerror` and nowhere else. Without this it is perfectly silent: the
     // spawn appears to succeed and the thread simply never runs.
     w.onerror = (e) => {{
-        __wl_sink_log(\"error\", \"wasm_lite: spawned worker failed to start: \" +
-            ((e && (e.message || e.filename)) ? ((e.message || \"\") + \" @ \" + (e.filename || \"?\") + \":\" + (e.lineno || 0)) : String(e)));
+        __wl_worker_start_failed(
+            (e && (e.message || e.filename)) ? ((e.message || \"\") + \" @ \" + (e.filename || \"?\") + \":\" + (e.lineno || 0)) : String(e));
     }};
     w.onmessageerror = (e) => {{
         __wl_sink_log(\"error\", \"wasm_lite: spawned worker could not deserialize its start message \" +
@@ -460,6 +472,7 @@ function __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize) {{
     w.onmessage = (e) => {{
         const m = e.data;
         if (m && m.__wl_log) {{ __wl_sink_log(m.__wl_log[0], m.__wl_log[1]); }}   // forward worker console up
+        else if (m && m.__wl_start_failed !== undefined) {{ __wl_worker_start_failed(m.__wl_start_failed); }}
         // A thread this worker spawned: create it here (or relay further up).
         // Its stack and TLS are already allocated in the shared memory.
         else if (m && m.__wl_spawn_req) {{ __wl_spawn_at(...m.__wl_spawn_req); }}
@@ -522,7 +535,10 @@ self.addEventListener(\"error\", (ev) => {{
 }});
 self.addEventListener(\"unhandledrejection\", (ev) => {{
     const r = ev.reason;
-    self.postMessage({{ __wl_log: [\"error\", \"wasm_lite: worker failed to start: \" + ((r && (r.stack || r.message)) || r)] }});
+    // Structured, not just logged: a thread that never started will never
+    // resolve its join, so the runner has to be able to tell this apart from
+    // \"still working\" rather than sitting out its whole timeout.
+    self.postMessage({{ __wl_start_failed: String((r && (r.stack || r.message)) || r) }});
 }});
 
 self.onmessage = async (e) => {{
