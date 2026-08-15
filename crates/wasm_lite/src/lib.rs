@@ -72,9 +72,10 @@
 //! `wasm-bindgen` feature supports incremental migration in the direction where
 //! `wasm_lite` is the final codegen step. Bounded package-substitution shims
 //! cover both host directions too: [`backend-wasm-bindgen/`](https://github.com/drewcrawford/wasm_lite/tree/main/backend-wasm-bindgen)
-//! lowers a wasm_lite-authored leaf onto a wasm-bindgen host, while
+//! runs a wasm_lite-authored leaf on the **wasm-bindgen backend**, while
 //! [`backend-wasm-lite/`](https://github.com/drewcrawford/wasm_lite/tree/main/backend-wasm-lite)
-//! lowers the supported wasm-bindgen ecosystem surface onto wasm_lite.
+//! is the **wasm_lite backend** for wasm-bindgen code, lowering the supported
+//! wasm-bindgen ecosystem surface onto wasm_lite.
 //!
 //! Prefer `wasm-bindgen` when you need its mature ecosystem surface today.
 //! Prefer [`wasm_lite`](crate) when the browser path itself is the product
@@ -308,7 +309,7 @@
 //! | `crates/wasm_lite_codegen` | host-side: read binding/test/benchmark sections; generate export wrappers, worker glue, and interop bundles |
 //! | `crates/wasm_lite_cli` | the `wasm_lite` binary: `build` writes glue plus bundle-specific worker and wasm-bindgen interop artifacts; `run` serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
 //! | `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync + async); atomics builds use workers while stable non-atomic wasm uses a local event-loop executor |
-//! | `backend-wasm-bindgen/` | separate workspace: partial wasm-bindgen-backed substitutes for `wasm_lite` and `wasm_lite_std`, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
+//! | `backend-wasm-bindgen/` | separate workspace: the **wasm-bindgen backend** — substitutes named `wasm_lite` / `wasm_lite_std` but implemented on real wasm-bindgen, so a wasm_lite-authored leaf can live under a wasm-bindgen host |
 //! | `backend-wasm-lite/` | separate workspace: wasm-bindgen's API lowered onto wasm_lite, so unmodified `js-sys`/`web-sys`/`wgpu` compile here; substituted via `[patch.crates-io]` and never published |
 //!
 //! ## Examples

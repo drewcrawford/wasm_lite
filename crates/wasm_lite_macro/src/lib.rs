@@ -311,6 +311,8 @@ impl Parse for BenchArgs {
 /// *left on* the emitted function. The usual shape in this workspace is
 ///
 /// ```ignore
+/// # // ignore because: this attribute combination is illustrative documentation,
+/// # // not a complete test function.
 /// #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
 /// #[cfg_attr(not(target_arch = "wasm32"), test)]
 /// #[should_panic(expected = "boom")]
