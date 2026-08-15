@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- **`wasm_lite_std` no longer breaks a nightly host build under `-D warnings`.**
+  The `internal_output_capture` feature was gated on `nightly_rustc` alone, but
+  its only caller — the `set_output_capture` call that routes `println!` to the
+  browser console — lives in `mod wasm`, which is `cfg(target_arch = "wasm32")`.
+  On a nightly build for any other target the feature was therefore declared and
+  never used, which `unused_features` reports and `-D warnings` promotes to a
+  hard error. Merely depending on `wasm_lite_std` was enough to hit it: a
+  downstream crate did, from a script that builds a proc-macro crate — which
+  compiles for the host — with the warning-strict flags. The gate now also
+  requires `target_arch = "wasm32"`, matching the code it exists for. No
+  behaviour change on wasm32.
+
 ## 0.1.1
 
 ### Added

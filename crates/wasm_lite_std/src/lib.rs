@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-#![cfg_attr(nightly_rustc, feature(internal_output_capture))]
+// `nightly_rustc` alone is too broad: the only caller of `set_output_capture` is
+// in `mod wasm`, which is `cfg(target_arch = "wasm32")`. Enabling the feature on
+// a nightly *host* build declares it without using it, which `unused_features`
+// reports — a hard error under `-D warnings`.
+#![cfg_attr(
+    all(nightly_rustc, target_arch = "wasm32"),
+    feature(internal_output_capture)
+)]
 #![cfg_attr(
     all(target_arch = "wasm32", target_feature = "atomics"),
     feature(stdarch_wasm_atomic_wait)
