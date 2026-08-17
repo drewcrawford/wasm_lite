@@ -9,7 +9,9 @@ resolver = "2"
 members = ["wasm_lite", "wasm_lite_std", "wasm_lite_macro_wb"]
 
 [workspace.package]
-version = "0.1.0"
+# A `[patch.crates-io]` candidate must satisfy the dependency's requested
+# version. Keep this aligned with the released wasm_lite/wasm_lite_std version.
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.95.0"
 authors = ["Drew Crawford <drew@sealedabstract.com>"]

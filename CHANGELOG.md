@@ -33,6 +33,13 @@ All notable changes to this project will be documented in this file.
   makes shimming unmodified dependencies such as wgpu practical in an
   application that already uses released wasm_lite packages.
 
+- **The reverse compatibility shims now match wasm_lite 0.1.2.** Cargo can
+  therefore select the wasm-bindgen-backed `wasm_lite` and `wasm_lite_std`
+  substitutes for leaves depending on the current release. This direction
+  already uses released wasm-bindgen dependencies, so there was no duplicate
+  runtime source to untangle—just a stale patch-candidate version to bring
+  forward.
+
 ### Fixed
 
 - **`WASM_LITE_GPU=1` now delivers the software WebGPU adapter it promises.**
