@@ -31,7 +31,7 @@ name = "wasm_bindgen"
 path = "src/lib.rs"
 
 [dependencies]
-wasm_lite = { path = "../../crates/wasm_lite" }
+wasm_lite = "0.1.2"
 wasm-bindgen-macro-wl = { path = "../wasm_bindgen_macro_wl" }
 
 # The features the real wasm-bindgen declares. They are all no-ops here — the

@@ -24,6 +24,15 @@ All notable changes to this project will be documented in this file.
   move the observer without playing thread-affinity roulette. The
   wasm-bindgen backend provides the same surface and semantics.
 
+### Changed
+
+- **The wasm-bindgen compatibility shims now compose with released wasm_lite
+  crates downstream.** The shim workspace still tests against its sibling
+  sources, but applications can patch only the wasm-bindgen compatibility
+  crate without pulling in a second path-sourced copy of the runtime. This
+  makes shimming unmodified dependencies such as wgpu practical in an
+  application that already uses released wasm_lite packages.
+
 ## 0.1.2 - 2026-08-17
 
 ### Added

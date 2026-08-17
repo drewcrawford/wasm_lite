@@ -20,6 +20,14 @@ members = [
     "consumer-async",
 ]
 
+# Keep this workspace exercising the sibling sources while allowing the shim
+# crates themselves to depend on released wasm_lite versions. Downstream
+# `[patch.crates-io]` entries are not inherited from dependencies, so consumers
+# get one registry wasm_lite package instead of a second path-sourced copy.
+[patch.crates-io]
+wasm_lite = { path = "../crates/wasm_lite" }
+wasm_lite_std = { path = "../crates/wasm_lite_std" }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

@@ -61,6 +61,13 @@ wasm-bindgen = { path = ".../backend-wasm-lite/wasm_bindgen" }
 wasm-bindgen-test = { path = ".../backend-wasm-lite/wasm_bindgen_test" }
 ```
 
+The shim crates depend on released `wasm_lite` packages. The shim workspace
+patches those dependencies back to its sibling sources for its own development,
+but that patch does not propagate to consumers. An application that already
+uses released `wasm_lite` therefore patches only the compatibility crates above;
+it does not need to patch the whole wasm_lite family to avoid duplicate runtime
+copies.
+
 Two things routinely go wrong here:
 
 * **`[patch]` only replaces the exact version it declares.** The shim declares
