@@ -9,6 +9,7 @@ cd "$REPO_ROOT"
 
 RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo doc -p wasm_lite --target wasm32-unknown-unknown --no-deps
 RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo +nightly doc -p wasm_lite_std --target wasm32-unknown-unknown --no-deps
+RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo +nightly doc -p wasm_lite_std --features fs --target wasm32-unknown-unknown --no-deps
 
 for example in \
     examples/exports-demo \
@@ -20,3 +21,4 @@ do
 done
 
 RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" cargo +nightly doc -p wasm_lite_std --target wasm32-unknown-unknown --no-deps -Z build-std=std,panic_abort
+RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" cargo +nightly doc -p wasm_lite_std --features fs --target wasm32-unknown-unknown --no-deps -Z build-std=std,panic_abort

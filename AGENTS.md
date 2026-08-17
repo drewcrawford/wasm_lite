@@ -56,7 +56,7 @@ lockstep — a change to one almost always requires a matching change to the oth
 | `crates/wasm_lite_macro` | proc-macros (`syn`/`quote`, build-time only): `import!`, `#[export]`, `#[wasm_lite_test]`, `#[wasm_lite_bench]`, `js_class!`. `ty.rs` holds the shared type→ABI dispatch. |
 | `crates/wasm_lite_codegen` | host-side: parse descriptor sections, generate JS glue. Dependency-free. |
 | `crates/wasm_lite_cli` | the `wasm_lite` binary: `build` writes glue, bundle-specific worker modules, and wasm-bindgen interop artifact sets; `run` serves a bin interactively, or drives tests/doctests/benchmarks headless and exits |
-| `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync **and** async) ported from `wasm_safe_thread`; atomics builds use workers + `Atomics.waitAsync`, while stable non-atomic wasm uses a local event-loop executor and host timers |
+| `crates/wasm_lite_std` | std-like veneer (`std::thread`/`std::sync`/`std::time`, sync **and** async) ported from `wasm_safe_thread`, plus opt-in async read-only `std::fs`; atomics builds use workers + `Atomics.waitAsync`, while stable non-atomic wasm uses a local event-loop executor and host timers |
 
 Two separate shim workspaces deliberately reuse package names and therefore cannot be root
 workspace members:

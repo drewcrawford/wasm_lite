@@ -13,10 +13,30 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+# Keep feature spelling and dependency isolation identical to the real crate.
+fs = ["dep:blocking", "dep:priority", "dep:web-sys"]
+
 [dependencies]
 wasm_safe_thread = "0.1"
+priority = { version = "0.1.1", optional = true }
+
+[target.'cfg(not(target_arch="wasm32"))'.dependencies]
+blocking = { version = "1.6.2", optional = true }
 
 [target.'cfg(target_arch="wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 web-time = "1.1"
+web-sys = { version = "0.3", optional = true, features = [
+    "Headers",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "Request",
+    "RequestInit",
+    "Response",
+] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

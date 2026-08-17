@@ -9,6 +9,7 @@ cd "$REPO_ROOT"
 
 RUSTFLAGS="$WASM32_RUSTFLAGS" cargo check -p wasm_lite --target wasm32-unknown-unknown
 RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +stable check -p wasm_lite_std --target wasm32-unknown-unknown
+RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +stable check -p wasm_lite_std --features fs --target wasm32-unknown-unknown
 
 for example in \
     examples/hello-rust \

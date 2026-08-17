@@ -59,8 +59,10 @@ Following the wasm-bindgen ecosystem split (language vs browser):
   executor for non-blocking async on the main thread. The executor and host
   timer also work in stable, non-atomic wasm; actual worker spawning remains the
   nightly shared-memory path. Runtime deps are `wasm_lite` and an
-  `atomic-waker`-backed async wait primitive. Browser-validated (see
-  [testing](./testing.md)). *Like `std` (the `std::thread`/`std::sync` slice).*
+  `atomic-waker`-backed async wait primitive. Its opt-in `fs` feature absorbs
+  `async_file`: pooled native `std::fs` reads and ranged browser fetches behind
+  one async, read-only API. Browser-validated (see [testing](./testing.md)).
+  *Like `std` (the `std::thread`/`std::sync`/`std::fs` slice).*
 * `wasm_lite_js` *(future)* — ECMAScript built-ins (`Object`, `Array`, `Map`,
   `JSON`, `Date`, …) bound with `js_class!`. *Like `js-sys`.*
 * `wasm_lite_web` *(future)* — Web/host APIs (DOM, `fetch`, …). *Like `web-sys`.*
@@ -91,7 +93,7 @@ problem `std` never addressed.
 | candidate | `std`-shaped? | native impl a `std` veneer? | verdict |
 |---|---|---|---|
 | `wasm_safe_thread`, `wasm_safe_mutex` | yes (`std::thread`, `std::sync`) | yes | **absorbed** |
-| [`async_file`](https://crates.io/crates/async_file) | yes (`std::fs`) | yes — wraps `std::fs` | **qualifies** |
+| [`async_file`](https://crates.io/crates/async_file) | yes (`std::fs`) | yes — wraps `std::fs` | **absorbed behind `fs`** |
 | [`send_cells`](https://crates.io/crates/send_cells) | **no** — `std` has no `SendCell` | n/a | **no** |
 
 `send_cells` is the instructive rejection. It is tempting, because

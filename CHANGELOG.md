@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- **`wasm_lite_std::fs` brings `async_file` home.** Enable the new, opt-in
+  `fs` feature for asynchronous read-only files on native and browser wasm:
+  `File::open`, `read`, `read_all`, `seek`, `metadata`, `exists`, and origin
+  configuration all keep the familiar priority-bearing API. Native calls use
+  a blocking-I/O pool; browser calls use strict HTTP range handling over
+  `wasm_lite::fetch`. The feature stays off by default, so existing builds keep
+  their current dependency footprint.
+
+  Range responses are checked before their bytes are trusted, compressed
+  partial responses are rejected, servers that ignore ranges fall back safely,
+  and short reads, EOF, seeking, and allocation failures follow native file
+  semantics.
+
+  Wasm futures remain genuinely `Send`: JS handles stay on their origin realm
+  while plain Rust results cross a channel, so a work-stealing executor can
+  move the observer without playing thread-affinity roulette. The
+  wasm-bindgen backend provides the same surface and semantics.
+
 ## 0.1.2 - 2026-08-17
 
 ### Added

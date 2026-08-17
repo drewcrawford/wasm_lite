@@ -4,7 +4,8 @@
 //!
 //! See the [`wasm_lite`](https://github.com/drewcrawford/wasm_lite) shim for the
 //! rationale. This crate provides the
-//! `wasm_lite_std` surface — threads, sync primitives, time — on top of
+//! `wasm_lite_std` surface — threads, sync primitives, time, and optional
+//! asynchronous file access — on top of
 //! [`wasm_safe_thread`], which is the crate `wasm_lite_std` was itself ported
 //! from and whose API is near-identical. That makes the bulk of this file a
 //! re-export; only the pieces `wasm_lite_std` added after the port are
@@ -30,6 +31,10 @@ pub use wasm_safe_thread::{
 };
 pub use wasm_safe_thread::{clear_spawn_hooks, register_spawn_hook, remove_spawn_hook};
 pub use wasm_safe_thread::{condvar, guard, mpsc, mutex, rwlock, spinlock, test_executor};
+
+/// Asynchronous, read-only file access.
+#[cfg(feature = "fs")]
+pub mod fs;
 
 /// Clock types.
 ///

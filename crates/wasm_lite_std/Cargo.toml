@@ -5,7 +5,7 @@
 # off wasm-bindgen onto wasm_lite's `thread::spawn` primitive + core atomics.
 [package]
 name = "wasm_lite_std"
-description = "std::thread + std::sync veneer over wasm_lite (ported from wasm_safe_thread)."
+description = "std-shaped thread, sync, time, and optional async filesystem APIs over wasm_lite."
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -16,8 +16,18 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+# Async, read-only std::fs-shaped API. Its native pool and Priority type stay
+# out of existing users' dependency graphs until this is requested.
+fs = ["dep:blocking", "dep:priority"]
+
 [dependencies]
 atomic-waker = "1.1.2"
+priority = { version = "0.1.1", optional = true }
+
+[target.'cfg(not(target_arch="wasm32"))'.dependencies]
+blocking = { version = "1.6.2", optional = true }
 
 [target.'cfg(target_arch="wasm32")'.dependencies]
 wasm_lite = { workspace = true }
@@ -35,6 +45,11 @@ harness = false
 [[test]]
 name = "fetch"
 harness = false
+
+[[test]]
+name = "fs"
+harness = false
+required-features = ["fs"]
 
 # `wasm_lite::websocket`'s browser suite, here for the same reason. Its peer is
 # the runner's own echo endpoint.

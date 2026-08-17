@@ -11,7 +11,7 @@
     all(target_arch = "wasm32", target_feature = "atomics"),
     feature(stdarch_wasm_atomic_wait)
 )]
-//! A unified cross-platform `std::thread` + `std::sync` replacement for native + wasm32.
+//! Cross-platform `std`-shaped APIs for native + wasm32.
 //!
 //! ![logo](https://github.com/drewcrawford/wasm_lite/raw/main/art/wasm_lite.png)
 //!
@@ -23,6 +23,10 @@
 //! `std::sync` qualified; `std::fs` would. A crate solving a problem `std` never
 //! addressed does not, even when this crate wants what it has. See
 //! [the absorption rule](https://github.com/drewcrawford/wasm_lite/blob/main/docs/roadmap.md#what-belongs-in-wasm_lite_std--the-absorption-rule).
+//!
+//! The optional `fs` feature adds `wasm_lite_std::fs`, an asynchronous, read-only
+//! `std::fs`-shaped API. Native operations use a blocking-I/O pool; browser
+//! wasm reads same-origin or CORS-enabled resources with HTTP range requests.
 //!
 //! This crate provides a unified threading API and synchronization primitives that work across both
 //! WebAssembly and native platforms. In practice, you can treat it as a cross-platform replacement
@@ -422,6 +426,8 @@ mod animation;
 mod async_wait;
 mod block_on;
 pub mod condvar;
+#[cfg(feature = "fs")]
+pub mod fs;
 pub mod guard;
 mod hooks;
 pub mod mpsc;

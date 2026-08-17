@@ -92,7 +92,8 @@ JavaScript packaging shape; the main backend is **modern browsers**.
   `std::thread`/`std::sync`/`std::time` slice that browser wasm is missing:
   `spawn`, `JoinHandle`, `Mutex`, `RwLock`, `Condvar`, `mpsc`, `Instant`, and
   `SystemTime`, with sync and async paths where the browser main thread cannot
-  block.
+  block. Its opt-in `fs` feature adds asynchronous read-only files: pooled
+  `std::fs` operations natively and HTTP range reads in the browser.
 * **First-class testing.** The same runner drives `cargo run`, `cargo test`,
   and rustdoc doctests in a real browser. Harness tests run one page load per
   test; async tests are fail-closed so a dropped task, panic, or hang cannot

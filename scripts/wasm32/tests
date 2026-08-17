@@ -32,6 +32,18 @@ CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN
 cargo +stable test -p wasm_lite_std --test browser \
     --target wasm32-unknown-unknown sleep_async_waits_on_the_main_thread
 
+# The filesystem works without shared memory. Run its whole range/metadata
+# contract in both engines before the atomics suite proves cross-realm movement.
+echo "testing wasm_lite_std::fs (stable non-atomic, firefox then chrome)"
+for BROWSER in firefox chrome; do
+    RUSTFLAGS="$WASM32_RUSTFLAGS" \
+    RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" \
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+    WASM_LITE_BROWSER="$BROWSER" \
+    cargo +stable test -p wasm_lite_std --features fs --test fs \
+        --target wasm32-unknown-unknown
+done
+
 echo "testing examples/tests-demo passing suite"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test passing)
 
@@ -102,7 +114,19 @@ for BROWSER in firefox chrome; do
     RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
     CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
     WASM_LITE_BROWSER="$BROWSER" \
-    cargo +nightly test -p wasm_lite_std --lib \
+    cargo +nightly test -p wasm_lite_std --features fs --lib \
+        --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+done
+
+# Under shared memory this repeats the public contract and additionally polls a
+# File::open future on a worker, moves it to the main realm, and completes it.
+echo "testing wasm_lite_std::fs Send futures (atomics, firefox then chrome)"
+for BROWSER in firefox chrome; do
+    RUSTFLAGS="$WASM32_ATOMICS_RUSTFLAGS" \
+    RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+    WASM_LITE_BROWSER="$BROWSER" \
+    cargo +nightly test -p wasm_lite_std --features fs --test fs \
         --target wasm32-unknown-unknown -Z build-std=std,panic_abort
 done
 

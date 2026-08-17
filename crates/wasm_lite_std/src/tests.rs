@@ -773,10 +773,11 @@ crate::async_test! {
         // Yield to event loop to let the worker start
         crate::yield_to_event_loop_async().await;
 
-        // Poll is_finished with async yields until it becomes true
+        // Poll with a real timer turn. A tight loop of self-wakes can complete
+        // before the native worker receives an OS timeslice under test load.
         let mut attempts = 0;
         while !handle.is_finished() && attempts < 1_000 {
-            crate::yield_to_event_loop_async().await;
+            crate::sleep_async(Duration::from_millis(1)).await;
             attempts += 1;
         }
 
