@@ -16,6 +16,12 @@ done
 
 cargo build -p wasm_lite_cli
 
+# First, because it checks the runner itself rather than any one crate: fixtures
+# that must FAIL, and must fail for the stated reason. Nothing below can catch a
+# runner that swallows a failure — that looks exactly like a green run.
+echo "checking that must-fail fixtures still fail"
+"$(dirname "$0")/negative" "$@"
+
 # The standard Rust-stable build has no shared memory or atomics. Exercise its
 # event-loop executor and local host timer separately from the nightly threaded
 # suite below, so an accidental atomic-wait dependency cannot hide in CI.

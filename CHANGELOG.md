@@ -61,6 +61,14 @@ All notable changes to this project will be documented in this file.
   caller doing anything. A doctest that defers work by some other route still
   needs to install the hook in the deferred part.
 
+- **`scripts/wasm32/tests` now opens with a stage of fixtures that must fail.**
+  Two of the bugs above shipped because a swallowed failure is indistinguishable
+  from a green run, and no passing test can catch that. `scripts/wasm32/negative`
+  runs `examples/must-fail-demo` and requires each fixture to fail *and* to name
+  the reason, so a fixture that fails because no browser was available does not
+  count as covered. A negative fixture that starts passing is a runner
+  regression; fix the runner, not the fixture.
+
 - **`wasm_lite_std` no longer breaks a nightly host build under `-D warnings`.**
   The `internal_output_capture` feature was gated on `nightly_rustc` alone, but
   its only caller — the `set_output_capture` call that routes `println!` to the

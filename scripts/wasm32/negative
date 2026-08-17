@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Fixtures that MUST fail, and must fail for the stated reason.
+#
+# Every other stage checks that passing code passes, which cannot catch a runner
+# that swallows a failure — a swallowed failure is indistinguishable from a green
+# run. Both bugs covered here shipped for exactly that reason: a suite reported
+# `ok` while quietly not running most of its tests.
+#
+# A fixture that starts *passing* is the alarm. Treat it as a runner regression
+# and not as a fixture to be updated.
+set -euo pipefail
+
+if [[ " $* " =~ " --relaxed " ]]; then
+    export RELAXED_WARNINGS=1
+fi
+source "$(dirname "$0")/_env"
+cd "$REPO_ROOT"
+
+cargo build -p wasm_lite_cli
+
+# expect_failure <label> <needle> <dir> <cmd...>
+#
+# The needle matters as much as the exit status: a fixture that fails because a
+# browser is missing, or because the crate stopped compiling, would otherwise
+# count as a pass and this whole stage would go quietly blind.
+expect_failure() {
+    local label="$1" needle="$2" dir="$3"
+    shift 3
+    echo "expecting failure: $label"
+
+    local out
+    local status=0
+    out="$(cd "$dir" && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" \
+        CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+        "$@" 2>&1)" || status=$?
+
+    if ((status == 0)); then
+        printf '%s\n' "$out"
+        echo >&2
+        echo "error: '$label' reported success, but the fixture is written to fail." >&2
+        echo "       That is the bug this stage exists to catch: a failure that the" >&2
+        echo "       runner did not surface. Fix the runner, not the fixture." >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$out" | grep -qF -- "$needle"; then
+        printf '%s\n' "$out"
+        echo >&2
+        echo "error: '$label' failed, but without '$needle' in its output." >&2
+        echo "       It has to fail for the documented reason; failing because the" >&2
+        echo "       crate would not build, or no browser was available, would let" >&2
+        echo "       this stage pass while testing nothing." >&2
+        return 1
+    fi
+}
+
+# A plain `#[test]` sharing a binary with a `#[wasm_lite_test]`. libtest owns
+# `main` and owns that test; the runner has to run `main` as well as the
+# registered suite, or the plain test never runs and the binary reports `ok`.
+expect_failure \
+    "a plain #[test] beside a #[wasm_lite_test]" \
+    "PLAIN LIBTEST TEST RAN" \
+    examples/must-fail-demo \
+    cargo test --target wasm32-unknown-unknown --test mixed_harness
+
+# Two `async_doctest!`s in one edition-2024 merged bundle. Matching the panic
+# message covers both halves of that case: the message only exists if the slow
+# body ran (so the fast one did not publish the page's verdict on its behalf),
+# and it only reaches the console if `async_doctest!` installed a panic hook
+# inside the body, since libtest drops the doctest's own when `main` returns.
+expect_failure \
+    "the slower of two async doctests in a merged bundle" \
+    "SLOW DOCTEST FAILED" \
+    examples/must-fail-demo \
+    cargo test --target wasm32-unknown-unknown --doc
+
+echo "negative fixtures all failed as required"
