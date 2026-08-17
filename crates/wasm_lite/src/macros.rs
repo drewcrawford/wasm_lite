@@ -12,11 +12,39 @@
 /// once per test file alongside your [`wasm_lite_test`](crate::wasm_lite_test)
 /// functions.
 ///
+/// Using this also tells the runner not to bother running `main`. Where it is
+/// *absent* the runner runs `main` after the suite, because then `main` is
+/// libtest's entry point and owns any plain `#[test]` in the same binary — see
+/// [`__wl_noop_main`](crate::__wl_noop_main).
+///
 /// [`wasm_lite_test`]: crate::wasm_lite_test
 #[macro_export]
 macro_rules! test_main {
     () => {
         fn main() {}
+        $crate::__wl_noop_main!();
+    };
+}
+
+/// Record that this binary's `main` does nothing, so the runner can skip it.
+///
+/// The runner cannot tell `fn main() {}` from libtest's entry point by looking
+/// at the module: both are just a `main` export. Guessing the wrong way either
+/// costs a page load per suite or silently drops every `#[test]` and doctest in
+/// the binary, so the answer is recorded here rather than inferred — the same
+/// custom-section channel the test and benchmark names travel over.
+///
+/// Emitted by [`test_main!`](crate::test_main) and
+/// [`bench_main!`](crate::bench_main); there is no reason to call it directly.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __wl_noop_main {
+    () => {
+        const _: () = {
+            #[used]
+            #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wl_noop_main"))]
+            static __WL_NOOP_MAIN: [u8; 1] = [1];
+        };
     };
 }
 
@@ -32,6 +60,7 @@ macro_rules! test_main {
 macro_rules! bench_main {
     () => {
         fn main() {}
+        $crate::__wl_noop_main!();
     };
 }
 

@@ -9,6 +9,12 @@
 //!   * a `#[wasm_lite_bench]` harness (a `__wasm_lite_benches` section): the same,
 //!     one page load per benchmark, reporting ns/iter;
 //!   * a plain `bin`: run `main` once (pass = ran to completion).
+//!
+//! The first shape also runs `main` as a final case unless the module says it is
+//! inert (`test_main!`), because the shapes are not exclusive: a binary can hold
+//! registered tests *and* a libtest entry point that owns plain `#[test]`s or a
+//! merged doctest bundle. Treating them as exclusive is how one registered test
+//! came to silently disable every other test in its binary.
 
 use super::webdriver::Browser;
 use super::{
@@ -52,16 +58,35 @@ pub fn run(args: &Args) -> i32 {
         .collect();
     let benches_filtered_out = all_benches.len() - benches.len();
 
+    // The entry point joins a harness run as one more case, under a name filters
+    // can match, because it is one more thing that runs and can fail. It is only
+    // a separate case when there is a harness at all: with neither tests nor
+    // benchmarks, running `main` *is* the whole job and `run_main` reports it.
+    let harness = !all.is_empty() || !all_benches.is_empty();
+    let has_entry_point = module.entry_point && harness;
+    let entry_point = has_entry_point && args.selects(ENTRY_POINT) && args.admits_ignored(false);
+    // Only one of the two summaries is ever printed, so both carry the delta.
+    let entry_filtered_out = usize::from(has_entry_point) - usize::from(entry_point);
+    let filtered_out = filtered_out + entry_filtered_out;
+    let benches_filtered_out = benches_filtered_out + entry_filtered_out;
+
     // `cargo test -- --list` / IDE test discovery: report names, don't run.
     if args.list {
         for test in &tests {
             println!("{}: test", test.path);
         }
+        if entry_point {
+            println!("{ENTRY_POINT}: test");
+        }
         for name in &benches {
             println!("{name}: bench");
         }
         println!();
-        println!("{} tests, {} benchmarks", tests.len(), benches.len());
+        println!(
+            "{} tests, {} benchmarks",
+            tests.len() + usize::from(entry_point),
+            benches.len()
+        );
         return 0;
     }
 
@@ -93,9 +118,16 @@ pub fn run(args: &Args) -> i32 {
     let result = if all.is_empty() && all_benches.is_empty() {
         run_main(&browser, port)
     } else if all.is_empty() {
-        run_bench_suite(&browser, port, &benches, benches_filtered_out, args.bench)
+        run_bench_suite(
+            &browser,
+            port,
+            &benches,
+            benches_filtered_out,
+            entry_point,
+            args.bench,
+        )
     } else {
-        run_suite(&browser, port, &tests, filtered_out, args)
+        run_suite(&browser, port, &tests, filtered_out, entry_point, args)
     };
     match result {
         Ok(code) => code,
@@ -111,6 +143,9 @@ struct Prepared {
     routes: Vec<Route>,
     tests: Vec<TestDecl>,
     benches: Vec<TestDecl>,
+    /// Whether `main` is worth running in its own right; see
+    /// [`wasm_lite_codegen::runs_own_entry_point`].
+    entry_point: bool,
 }
 
 fn prepare(program: &Path) -> Result<Prepared, String> {
@@ -174,6 +209,7 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
     let memory = wasm_lite_codegen::imported_memory(&module)?;
     let tests = wasm_lite_codegen::test_decls(&module)?;
     let benches = wasm_lite_codegen::bench_decls(&module)?;
+    let entry_point = wasm_lite_codegen::runs_own_entry_point(&module)?;
     // One harness bootstrap covers both shapes, dispatching on the query
     // parameter rather than on which section exists — a target may declare
     // tests and benchmarks in the same file, and picking by section would make
@@ -225,6 +261,7 @@ fn prepare(program: &Path) -> Result<Prepared, String> {
         routes,
         tests,
         benches,
+        entry_point,
     })
 }
 
@@ -340,15 +377,29 @@ fn surface_worker_panics(browser: &Browser) -> Result<(), String> {
     Ok(())
 }
 
+/// The name the module's own `main` runs under in a suite's output.
+///
+/// Unqualified, so it cannot collide with a registered test: those are always
+/// `module::path`-shaped.
+const ENTRY_POINT: &str = "main";
+
 /// Run a `tests!` harness: each test in a fresh page load, libtest-style output.
+///
+/// With `entry_point`, `main` runs as one last case. That is not redundant with
+/// the registered tests: `#[wasm_lite_test]` emits no libtest `#[test]`, and the
+/// documented `cfg_attr` pairing applies only one of the two per target, so
+/// nothing runs twice — but a plain `#[test]`, or another doctest sharing an
+/// edition-2024 merged bundle, runs *only* here.
 fn run_suite(
     browser: &Browser,
     port: u16,
     tests: &[TestDecl],
     filtered_out: usize,
+    entry_point: bool,
     args: &Args,
 ) -> Result<i32, String> {
-    println!("\nrunning {} test{}", tests.len(), plural(tests.len()));
+    let total = tests.len() + usize::from(entry_point);
+    println!("\nrunning {total} test{}", plural(total));
     let mut failed = 0;
     let mut ignored = 0;
 
@@ -430,7 +481,11 @@ fn run_suite(
         }
     }
 
-    let passed = tests.len() - failed - ignored;
+    if entry_point && !run_entry_point(browser, port)? {
+        failed += 1;
+    }
+
+    let passed = total - failed - ignored;
     println!();
     if failed == 0 {
         println!(
@@ -445,17 +500,65 @@ fn run_suite(
     }
 }
 
+/// Run the module's `main` as the suite's last case; true if it passed.
+///
+/// Reported like any other case rather than folded into the summary silently,
+/// because on `wasm32-unknown-unknown` it is a coarse verdict: libtest's own
+/// output goes nowhere (`println!` has no console here), and `panic = abort`
+/// ends the process at the first failure, so what comes back is "something under
+/// `main` failed" with the panic message and no test name. Coarse and visible
+/// beats the alternative it replaced, which was not running them at all.
+fn run_entry_point(browser: &Browser, port: u16) -> Result<bool, String> {
+    browser.goto(&format!("http://127.0.0.1:{port}/"))?;
+
+    let mut watch = Console::default();
+    if let Err(err) = wait_done(browser, &mut watch) {
+        println!("test {ENTRY_POINT} ... FAILED");
+        for line in err.lines() {
+            println!("    {line}");
+        }
+        for line in watch.0.lines().filter(|l| !err.contains(*l)) {
+            println!("    {line}");
+        }
+        return Ok(false);
+    }
+
+    if browser.eval_bool("return globalThis.__wl_done.ok === true;")? {
+        surface_worker_panics(browser)?;
+        println!("test {ENTRY_POINT} ... ok");
+        return Ok(true);
+    }
+
+    println!("test {ENTRY_POINT} ... FAILED");
+    let output = browser.eval_string(CONSOLE_JOIN)?;
+    for line in output.lines() {
+        println!("    {line}");
+    }
+    if output.is_empty() {
+        let error = browser.eval_string("return globalThis.__wl_done.error || \"\";")?;
+        if !error.is_empty() {
+            println!("    {error}");
+        }
+    }
+    Ok(false)
+}
+
 /// Run a `#[wasm_lite_bench]` harness: each benchmark in a fresh page load.
 ///
 /// With `measure`, prints libtest's `cargo bench` line; without it, each
 /// benchmark still runs (so a broken one fails CI) but only its pass/fail is
 /// reported — a timing taken while the rest of the suite is compiling or a CI
 /// box is oversubscribed is worse than no timing, because it looks like data.
+///
+/// `entry_point` runs `main` afterwards for the same reason [`run_suite`] does:
+/// a `#[wasm_lite_bench]` module that did not use `bench_main!` may be a libtest
+/// binary whose `#[test]`s run nowhere else.
 fn run_bench_suite(
     browser: &Browser,
     port: u16,
     names: &[String],
     filtered_out: usize,
+    entry_point: bool,
     measure: bool,
 ) -> Result<i32, String> {
     println!(
@@ -516,7 +619,15 @@ fn run_bench_suite(
         }
     }
 
-    let passed = names.len() - failed;
+    let mut total = names.len();
+    if entry_point {
+        total += 1;
+        if !run_entry_point(browser, port)? {
+            failed += 1;
+        }
+    }
+
+    let passed = total - failed;
     println!();
     if failed == 0 {
         println!("test result: ok. {passed} passed; 0 failed; {filtered_out} filtered out");
@@ -767,7 +878,8 @@ try {
 "#;
 
 /// Bootstrap for a test or benchmark harness: run the single case named by
-/// `?test=<name>` or `?bench=<name>`.
+/// `?test=<name>` or `?bench=<name>`, or the module's own `main` when neither is
+/// given.
 ///
 /// A benchmark additionally publishes its measurement in `__wl_bench`, read
 /// back through the module's own exports rather than through a JS global the
@@ -799,8 +911,14 @@ try {
         } else {
             read();
         }
-    } else {
+    } else if (test !== null) {
         instance.exports["__wl_test_" + test]();
+    } else {
+        // No case named: this page is the suite's entry-point step, where `main`
+        // is libtest's and owns the plain `#[test]`s and doctests that have no
+        // `__wl_test_` export of their own. The runner only asks for this when
+        // the module has a `main` that is not a `test_main!` no-op.
+        instance.exports.main();
     }
     if (!globalThis.__wl_async_pending) globalThis.__wl_done = { ok: true, error: "" };
 } catch (e) {

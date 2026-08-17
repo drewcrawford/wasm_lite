@@ -6,6 +6,31 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **A single `#[wasm_lite_test]` no longer silently disables every libtest test
+  in the same binary.** The runner treated "has a registered test section" and
+  "has a `main` worth running" as mutually exclusive, so one `#[wasm_lite_test]`
+  anywhere in a binary meant `main` was never called — and outside a
+  `harness = false` target, `main` is libtest's entry point. Every plain
+  `#[test]` beside it, and every other doctest in an edition-2024 merged bundle,
+  therefore did not run. Nothing was reported as skipped; the tests simply were
+  not in the output and the suite reported `ok`. One crate's doctests went from
+  20 passing natively to 1 on wasm32 without a word.
+
+  A harness run now drives the registered suite and then runs `main` as one more
+  case, named `main`, which takes part in name filtering and `--list` like any
+  other. The exception is positive evidence, not a guess: `test_main!` and
+  `bench_main!` stamp a `__wl_noop_main` custom section saying their `main` is
+  the `fn main() {}` the linker asked for, and the runner skips it. Absence of
+  the marker has to keep meaning "run it" — the module cannot otherwise be told
+  apart from a libtest binary, and guessing the other way is what lost the tests.
+  Suites using `test_main!` are unchanged, down to their reported counts.
+
+  The recovered verdict is coarse: on `wasm32-unknown-unknown` libtest's own
+  output goes nowhere and `panic = abort` stops at the first failure, so a
+  failure says *that* something under `main` failed, with the panic message but
+  no test name. Use the `cfg_attr` pairing if you want per-test reporting. Coarse
+  and visible beats not running them at all.
+
 - **One async doctest finishing no longer passes the whole page.**
   `__wl_async_pending` was a flag and `__wl_test_pass` published
   `__wl_done = { ok: true }` unconditionally, which holds only while a page has

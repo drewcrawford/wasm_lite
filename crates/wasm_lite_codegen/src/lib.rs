@@ -264,6 +264,36 @@ pub fn uses_wasm_bindgen(wasm: &[u8]) -> bool {
     )
 }
 
+/// The section `test_main!` / `bench_main!` emit to declare their `main` inert.
+pub const NOOP_MAIN_SECTION: &str = "__wl_noop_main";
+
+/// Can the module's `main` own tests the registered harness does not know about?
+///
+/// A `#[wasm_lite_test]` module usually also has a `main`, and which one it is
+/// decides whether skipping it loses tests:
+///
+///   * `harness = false` plus [`test_main!`] — `main` is `fn main() {}`, written
+///     only because the linker wants one. Running it would be a page load for
+///     nothing, so the macro stamps [`NOOP_MAIN_SECTION`] to say so.
+///   * anything else — `main` is libtest's entry point (the default `harness =
+///     true`, or a rustdoc doctest bundle), and it owns every plain `#[test]` and
+///     every other doctest in the binary. Those run nowhere else.
+///
+/// The default is therefore "run it": the marker is positive evidence that
+/// skipping is safe, and its absence means we cannot tell. Silently dropping the
+/// second case is how a merged doctest bundle came to report `ok` while running
+/// one of its twenty doctests.
+///
+/// [`test_main!`]: https://docs.rs/wasm_lite/latest/wasm_lite/macro.test_main.html
+pub fn runs_own_entry_point(wasm: &[u8]) -> Result<bool, String> {
+    if matches!(wasm::custom_section(wasm, NOOP_MAIN_SECTION), Ok(Some(_))) {
+        return Ok(false);
+    }
+    // No `main` export, nothing to drive. A `cdylib`-shaped harness has none,
+    // and claiming to have run one would be a lie in the summary.
+    Ok(wasm::exported_names(wasm)?.iter().any(|n| n == "main"))
+}
+
 /// What `#[should_panic]` on a test asks the runner to check.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ShouldPanic {
@@ -377,6 +407,16 @@ mod tests {
             wasm.extend(name.as_bytes());
             wasm.extend(*payload);
         }
+        wasm
+    }
+
+    /// Append a custom section to an existing module.
+    fn with_custom_section(mut wasm: Vec<u8>, name: &str, payload: &[u8]) -> Vec<u8> {
+        let body_len = 1 + name.len() + payload.len();
+        assert!(name.len() < 128 && body_len < 128);
+        wasm.extend([0, body_len as u8, name.len() as u8]);
+        wasm.extend(name.as_bytes());
+        wasm.extend(payload);
         wasm
     }
 
@@ -572,6 +612,25 @@ mod tests {
             .map(|t| t.path)
             .collect();
         assert_eq!(paths, ["crate::first", "crate::second"]);
+    }
+
+    #[test]
+    fn an_unmarked_main_is_run_and_a_test_main_no_op_is_not() {
+        // Regression: the runner treated "has registered tests" and "has a
+        // `main` worth running" as mutually exclusive, so one #[wasm_lite_test]
+        // anywhere in a binary silently disabled every plain #[test] and every
+        // other doctest sharing it. Absent evidence to the contrary, `main` runs.
+        let libtest = export_module_with(&["main", "__wl_test_crate::x"], false);
+        assert!(runs_own_entry_point(&libtest).unwrap());
+
+        // `test_main!`/`bench_main!` stamp the marker to say their `main` is
+        // `fn main() {}` — the one case where skipping it loses nothing.
+        let inert = with_custom_section(libtest, NOOP_MAIN_SECTION, &[1]);
+        assert!(!runs_own_entry_point(&inert).unwrap());
+
+        // Nothing to drive, so nothing to claim in the summary.
+        let no_main = export_module_with(&["__wl_test_crate::x"], false);
+        assert!(!runs_own_entry_point(&no_main).unwrap());
     }
 
     #[test]
