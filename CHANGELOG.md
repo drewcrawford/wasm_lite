@@ -82,6 +82,18 @@ All notable changes to this project will be documented in this file.
   caller doing anything. A doctest that defers work by some other route still
   needs to install the hook in the deferred part.
 
+- **`wasm_lite_std`'s own unit tests run in a browser.** Sixty-nine of them now
+  do, against thirty-four before: the rest were plain `#[test]`s that the
+  entry-point bug above had been hiding for as long as it existed. Three had
+  never been correct, which nothing could have noticed while they did not run —
+  a `cfg_attr(target_arch = "wasm32", should_panic)` on `test_spawn_and_join`
+  that is simply wrong on a worker, a `test_is_main_thread` asserting two things
+  that cannot both hold on one thread, and an `rwlock` test reaching
+  `std::sync::mpsc::recv_timeout`, which panics with "time not implemented on
+  this platform" on wasm32. All three are fixed and the suite passes in Firefox
+  and Chrome. The six tests that were already explicitly
+  `#[cfg(not(target_arch = "wasm32"))]` are left alone.
+
 - **`scripts/wasm32/tests` now opens with a stage of fixtures that must fail.**
   Two of the bugs above shipped because a swallowed failure is indistinguishable
   from a green run, and no passing test can catch that. `scripts/wasm32/negative`

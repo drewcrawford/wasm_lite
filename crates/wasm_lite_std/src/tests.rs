@@ -56,10 +56,12 @@ fn _auto_trait_assertions() {
     _assert_send::<JoinHandle<()>>();
 }
 
-// On wasm32, join() panics on the main thread (Atomics.wait unavailable).
-// This produces "RuntimeError: unreachable" in console - expected for wasm panics.
-#[test]
-#[cfg_attr(target_arch = "wasm32", should_panic)]
+// A blocking `join()` needs `Atomics.wait`, so on wasm32 this runs on a worker,
+// where it is available. It used to carry `cfg_attr(target_arch = "wasm32",
+// should_panic)` for the main thread — an expectation nothing ever checked,
+// because as a plain `#[test]` the wasm32 build never ran it.
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_spawn_and_join() {
     let handle = spawn(|| 42);
     let result = handle.join().unwrap();
@@ -141,12 +143,14 @@ async_test! {
     }
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_current_thread() {
     let _current = current();
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_console_redirect_api_smoke() {
     redirect_println_eprintln_to_console_current_thread();
     install_println_eprintln_console_hook();
@@ -198,7 +202,8 @@ crate::async_test! {
     }
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_yield_now() {
     yield_now();
 }
@@ -213,7 +218,8 @@ async_test! {
     }
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_sleep() {
     use crate::time::Instant;
 
@@ -276,13 +282,15 @@ crate::async_test! {
     }
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_available_parallelism() {
     let parallelism = available_parallelism().unwrap();
     assert!(parallelism.get() >= 1);
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_thread_local() {
     use std::cell::Cell;
 
@@ -300,7 +308,8 @@ fn test_thread_local() {
     });
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_thread_local_try_with() {
     use std::cell::Cell;
 
@@ -804,10 +813,19 @@ async_test! {
     }
 }
 
-#[test]
+// Split in two on purpose: the first half must run *on* the main thread, and the
+// second needs a blocking `join()`, which on wasm32 must not. One body cannot be
+// both, which only became visible once these started running in a browser.
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_is_main_thread() {
     // The test harness runs this on the process's initial thread.
     assert!(crate::is_main_thread(), "test runs on the main thread");
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn test_spawned_thread_is_not_the_main_thread() {
     // A thread spawned by this crate is not the main thread.
     let from_worker = spawn(crate::is_main_thread).join().unwrap();
     assert!(!from_worker, "a spawned thread is not the main thread");

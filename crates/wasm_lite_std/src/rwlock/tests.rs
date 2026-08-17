@@ -9,7 +9,8 @@ use crate as thread;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_lock_try() {
     let mutex = RwLock::new(0);
     let lock = mutex.try_lock_read();
@@ -43,7 +44,8 @@ fn test_lock_try() {
     assert_eq!(read_lock.as_ref().unwrap().deref(), &2);
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_lock_spin() {
     let mutex = RwLock::new(0);
     let lock = mutex.lock_spin_read();
@@ -53,7 +55,8 @@ fn test_lock_spin() {
     drop(lock);
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_lock_block() {
     let mutex = Arc::new(RwLock::new(0));
     let lock = mutex.lock_block_read();
@@ -74,7 +77,12 @@ fn test_lock_block() {
     });
     //wait for thread up msg
     rx.recv().unwrap();
-    assert!(rx.recv_timeout(Duration::from_millis(10)).is_err());
+    // The writer must not get the lock while the read guard is still held. Sleep
+    // and poll rather than `recv_timeout`: std's mpsc timeout reads
+    // `std::time::Instant`, which has no implementation on wasm32-unknown-unknown
+    // and panics with "time not implemented on this platform".
+    thread::sleep(Duration::from_millis(10));
+    assert!(rx.try_recv().is_err());
     drop(lock); //thread should now acquire lock
     rx.recv().unwrap(); //wait for thread to acquire lock
     let time = crate::time::Instant::now();
@@ -97,7 +105,8 @@ fn test_async() {
     });
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_sync() {
     let mutex = Arc::new(RwLock::new(0));
     let lock = mutex.lock_sync_read();

@@ -14,7 +14,8 @@ use std::sync::mpsc::channel as continuation;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_spinlock_basic() {
     let spinlock = Spinlock::new(42);
     let result = spinlock.with_mut(|data| {
@@ -48,7 +49,8 @@ fn test_spinlock_concurrent_access() {
     assert_eq!(spinlock.with_mut(|data| *data), 1000);
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_mutex_try_lock_success() {
     let mutex = Mutex::new(42);
     let guard = mutex.try_lock().unwrap();
@@ -76,7 +78,8 @@ fn test_mutex_try_lock_contention() {
     drop(guard);
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_mutex_lock_spin() {
     let mutex = Mutex::new(0);
     let mut guard = mutex.lock_spin();
@@ -185,7 +188,8 @@ fn test_mutex_async_contention() {
     });
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_guard_drop_releases_lock() {
     let mutex = Arc::new(Mutex::new(42));
     {
@@ -196,7 +200,8 @@ fn test_guard_drop_releases_lock() {
     assert_eq!(*guard, 42);
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test(worker))]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn test_mutex_lock_spin_timeout() {
     let mutex = Mutex::new(0);
     let deadline = Instant::now() + Duration::from_secs(1);
