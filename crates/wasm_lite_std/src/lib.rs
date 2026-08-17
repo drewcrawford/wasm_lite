@@ -666,6 +666,8 @@ macro_rules! worker_doctest {
         {
             $crate::__rt::test_pending();
             $crate::spawn_local(async {
+                // Inside the body, not before it: see `__rt::set_panic_hook`.
+                $crate::__rt::set_panic_hook();
                 $crate::spawn($body).join_async().await.unwrap();
                 $crate::__rt::test_pass();
             });
@@ -703,6 +705,8 @@ macro_rules! async_doctest {
         {
             $crate::__rt::test_pending();
             $crate::spawn_local(async move {
+                // Inside the body, not before it: see `__rt::set_panic_hook`.
+                $crate::__rt::set_panic_hook();
                 let _ = $fut.await;
                 $crate::__rt::test_pass();
             });
@@ -736,6 +740,27 @@ pub mod __rt {
     #[cfg(target_arch = "wasm32")]
     pub fn test_pass() {
         unsafe { pass() }
+    }
+
+    /// Install wasm_lite's panic hook from *inside* the deferred body.
+    ///
+    /// A doctest that calls `set_panic_hook()` in its own `main` does not get it
+    /// here. In an edition-2024 merged bundle rustdoc runs each doctest as a
+    /// libtest `#[test]`, and libtest takes the current hook before a test and
+    /// restores it afterwards — so a hook installed *during* the doctest is
+    /// dropped the moment its `main` returns. The deferred body runs later, off
+    /// the event loop, by which time the hook is gone and a panic reports a bare
+    /// wasm stack trace with no message.
+    ///
+    /// Installing it at the top of the body puts it in force at the only moment
+    /// that matters: when the body can actually panic. Called by
+    /// [`async_doctest!`](crate::async_doctest) and
+    /// [`worker_doctest!`](crate::worker_doctest), so their documented promise —
+    /// that a failure reports its message — holds without the caller doing
+    /// anything.
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_panic_hook() {
+        wasm_lite::set_panic_hook();
     }
 
     /// Native fallback: drive a future to completion by polling.

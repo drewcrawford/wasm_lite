@@ -47,6 +47,20 @@ All notable changes to this project will be documented in this file.
   in boolean context, where `0` and `undefined` are alike falsy, so nothing else
   had to change.
 
+- **A panic in a deferred doctest body reports its message again.** Calling
+  `wasm_lite::set_panic_hook()` at the top of a doctest is the documented way to
+  get a panic message instead of a bare `unreachable` trap, and it quietly did
+  nothing for `async_doctest!` and `worker_doctest!`. libtest takes the current
+  panic hook before each doctest in a merged bundle and restores it when the test
+  returns, so a hook installed while `main` ran was gone by the time the event
+  loop polled the body — the one moment it was needed. Failures came back as a
+  wasm stack trace with no message.
+
+  Both macros now install the hook inside the deferred body, where it is in force
+  when the body can actually panic, so their documented promise holds without the
+  caller doing anything. A doctest that defers work by some other route still
+  needs to install the hook in the deferred part.
+
 - **`wasm_lite_std` no longer breaks a nightly host build under `-D warnings`.**
   The `internal_output_capture` feature was gated on `nightly_rustc` alone, but
   its only caller — the `set_output_capture` call that routes `println!` to the
