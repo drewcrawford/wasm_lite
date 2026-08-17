@@ -134,23 +134,10 @@ impl Kind {
                 // DOM and wrong for one that touches WebGPU: with it,
                 // `navigator.gpu.requestAdapter()` resolves to null and every
                 // graphics test fails for a reason that looks like a bug in the
-                // code under test. `WASM_LITE_GPU=1` swaps it for SwiftShader,
-                // which gives headless Chrome a real (software) adapter.
-                let base: &[&str] = if gpu_requested() {
-                    &[
-                        "--headless=new",
-                        "--enable-unsafe-swiftshader",
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                    ]
-                } else {
-                    &[
-                        "--headless=new",
-                        "--disable-gpu",
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                    ]
-                };
+                // code under test. `WASM_LITE_GPU=1` selects Dawn's
+                // SwiftShader adapter explicitly; `--enable-unsafe-swiftshader`
+                // alone only opts WebGL into its software fallback.
+                let base = chrome_base_args(gpu_requested());
                 let args = join_args(base, &extra);
                 format!(
                     r#"{{"capabilities":{{"alwaysMatch":{{"browserName":"chrome","goog:chromeOptions":{{"args":[{args}]}}}}}}}}"#
@@ -160,6 +147,27 @@ impl Kind {
                 r#"{"capabilities":{"alwaysMatch":{"browserName":"safari"}}}"#.to_string()
             }
         }
+    }
+}
+
+/// Chrome flags for ordinary DOM suites or GPU-backed suites.
+fn chrome_base_args(gpu: bool) -> &'static [&'static str] {
+    if gpu {
+        &[
+            "--headless=new",
+            "--enable-unsafe-webgpu",
+            "--use-webgpu-adapter=swiftshader",
+            "--enable-unsafe-swiftshader",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+        ]
+    } else {
+        &[
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+        ]
     }
 }
 
@@ -844,6 +852,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wl_admit_test_{}_{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn gpu_mode_selects_chromes_software_webgpu_adapter() {
+        let args = chrome_base_args(true);
+        assert!(args.contains(&"--enable-unsafe-webgpu"));
+        assert!(args.contains(&"--use-webgpu-adapter=swiftshader"));
+        assert!(!args.contains(&"--disable-gpu"));
     }
 
     #[test]

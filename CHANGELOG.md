@@ -33,6 +33,15 @@ All notable changes to this project will be documented in this file.
   makes shimming unmodified dependencies such as wgpu practical in an
   application that already uses released wasm_lite packages.
 
+### Fixed
+
+- **`WASM_LITE_GPU=1` now delivers the software WebGPU adapter it promises.**
+  Headless Chrome previously received SwiftShader's WebGL opt-in but no Dawn
+  adapter selection, so GPU-less CI hosts still returned `null` from
+  `navigator.gpu.requestAdapter()`. The runner now enables unsafe WebGPU and
+  selects Dawn's SwiftShader adapter explicitly. Graphics tests can render on
+  a bare VM instead of discovering that its imaginary graphics card is shy.
+
 ## 0.1.2 - 2026-08-17
 
 ### Added

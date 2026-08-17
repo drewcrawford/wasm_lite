@@ -82,7 +82,9 @@ rather than an error, which is much harder to notice:
   `navigator.gpu.requestAdapter()` resolves to `null` and every graphics test
   fails in a way indistinguishable from a bug in the code under test. Firefox
   has no headless WebGPU at all, so anything graphical also wants
-  `WASM_LITE_BROWSER=chrome`.
+  `WASM_LITE_BROWSER=chrome`. GPU mode enables unsafe WebGPU and explicitly
+  selects Dawn's SwiftShader adapter, giving GPU-less CI hosts the same
+  software-backed WebGPU device as developer machines.
 * **`WASM_LITE_SERVE_DIR`.** Without it the runner serves only the program's own
   files, so a fetch for a texture or a shader 404s and the program concludes its
   assets are missing — which they are, but not for the reason it will report.
