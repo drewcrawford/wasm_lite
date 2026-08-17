@@ -63,6 +63,9 @@ const SPAWN_MARKER: &str = "__wl_thread_entry";
 /// the backend, and a message that named a different list from the one checked
 /// is exactly how an earlier version told users to apply a fix that could not
 /// work for their module.
+///
+/// `Hash` is deliberately not implemented: this reports a build error, not a
+/// value to key a map with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct MissingThreadExports {
@@ -295,6 +298,10 @@ pub fn runs_own_entry_point(wasm: &[u8]) -> Result<bool, String> {
 }
 
 /// What `#[should_panic]` on a test asks the runner to check.
+///
+/// This is deliberately exhaustive: the runner matches every variant, and a
+/// future variant would need handling there rather than silently falling
+/// through.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ShouldPanic {
     /// `#[should_panic]` — any panic passes.

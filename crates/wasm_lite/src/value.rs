@@ -428,6 +428,9 @@ impl PartialEq for JsValue {
 /// Strictly this is a lie: `NaN !== NaN`, so equality is not reflexive. The
 /// alternative — omitting `Eq` — breaks every generated type that derives it,
 /// for a case no binding relies on.
+///
+/// `Hash` is deliberately not implemented: a JavaScript value has no stable
+/// hash, and an `Eq` without `Hash` is the same choice wasm-bindgen makes.
 impl Eq for JsValue {}
 
 impl JsValue {
