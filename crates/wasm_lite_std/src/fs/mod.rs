@@ -17,6 +17,7 @@
 //! # Example
 //!
 //! ```no_run
+//! # // no_run because: requires an async runtime and a filesystem resource
 //! # async fn example() -> Result<(), wasm_lite_std::fs::Error> {
 //! use wasm_lite_std::fs::{File, Priority};
 //!

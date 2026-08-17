@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! Browser filesystem backend backed by HTTP requests and range reads.
 
 use super::Priority;
 use std::fmt;

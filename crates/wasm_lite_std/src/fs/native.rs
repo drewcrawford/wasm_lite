@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+//! Native filesystem backend using blocking I/O on the async blocking pool.
 
 use super::Priority;
 use blocking::unblock;
