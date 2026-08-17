@@ -276,6 +276,50 @@ Doctests run too — rustdoc's doctest binaries are detected and driven headless
 Call `wasm_lite::set_panic_hook()` at the top of a doctest so failures report the
 panic message rather than a bare trap.
 
+In edition 2024 rustdoc **merges** a crate's doctests into one binary that runs
+them all against a single wasm instance. Two consequences are worth knowing:
+
+- The runner's async-test verdict counts outstanding bodies rather than holding a
+  single flag, so several `async_doctest!`s can be in flight at once and the
+  first to finish does not pass the page on the others' behalf.
+- `set_panic_hook()` in a doctest's `main` does **not** survive into a deferred
+  body. libtest takes the current hook before each doctest and restores it
+  afterwards, so a hook installed while `main` runs is gone by the time the event
+  loop polls the body — and a panic there reported a bare wasm stack trace with
+  no message. `async_doctest!` and `worker_doctest!` therefore install the hook
+  *inside* the body themselves, so you get the message without doing anything. If
+  you defer work by some other route, install the hook in the deferred part.
+
+## `main` runs too
+
+A binary can hold `#[wasm_lite_test]`s *and* a `main` that owns tests of its own,
+and the runner runs both. After the registered suite it runs `main` as one more
+case, reported as `test main ... ok`:
+
+```
+running 3 tests
+test suite::adds ... ok
+test suite::divides ... ok
+test main ... ok
+```
+
+This matters because `main` is libtest's entry point whenever the target is not
+`harness = false` — so it owns every plain `#[test]` in the binary, and every
+doctest in a merged bundle. Those run nowhere else. Treating the two as
+alternatives meant a single `#[wasm_lite_test]` anywhere in a binary silently
+disabled all of them, and the suite still reported `ok`.
+
+`main` takes part in filtering under the name `main`, so `cargo test -- --exact
+main` runs only it and a filter that does not match it counts it as filtered out.
+Its verdict is coarse — on `wasm32-unknown-unknown` libtest's own output goes
+nowhere and `panic = abort` stops at the first failure, so a failure says *that*
+something under `main` failed, with the panic message but no test name. If you
+want per-test reporting, use the `cfg_attr` pairing above so each case is a
+`#[wasm_lite_test]` on wasm32.
+
+The one case where `main` is skipped is the one where it provably does nothing —
+see below.
+
 ## Write a harness-less integration test
 
 For a standalone wasm suite, set `harness = false` on the `[[test]]` target and
@@ -287,6 +331,44 @@ call `wasm_lite::test_main!()` once in the file:
 name = "browser"
 harness = false
 ```
+
+`test_main!()` (and `bench_main!()`) supply the `fn main() {}` the linker wants,
+and also record in a custom wasm section that this `main` is inert, so the runner
+skips the extra page load described above. That marker is the only way to tell
+`fn main() {}` from libtest's entry point by looking at the module — both are
+just a `main` export — so a hand-written `fn main() {}` is run rather than
+skipped. Prefer the macro.
+
+## Re-export the test macros from a wrapper crate
+
+A crate that wraps wasm_lite and offers its own testing attributes has to point
+the generated code at its own re-exports, because its users depend on neither
+runtime by name and an absolute `::wasm_lite…` path will not resolve for them.
+Both macros take the paths as arguments:
+
+```rust
+// The wrapper re-exports whatever it needs, under any names it likes.
+pub use wasm_lite as __wl;
+pub use wasm_lite_std as __wls;
+```
+
+```rust
+// ...and forwards both halves. `crate =` covers the runtime; `std_crate =`
+// covers the std veneer.
+#[mycrate::__wl::wasm_lite_test(worker, crate = ::mycrate::__wl, std_crate = ::mycrate::__wls)]
+fn blocking_body() { /* … */ }
+```
+
+`std_crate =` is needed only by the two expansions that mention the veneer:
+`#[wasm_lite_test(worker)]` and `#[wasm_lite_bench]` on an `async fn`. It is a
+separate argument rather than something derived from `crate =` because a wrapper
+is free to re-export the two under unrelated names. `worker_doctest!` and
+`async_doctest!` need nothing — they are `macro_rules!` and resolve through
+`$crate` already.
+
+`examples/reexport-demo` is the regression fixture: it renames both dependencies
+so neither crate name is in its extern prelude, which turns any hard-coded path
+that creeps back into a compile error.
 
 ## Run the `wasm_lite_std` browser suite
 

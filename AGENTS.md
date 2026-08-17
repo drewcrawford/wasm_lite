@@ -88,6 +88,11 @@ and prefer crates by `drewcrawford`.
 **The full gate is `scripts/check_all`** — fmt, check, clippy, tests, and docs across *both*
 worlds (native and wasm32), including the script-selected examples, browser binding suites,
 bench smoke, `wasm_lite_std`'s doctests under atomics, and `backend-wasm-lite` consumers.
+`scripts/wasm32/tests` opens with `scripts/wasm32/negative`, which runs
+`examples/must-fail-demo` and requires each fixture to **fail**, for a stated reason. Nothing
+else in the gate can catch a runner that swallows a failure, because a swallowed failure is
+indistinguishable from a green run — which is how two of them shipped. A negative fixture
+that starts passing is a runner regression; fix the runner, not the fixture.
 Run it before considering a change done. Note that `scripts/wasm32/docs` only *builds* docs —
 doctests are *executed* by `scripts/wasm32/tests`, which is where a new doctest suite belongs.
 The reverse `backend-wasm-bindgen/` workspace is not currently part of that gate and needs an explicit
@@ -158,7 +163,9 @@ to replace an implicit worker artifact unless it bears the generated-file marker
 
 `examples/` are standalone crates (excluded from or isolated from the root workspace when
 they are wasm-only), each exercising a feature: `hello-rust` (imports/handles/strings/bytes/
-`js_class!`), `exports-demo`, `tests-demo`, `doctest-demo`, `bench-demo`, `interop`
+`js_class!`), `exports-demo`, `tests-demo`, `doctest-demo`, `reexport-demo`
+(compile-only: the macros must reach the runtime through the paths they are *given*),
+`must-fail-demo` (fixtures that must fail — see the negative stage above), `bench-demo`, `interop`
 (wasm-bindgen bridge), and the nightly atomics/thread-spawning family (`atomics-demo`,
 `threads-demo`, `std-threads-demo`, the worker-using `async-*` demos, `panic-demo`,
 `worker-spawn-local-demo`). When changing macro output or codegen, the relevant example is
@@ -170,7 +177,25 @@ the end-to-end check.
   (`lock_block`, `recv_block`, `park`, sync `join`) trap. Use `#[wasm_lite_test(worker)]` to
   run the body on a Web Worker for blocking/threaded code.
 - Doctests run in-browser too; call `wasm_lite::set_panic_hook()` at the top of a doctest so
-  failures report the panic message instead of a bare "unreachable" trap.
+  failures report the panic message instead of a bare "unreachable" trap. That hook does not
+  reach a *deferred* body: libtest takes the current hook before each doctest in an
+  edition-2024 merged bundle and restores it afterwards, so anything installed while `main`
+  ran is gone once the event loop polls. `async_doctest!`/`worker_doctest!` install it inside
+  the body for that reason — keep it there, not at the call site, or the message goes back to
+  being a bare stack trace.
+- **Registered tests and `main` are not alternatives.** A harness run drives the
+  `__wasm_lite_tests` entries and then runs `main` as one more case named `main`, because
+  outside a `harness = false` target `main` is libtest's and owns every plain `#[test]` and
+  every doctest in a merged bundle. Skipping it made one `#[wasm_lite_test]` silently
+  disable all of them while the suite reported `ok`. The single exception is positive
+  evidence: `test_main!`/`bench_main!` stamp a `__wl_noop_main` section saying their `main`
+  is `fn main() {}`. Absence of the marker must keep meaning "run it" — the module cannot
+  otherwise be told apart from a libtest binary, and guessing the other way loses tests.
+- The async-test verdict (`__wl_test_pending`/`__wl_test_pass`) is a **count** of outstanding
+  bodies, not a flag. A merged doctest bundle puts several in one page; as a flag the first
+  to finish published the page's verdict and every later failure went unseen. Any change here
+  must keep the fail-closed property: an abandoned body leaves the count above zero, so the
+  page never reports done and the runner times out.
 - The prevailing idiom is one function that is a native `#[test]` and a wasm32
   `#[wasm_lite_test]`, via paired `cfg_attr`s (see `crates/wasm_lite_std/src/sync_tests.rs`).
   `#[should_panic]` and `#[ignore]` are therefore *read* off the function and left on it, so

@@ -305,6 +305,8 @@ Each example is a standalone crate that builds to `wasm32-unknown-unknown`:
 | `examples/exports-demo` | Rust-to-JS exports |
 | `examples/tests-demo` | `#[wasm_lite_test]` |
 | `examples/doctest-demo` | browser-driven doctests |
+| `examples/reexport-demo` | forwarding the macros through a wrapper crate's re-exports |
+| `examples/must-fail-demo` | fixtures that must *fail*; driven by `scripts/wasm32/negative` |
 | `examples/bench-demo` | `#[wasm_lite_bench]` and sync/async browser benchmarks |
 | `examples/interop` | wasm-bindgen bridge |
 | `examples/atomics-demo` | shared memory + atomics; nightly |
