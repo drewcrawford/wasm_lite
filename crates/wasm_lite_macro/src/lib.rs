@@ -45,6 +45,16 @@ use crate::js_class::{JsClass, build_js_class};
 /// The `(worker)` form expands to a fail-closed async harness (spawn the body on
 /// a worker, await its join, propagate panics), so it requires `wasm_lite_std`
 /// in scope.
+///
+/// A wrapper crate that re-exports the runtimes points each half at its own
+/// re-export, since its users depend on neither by name. `crate =` covers
+/// `wasm_lite` and `std_crate =` covers `wasm_lite_std`; the latter matters only
+/// for the `(worker)` form, which is the only expansion that mentions the
+/// veneer:
+///
+/// ```text
+/// #[wasm_lite_test(worker, crate = ::mycrate::wl, std_crate = ::mycrate::wls)]
+/// ```
 #[proc_macro_attribute]
 pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as TestArgs);
@@ -98,19 +108,23 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     // just calls it. This keeps the generated entry compilable/linkable on the host
     // (e.g. as a doctest) without changing the wasm32 expansion at all.
     let entry_body = if args.worker {
+        // `std_crate =` for the same reason `crate =` exists: a wrapper crate's
+        // users have never heard of wasm_lite_std and do not depend on it, so an
+        // absolute `::wasm_lite_std` path in the expansion cannot resolve there.
+        let std_krate = &args.std_krate;
         quote! {
             #[cfg(target_arch = "wasm32")]
             {
                 #krate::set_panic_hook();
-                ::wasm_lite_std::__rt::test_pending();
-                ::wasm_lite_std::spawn_local(async {
-                    ::wasm_lite_std::spawn(#name).join_async().await.unwrap();
-                    ::wasm_lite_std::__rt::test_pass();
+                #std_krate::__rt::test_pending();
+                #std_krate::spawn_local(async {
+                    #std_krate::spawn(#name).join_async().await.unwrap();
+                    #std_krate::__rt::test_pass();
                 });
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
-                ::wasm_lite_std::spawn(#name).join().unwrap();
+                #std_krate::spawn(#name).join().unwrap();
             }
         }
     } else {
@@ -232,13 +246,17 @@ pub fn wasm_lite_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
     // only then passes — so "never completed" fails via the runner's timeout
     // instead of reporting whatever the exports happened to hold.
     let body = if is_async {
+        // `std_crate =` for the same reason `#[wasm_lite_test(worker)]` takes
+        // one: this is the only bench expansion that names the std veneer, and a
+        // wrapper crate's users do not depend on it under that name.
+        let std_krate = &args.std_krate;
         quote! {
-            ::wasm_lite_std::__rt::test_pending();
-            ::wasm_lite_std::spawn_local(async {
+            #std_krate::__rt::test_pending();
+            #std_krate::spawn_local(async {
                 let mut __wl_b = #krate::Bencher::new();
                 #name(&mut __wl_b).await;
                 __wl_b.__wl_record();
-                ::wasm_lite_std::__rt::test_pass();
+                #std_krate::__rt::test_pass();
             });
         }
     } else {
@@ -278,16 +296,20 @@ pub fn wasm_lite_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Arguments to `#[wasm_lite_bench]`: nothing, or `crate = <path>`.
+/// Arguments to `#[wasm_lite_bench]`: nothing, `crate = <path>`, or
+/// `std_crate = <path>` (which only an `async fn` benchmark's expansion uses).
 struct BenchArgs {
     /// Where the generated code finds the runtime; see `import!`'s `crate =`.
     krate: syn::Path,
+    /// Where an `async fn` benchmark finds the std veneer; see [`TestArgs`].
+    std_krate: syn::Path,
 }
 
 impl Parse for BenchArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut args = BenchArgs {
             krate: syn::parse_quote!(::wasm_lite),
+            std_krate: syn::parse_quote!(::wasm_lite_std),
         };
         while !input.is_empty() {
             if input.peek(Token![crate]) {
@@ -295,7 +317,15 @@ impl Parse for BenchArgs {
                 input.parse::<Token![=]>()?;
                 args.krate = input.parse()?;
             } else {
-                return Err(input.error("expected `crate = <path>` or no argument"));
+                let ident: Ident = input.parse()?;
+                if ident != "std_crate" {
+                    return Err(Error::new_spanned(
+                        &ident,
+                        "expected `crate = <path>`, `std_crate = <path>`, or no argument",
+                    ));
+                }
+                input.parse::<Token![=]>()?;
+                args.std_krate = input.parse()?;
             }
             if input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -418,6 +448,12 @@ struct TestArgs {
     worker: bool,
     /// Where the generated code finds the runtime; see `import!`'s `crate =`.
     krate: syn::Path,
+    /// Where the `(worker)` form finds the std veneer.
+    ///
+    /// Separate from `krate` rather than derived from it: a wrapper crate is
+    /// free to re-export `wasm_lite` and `wasm_lite_std` under names with no
+    /// relationship to each other, so there is nothing to derive.
+    std_krate: syn::Path,
 }
 
 impl Parse for TestArgs {
@@ -425,6 +461,7 @@ impl Parse for TestArgs {
         let mut args = TestArgs {
             worker: false,
             krate: syn::parse_quote!(::wasm_lite),
+            std_krate: syn::parse_quote!(::wasm_lite_std),
         };
         while !input.is_empty() {
             if input.peek(Token![crate]) {
@@ -433,13 +470,18 @@ impl Parse for TestArgs {
                 args.krate = input.parse()?;
             } else {
                 let ident: Ident = input.parse()?;
-                if ident != "worker" {
+                if ident == "std_crate" {
+                    input.parse::<Token![=]>()?;
+                    args.std_krate = input.parse()?;
+                } else if ident == "worker" {
+                    args.worker = true;
+                } else {
                     return Err(Error::new_spanned(
                         &ident,
-                        "expected `worker`, `crate = <path>`, or no argument",
+                        "expected `worker`, `crate = <path>`, `std_crate = <path>`, \
+                         or no argument",
                     ));
                 }
-                args.worker = true;
             }
             if input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;

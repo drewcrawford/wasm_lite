@@ -15,6 +15,7 @@ for example in \
     examples/exports-demo \
     examples/tests-demo \
     examples/doctest-demo \
+    examples/reexport-demo \
     examples/interop
 do
     echo "checking $example"

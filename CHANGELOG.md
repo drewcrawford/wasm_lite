@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **`std_crate = <path>` on `#[wasm_lite_test]` and `#[wasm_lite_bench]`.** Both
+  macros already took `crate = <path>` so a wrapper crate could point the
+  generated code at its own re-export of `wasm_lite`. Two expansions also name
+  `wasm_lite_std` — the `(worker)` test form and an `async fn` benchmark — and
+  those paths were absolute. A wrapper could therefore forward everything except
+  the two things that most needed forwarding, and its users got `E0433: cannot
+  find wasm_lite_std in the list of imported crates`, pointing at the wrapper's
+  macro rather than at anything they wrote.
+
+  It is a second argument rather than something derived from `crate =`, because
+  a wrapper is free to re-export the two runtimes under names with no
+  relationship to each other. `worker_doctest!` and `async_doctest!` never needed
+  it: they are `macro_rules!` and resolve through `$crate` already.
+
+  `examples/reexport-demo` is the regression fixture. It renames both
+  dependencies in its `Cargo.toml`, so neither crate name is in its extern
+  prelude and any absolute path that creeps back into an expansion becomes a
+  compile error here rather than a downstream user's problem.
+
 ### Fixed
 
 - **A single `#[wasm_lite_test]` no longer silently disables every libtest test

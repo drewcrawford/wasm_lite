@@ -1,0 +1,14 @@
+[package]
+name = "reexport-demo"
+version = "0.1.0"
+edition = "2024"
+
+# Renamed on purpose. A wrapper crate re-exports the two runtimes and its users
+# depend on neither by name, so `wasm_lite` and `wasm_lite_std` are not in their
+# extern prelude. Renaming reproduces that here in one crate: an absolute
+# `::wasm_lite…` path in any expansion cannot resolve, and `cargo check` says so.
+[dependencies]
+wl = { path = "../../crates/wasm_lite", package = "wasm_lite" }
+wls = { path = "../../crates/wasm_lite_std", package = "wasm_lite_std" }
+
+[workspace]
