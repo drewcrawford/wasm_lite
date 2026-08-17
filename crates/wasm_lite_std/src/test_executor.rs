@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! A minimal executor for this crate's own async tests.
 //!
-//! [`spawn`] blocks until a future completes: natively by polling it on the
-//! calling thread, and on wasm32 by driving it on a spawned worker (where
-//! `atomic.wait` is legal) and blocking on the result.
+//! [`spawn`] blocks until a future completes: natively by driving it on the
+//! calling thread with [`block_on`](crate::block_on), and on wasm32 by driving
+//! it on a spawned worker (where `atomic.wait` is legal) and blocking on the
+//! result.
 //!
 //! It exists because this crate cannot depend on `test_executors` — that crate
 //! depends back on this one, and linking both copies collides on the
 //! `#[no_mangle]` executor exports; see the note in the workspace `Cargo.toml`.
-//! `#[doc(hidden)]`, and not part of the supported surface.
+//! `#[doc(hidden)]`, and not part of the supported surface: [`block_on`] is the
+//! public spelling of the native half.
+//!
+//! [`block_on`]: crate::block_on
 
 use std::future::Future;
 
@@ -28,8 +32,7 @@ macro_rules! async_test {
 
 /// Runs a future to completion, blocking the current thread until it's done.
 ///
-/// Native-only helper for the `async_test!` macro: it drives the future with a
-/// simple polling loop and thread yielding. The wasm async test path goes
+/// Native-only helper for the `async_test!` macro. The wasm async test path goes
 /// through the runner instead (`#[wasm_lite_test]` + `async_doctest!`), so this
 /// is not compiled on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,27 +41,7 @@ where
     F: Future<Output = T>,
     T: Send + 'static,
 {
-    use std::pin::pin;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-    static NOOP_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
-        |_| RawWaker::new(std::ptr::null(), &NOOP_WAKER_VTABLE),
-        |_| (),
-        |_| (),
-        |_| (),
-    );
-
-    let mut f = pin!(future);
-    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &NOOP_WAKER_VTABLE)) };
-    let mut cx = Context::from_waker(&waker);
-    loop {
-        match f.as_mut().poll(&mut cx) {
-            Poll::Pending => {
-                std::thread::yield_now();
-            }
-            Poll::Ready(r) => return r,
-        }
-    }
+    crate::block_on(future)
 }
 
 /// WASM implementation that spawns a worker to run the future with proper event loop integration.
@@ -69,15 +52,6 @@ where
     T: Send + 'static,
 {
     use crate::mpsc::channel;
-    use std::pin::pin;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-    static NOOP_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
-        |_| RawWaker::new(std::ptr::null(), &NOOP_WAKER_VTABLE),
-        |_| (),
-        |_| (),
-        |_| (),
-    );
 
     let (tx, rx) = channel();
 
@@ -85,16 +59,7 @@ where
     // there. A worker is a real thread, so it can block on `atomic.wait` while
     // polling — no JS event-loop integration is needed for the sync path.
     crate::spawn(move || {
-        let mut f = pin!(future);
-        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &NOOP_WAKER_VTABLE)) };
-        let mut cx = Context::from_waker(&waker);
-        let result = loop {
-            match f.as_mut().poll(&mut cx) {
-                Poll::Pending => crate::yield_now(),
-                Poll::Ready(r) => break r,
-            }
-        };
-        let _ = tx.send_sync(result);
+        let _ = tx.send_sync(crate::block_on(future));
     });
 
     // Block waiting for the result (uses atomic.wait in worker context)

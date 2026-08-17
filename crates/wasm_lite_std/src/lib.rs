@@ -114,6 +114,7 @@
 //! | **Toolchain** | `wasm_lite` codegen + runner; **no wasm-bindgen / wasm-pack** | wasm-bindgen + wasm-pack |
 //! | **Worker bootstrap** | Codegen-emitted (`wl_worker.js`); no JS to write or ship | External JS files; `es_modules` feature for module workers |
 //! | **Event loop integration** | [`yield_to_event_loop_async()`] for cooperative scheduling | No equivalent |
+//! | **Driving a future** | [`block_on()`] on any thread that may block; `spawn_local()` to hand it to the event loop (wasm32) | No equivalent |
 //! | **Spawn hooks** | Global hooks that run at thread start | Not available |
 //! | **Parking primitives** | [`park()`]/[`Thread::unpark()`] on wasm workers | Not implemented |
 //! | **Scoped threads** | Not implemented | `scope()` allows borrowing non-`'static` data |
@@ -419,6 +420,7 @@ extern crate alloc;
 
 mod animation;
 mod async_wait;
+mod block_on;
 pub mod condvar;
 pub mod guard;
 mod hooks;
@@ -494,6 +496,7 @@ pub use backend::spawn_local;
 pub use backend::yield_to_event_loop_async;
 pub use backend::{AccessError, Builder, JoinHandle, LocalKey, Thread, ThreadId};
 pub use backend::{task_begin, task_finished};
+pub use block_on::block_on;
 pub use guard::Guard;
 pub use hooks::{clear_spawn_hooks, register_spawn_hook, remove_spawn_hook};
 pub use mutex::{Mutex, NotAvailable};
@@ -713,7 +716,7 @@ macro_rules! async_doctest {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = $crate::__rt::block_on($fut);
+            let _ = $crate::block_on($fut);
         }
     }};
 }
@@ -761,28 +764,6 @@ pub mod __rt {
     #[cfg(target_arch = "wasm32")]
     pub fn set_panic_hook() {
         wasm_lite::set_panic_hook();
-    }
-
-    /// Native fallback: drive a future to completion by polling.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
-        use std::pin::pin;
-        use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-        static VT: RawWakerVTable = RawWakerVTable::new(
-            |_| RawWaker::new(std::ptr::null(), &VT),
-            |_| {},
-            |_| {},
-            |_| {},
-        );
-        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) };
-        let mut cx = Context::from_waker(&waker);
-        let mut f = pin!(future);
-        loop {
-            match f.as_mut().poll(&mut cx) {
-                Poll::Ready(v) => return v,
-                Poll::Pending => std::thread::yield_now(),
-            }
-        }
     }
 }
 
