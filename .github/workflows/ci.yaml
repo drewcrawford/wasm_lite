@@ -63,6 +63,13 @@ jobs:
         if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
         run: cargo +nightly install wasm_lite_cli
 
+      # wasm_lite's own interop example (examples/interop) needs wasm-bindgen-cli
+      # version-matched to the crate's wasm-bindgen dependency. Only GitHub needs
+      # it; Gitea is provisioned. Keep the same guard.
+      - name: Install wasm-bindgen-cli
+        if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
+        run: cargo install wasm-bindgen-cli --version 0.2.127
+
       - name: rustfmt
         run: scripts/fmt
 
