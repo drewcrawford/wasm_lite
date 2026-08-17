@@ -17,4 +17,11 @@ export WASM32_RUSTFLAGS="$WARN_FLAGS"
 export WASM32_RUSTDOCFLAGS="$WARN_FLAGS"
 export WASM32_ATOMICS_RUSTFLAGS="$WARN_FLAGS $ATOMICS_RUSTFLAGS"
 export WASM32_ATOMICS_RUSTDOCFLAGS="$WARN_FLAGS $ATOMICS_RUSTFLAGS"
-export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER:-$REPO_ROOT/target/debug/wasm_lite run}"
+# The browser suite spans many deliberately independent example workspaces.
+# Letting each workspace keep its own target directory duplicates build-std and
+# common dependencies until a clean CI checkout needs tens of gigabytes. A
+# shared directory preserves Cargo's normal fingerprint isolation while
+# keeping the suite's peak disk use bounded and making the workflow cache cover
+# the example builds too. Respect an explicit override for local debugging.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
+export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER:-$CARGO_TARGET_DIR/debug/wasm_lite run}"

@@ -49,6 +49,12 @@ All notable changes to this project will be documented in this file.
   selects Dawn's SwiftShader adapter explicitly. Graphics tests can render on
   a bare VM instead of discovering that its imaginary graphics card is shy.
 
+- **The wasm test suite no longer builds itself into a disk-space crisis.** Its
+  independent example workspaces now share a Cargo target directory, retaining
+  fingerprint isolation while reusing `build-std` and common dependencies.
+  Full CI coverage stays intact; the runner just stops collecting a separate
+  multi-gigabyte souvenir from every example.
+
 ## 0.1.2 - 2026-08-17
 
 ### Added
