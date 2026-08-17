@@ -1,4 +1,8 @@
-# matrix v11
+# matrix v12
+# The marker above is the generation. Bump it in a project's copy only when
+# this template has been merged forward into it — that is the only record that
+# the reconciliation happened. Steps and matrix entries of the project's own
+# are expected and are not drift; dropping one of the template's is.
 on: [push,pull_request]
 jobs:
   ci:
@@ -50,6 +54,14 @@ jobs:
         run: |
           rustup +nightly component add rustfmt clippy
           rustup +nightly component add rust-src
+
+      # scripts/wasm32/tests drives a browser through the wasm_lite CLI's `run`
+      # subcommand and looks for the binary on PATH. GitHub runners are bare, so
+      # install it there; the Gitea runner is provisioned with it already, which
+      # is why this carries the same GITEA_ACTIONS guard as the steps above.
+      - name: Install wasm_lite runner
+        if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
+        run: cargo +nightly install wasm_lite_cli
 
       - name: rustfmt
         run: scripts/fmt
