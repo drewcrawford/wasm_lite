@@ -1,0 +1,22 @@
+[package]
+name = "dual-demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wasm_lite = { path = "../../crates/wasm_lite" }
+# Only the `async fn` cases need this: driving a future is what the veneer
+# supplies. A suite of sync tests needs `wasm_lite` alone, which is what
+# `examples/tests-demo` demonstrates.
+wasm_lite_std = { path = "../../crates/wasm_lite_std" }
+
+# Deliberately no `.cargo/config.toml` pinning `build.target`, unlike the other
+# examples here. The point of this crate is that one suite runs on both targets,
+# so it defaults to neither: `cargo test` runs it on the host, and
+# `cargo test --target wasm32-unknown-unknown` runs it in a browser.
+#
+# `tests/dual.rs` is likewise not declared as a `[[test]]`. Keeping cargo's
+# default `harness = true` is what lets libtest own it off wasm32 — which is the
+# property this crate exists to demonstrate.
+
+[workspace]

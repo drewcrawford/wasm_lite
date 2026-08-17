@@ -6,6 +6,54 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **`#[wasm_lite_test]` registers a libtest `#[test]` off wasm32.** One attribute
+  is now the whole story: `cargo test` runs the suite on the host and
+  `cargo test --target wasm32-unknown-unknown` runs the same file in a browser,
+  with the same names, verdicts and skips. The
+  `#[cfg_attr(not(target_arch = "wasm32"), test)]` pairing the docs used to teach
+  is no longer needed — though it still works, since off wasm32 the `cfg_attr`
+  holding the macro is false and it never runs, so no existing suite has to be
+  rewritten.
+
+  A *literal* `#[test]` alongside is worth removing, though. Below the attribute
+  it is detected and no second registration is made; above it, rustc expands and
+  consumes it before this macro runs, so the case registers twice.
+
+  `examples/dual-demo` is one file run both ways, by `scripts/native/tests` and
+  `scripts/wasm32/tests`.
+
+  The one behaviour change to watch for: a test that is meaningful *only* in a
+  browser will now be run on the host too. Gate the item with
+  `#[cfg(target_arch = "wasm32")]` rather than gating the attribute. Inside a
+  `harness = false` target the question does not arise, since libtest is not
+  linked there and the registration is inert.
+
+- **`#[wasm_lite_test]` accepts an `async fn`, and drives it.** Previously a hard
+  error, on the grounds that the generated entry point would build the future and
+  drop it unpolled — a test that could never fail. Now the future is driven:
+  `wasm_lite_std::block_on` off wasm32, and on the event loop with a deferred
+  verdict in the browser, exactly as `async_doctest!` does. A body that panics
+  after an await, hangs, or is dropped therefore fails.
+
+  Since the guarantee is no longer secured by the feature's absence, it is
+  secured by fixtures instead: `examples/must-fail-demo/tests/async_body.rs` and
+  `async_hang.rs`, driven by `scripts/wasm32/negative`. If either starts passing,
+  that is the regression — not a fixture to update.
+
+  `#[should_panic]` and `#[ignore]` move onto the generated libtest test rather
+  than staying on the body, which is not itself the test; leaving them there
+  would run an `#[ignore]`d case anyway. `(worker)` combines with `async fn` for
+  a body that awaits *and* blocks: `block_on` drives it on the worker, while the
+  main thread awaits that worker's join. A body returning a value is still
+  rejected — it would be discarded, so an `Err` would pass silently.
+
+- **`wasm_lite_std::block_on`.** A supported spelling of what the crate already
+  had twice internally, as spin-poll loops behind `__rt::block_on` and
+  `test_executor::spawn`. Off wasm32 it now parks on a condvar between polls
+  rather than spinning, which matters once `cargo test` is running several at
+  once; on wasm32 it blocks, so like `park`, `lock_block` and `recv_block` it
+  must not be called on the browser main thread.
+
 - **`std_crate = <path>` on `#[wasm_lite_test]` and `#[wasm_lite_bench]`.** Both
   macros already took `crate = <path>` so a wrapper crate could point the
   generated code at its own re-export of `wasm_lite`. Two expansions also name

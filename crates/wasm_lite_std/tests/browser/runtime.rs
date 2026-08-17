@@ -30,6 +30,44 @@ fn spawn_join_async() {
     });
 }
 
+/// The same thing as an `async fn` test, which is the shorter spelling of it.
+///
+/// `#[wasm_lite_test]` drives the future and defers the verdict itself, so the
+/// body needs no `async_doctest!` wrapper. The fail-closed property is
+/// identical, and is checked from the failing side by `examples/must-fail-demo`
+/// — a passing suite cannot show that a hang or a panic is reported.
+#[wasm_lite::wasm_lite_test]
+async fn async_test_form_drives_the_body() {
+    let v = wasm_lite_std::spawn(|| 20 + 22).join_async().await.unwrap();
+    assert_eq!(v, 42);
+}
+
+/// An `async fn` test whose body also *blocks*.
+///
+/// `join()` traps on the main thread, so this combination is the one that needs
+/// `(worker)`: the body is driven by [`block_on`](wasm_lite_std::block_on) on a
+/// worker, and the main thread awaits that worker's join rather than blocking on
+/// it itself.
+#[wasm_lite::wasm_lite_test(worker)]
+async fn async_worker_test_form_may_block() {
+    let blocking = wasm_lite_std::spawn(|| 20 + 22).join().unwrap();
+    let awaited = wasm_lite_std::spawn(|| 1 + 1).join_async().await.unwrap();
+    assert_eq!(blocking + awaited, 44);
+}
+
+/// `block_on` drives a future to completion on a worker.
+///
+/// The public spelling of what the `async fn` test forms use natively, on a
+/// worker here for the reason its docs give: it blocks, so the browser main
+/// thread is the one place it cannot run.
+#[wasm_lite::wasm_lite_test(worker)]
+fn block_on_drives_a_future_on_a_worker() {
+    let v = wasm_lite_std::block_on(async {
+        wasm_lite_std::spawn(|| 6 * 7).join_async().await.unwrap()
+    });
+    assert_eq!(v, 42);
+}
+
 /// `sleep_async` waits without blocking, and for at least as long as asked.
 ///
 /// On the main thread, which is the case that matters: `sleep` would trap

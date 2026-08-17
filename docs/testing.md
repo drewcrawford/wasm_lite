@@ -200,17 +200,29 @@ fn blocking_lock() {
 
 ## Test async or fail-closed code
 
-Wrap the body in `wasm_lite_std::async_doctest!` (usable in a `#[wasm_lite_test]`
-body or a doctest). Unlike a normal harness — where `main` returning *is* the
-verdict — this defers the verdict until the future completes, so a panic, dropped
-task, or deadlock can't masquerade as a pass. See
+Write an `async fn`. `#[wasm_lite_test]` drives it —
+`wasm_lite_std::block_on` off wasm32, the event loop in the browser — and
+defers the verdict until the future completes, so a panic, dropped task, or
+deadlock can't masquerade as a pass. See
 [threads & async](./threads-and-async.md#async-lifecycle--failures--two-fixes-for-wasm-bindgen-footguns)
-for why.
+for why that matters here and not in a normal harness, where `main` returning
+*is* the verdict.
 
 ```rust
 #[wasm_lite::wasm_lite_test]
-fn awaited_worker() {
-    wasm_lite::set_panic_hook();
+async fn awaited_worker() {
+    let v = wasm_lite_std::spawn(|| 2 + 2).join_async().await.unwrap();
+    assert_eq!(v, 4);
+}
+```
+
+`wasm_lite_std::async_doctest!` is the same mechanism as an expression, for
+places that cannot be an `async fn` — most of all a doctest, whose body is a
+`main`:
+
+```rust
+#[wasm_lite::wasm_lite_test]
+fn awaited_worker_the_long_way() {
     wasm_lite_std::async_doctest!(async {
         let v = wasm_lite_std::spawn(|| 2 + 2).join_async().await.unwrap();
         assert_eq!(v, 4);
@@ -218,22 +230,61 @@ fn awaited_worker() {
 }
 ```
 
+A body that awaits *and* blocks needs `#[wasm_lite_test(worker)] async fn`: the
+future is driven by `block_on` on a worker — the one place it can block — while
+the main thread awaits that worker's join.
+
+`wasm_lite_std::block_on` is public for the cases that want it directly. It
+blocks, so on wasm32 it must not run on the browser main thread; off wasm32
+there is no such restriction.
+
 ## Share one test between native and wasm
 
-Use `cfg_attr` so the same function is a native `#[test]` off-wasm and a
-browser-driven wasm_lite test on wasm — handy when migrating from `#[test]` or
-`wasm-bindgen-test`:
+Nothing to do: `#[wasm_lite_test]` *is* the shared spelling. Off wasm32 it
+registers an ordinary libtest `#[test]`, so `cargo test` runs the same suite on
+the host and `cargo test --target wasm32-unknown-unknown` runs it in a browser —
+same names, same verdicts, same skips.
 
 ```rust
 #[cfg(test)]
 mod tests {
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+    #[wasm_lite::wasm_lite_test]
     fn test_continue() {
         assert_eq!(2 + 2, 4);
     }
 }
 ```
+
+`examples/dual-demo` is exactly that file. `scripts/native/tests` and
+`scripts/wasm32/tests` each run it one way, and comparing the two outputs is the
+demonstration.
+
+Earlier versions could not do this — `#[wasm_lite_test]` emitted no libtest
+registration — so the documented workaround was a `cfg_attr` pair:
+
+```rust
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+fn test_continue() {
+    assert_eq!(2 + 2, 4);
+}
+```
+
+That still works and needs no rewrite: off wasm32 the `cfg_attr` holding
+`wasm_lite_test` is false, so the macro never runs and only libtest's `#[test]`
+applies. New suites do not need the pair.
+
+A *literal* `#[test]` alongside is a different thing, and worth avoiding. Below
+the attribute it is detected and no second registration is made; above it, rustc
+expands and consumes it before this macro runs, so the case is registered twice
+and shows up twice in the output. Drop the `#[test]` — it is redundant now.
+
+The one case that still wants a `cfg`: a test meaningful *only* in a browser.
+It will now be run on the host too, so gate the item with
+`#[cfg(target_arch = "wasm32")]` rather than gating the attribute. Inside a
+`harness = false` target this does not arise — libtest is not linked there, so
+the registration is inert and browser-only suites like
+`crates/wasm_lite_std/tests/browser.rs` are unaffected.
 
 ## `#[should_panic]` and `#[ignore]`
 
@@ -250,9 +301,14 @@ fn rejects_a_zero_divisor() { divide(1, 0); }
 fn slow_case() { /* … */ }
 ```
 
-Reading them off the function rather than consuming them is what makes the
-`cfg_attr` pattern above keep working: the same `#[should_panic]` is honoured by
-libtest natively and by this runner on wasm32, from one attribute.
+Reading them off the function rather than consuming them is what lets one
+attribute mean the same thing on both targets: the same `#[should_panic]` is
+honoured by libtest natively and by this runner on wasm32. It is also what keeps
+the older `cfg_attr` pairing working.
+
+On an `async fn` they are moved onto the generated libtest test rather than left
+on the body, since the body is not itself the test — otherwise `#[ignore]` would
+run the case anyway and `#[should_panic]` would report a correct test as failing.
 
 `#[ignore]`d cases are skipped and reported as `ignored`, exactly as libtest
 does; `--include-ignored` runs them alongside the rest and `--ignored` runs only
@@ -275,6 +331,17 @@ to invert.
 Doctests run too — rustdoc's doctest binaries are detected and driven headless.
 Call `wasm_lite::set_panic_hook()` at the top of a doctest so failures report the
 panic message rather than a bare trap.
+
+They come from the **library target only**, which is cargo's rule rather than
+anything this runner decides: a code block in a doc comment in `tests/*.rs` or
+`src/bin/*.rs` is not collected as a doctest and never runs, on any target. If
+you want the contents of one executed, it belongs in a `#[wasm_lite_test]`.
+
+Either async form works in a doctest. `async_doctest!` is usually the one you
+want, since a doctest's body is a `main`; a `#[wasm_lite_test] async fn` declared
+inside a doctest also works, and is reported under its own name because it
+registers in the harness section, where an `async_doctest!` is reported as part
+of the merged bundle's `main`.
 
 In edition 2024 rustdoc **merges** a crate's doctests into one binary that runs
 them all against a single wasm instance. Two consequences are worth knowing:
@@ -314,8 +381,8 @@ main` runs only it and a filter that does not match it counts it as filtered out
 Its verdict is coarse — on `wasm32-unknown-unknown` libtest's own output goes
 nowhere and `panic = abort` stops at the first failure, so a failure says *that*
 something under `main` failed, with the panic message but no test name. If you
-want per-test reporting, use the `cfg_attr` pairing above so each case is a
-`#[wasm_lite_test]` on wasm32.
+want per-test reporting, make each case a `#[wasm_lite_test]` — which now also
+registers with libtest off wasm32, so nothing is lost by converting.
 
 The one case where `main` is skipped is the one where it provably does nothing —
 see below.
@@ -338,6 +405,13 @@ skips the extra page load described above. That marker is the only way to tell
 `fn main() {}` from libtest's entry point by looking at the module — both are
 just a `main` export — so a hand-written `fn main() {}` is run rather than
 skipped. Prefer the macro.
+
+Such a target is wasm-only by construction: `harness = false` means libtest is
+not linked, so off wasm32 the `#[test]` that `#[wasm_lite_test]` emits is inert
+and *nothing in the file runs*. That is what makes the attribute safe to use in
+browser-only suites, and it is also why "one attribute, both targets" applies to
+ordinary `harness = true` targets rather than these. If you want a suite that
+runs both ways, leave `harness` alone — see `examples/dual-demo`.
 
 ## Re-export the test macros from a wrapper crate
 

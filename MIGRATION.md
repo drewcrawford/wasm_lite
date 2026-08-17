@@ -278,14 +278,21 @@ fn it_works() { assert_eq!(2 + 2, 4); }
 ```
 
 **wasm_lite**, normal unit-test layout — see
-[`examples/tests-demo/src/lib.rs`](./examples/tests-demo/src/lib.rs)
+[`examples/dual-demo/tests/dual.rs`](./examples/dual-demo/tests/dual.rs). One
+attribute covers both targets: libtest off wasm32, the browser runner on it.
 ```rust
 #[cfg(test)]
 mod tests {
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
+    #[wasm_lite::wasm_lite_test]
     fn it_works() {
         assert_eq!(2 + 2, 4);
+    }
+
+    // An `async fn` is driven and fail-closed, so no `#[tokio::test]`-shaped
+    // attribute is needed alongside.
+    #[wasm_lite::wasm_lite_test]
+    async fn it_awaits() {
+        assert_eq!(async { 4 }.await, 4);
     }
 }
 ```

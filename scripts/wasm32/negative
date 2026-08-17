@@ -74,4 +74,26 @@ expect_failure \
     examples/must-fail-demo \
     cargo test --target wasm32-unknown-unknown --doc
 
+# A `#[wasm_lite_test] async fn` that panics after an await. The macro used to
+# reject `async fn` on the grounds that the future would be built and dropped
+# unpolled; now that it drives it instead, the fail-closed guarantee needs a
+# fixture rather than the absence of the feature. Matching the message proves
+# the body ran on a later turn of the event loop — after the entry point
+# returned — and still failed the run.
+expect_failure \
+    "an async #[wasm_lite_test] body that panics" \
+    "ASYNC TEST BODY PANICKED" \
+    examples/must-fail-demo \
+    cargo test --target wasm32-unknown-unknown --test async_body
+
+# The other half of fail-closed: a body that never settles reports nothing at
+# all, so the only thing between it and a green run is that the page was marked
+# pending and never marked passed. Short timeout because the failure *is* the
+# timeout; the 30s default would only make this stage slow.
+expect_failure \
+    "an async #[wasm_lite_test] body that never completes" \
+    "timed out" \
+    examples/must-fail-demo \
+    env WASM_LITE_TIMEOUT_SECS=8 cargo test --target wasm32-unknown-unknown --test async_hang
+
 echo "negative fixtures all failed as required"

@@ -9,3 +9,11 @@ if [[ " $* " =~ " --relaxed " ]]; then
 fi
 
 RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test --workspace --lib --bins --tests
+
+# Each example is its own workspace, so the line above does not reach them. This
+# one has to run *here* rather than only under wasm32: it is the proof that
+# `#[wasm_lite_test]` registers with libtest off wasm32, and a suite that only
+# ever ran in a browser could not show that. `scripts/wasm32/tests` runs the
+# same file the other way.
+echo "testing examples/dual-demo (native)"
+(cd examples/dual-demo && RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test)

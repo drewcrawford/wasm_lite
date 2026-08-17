@@ -35,6 +35,12 @@ cargo +stable test -p wasm_lite_std --test browser \
 echo "testing examples/tests-demo passing suite"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test passing)
 
+# The same file `scripts/native/tests` runs on the host. The two together are
+# what "one attribute, both targets" means: same names, same verdicts, same
+# skips — libtest there, this runner here.
+echo "testing examples/dual-demo (wasm32)"
+(cd examples/dual-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown)
+
 echo "testing examples/tests-demo binding kinds"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test bindings)
 

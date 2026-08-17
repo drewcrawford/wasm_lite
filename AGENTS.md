@@ -196,10 +196,18 @@ the end-to-end check.
   to finish published the page's verdict and every later failure went unseen. Any change here
   must keep the fail-closed property: an abandoned body leaves the count above zero, so the
   page never reports done and the runner times out.
-- The prevailing idiom is one function that is a native `#[test]` and a wasm32
-  `#[wasm_lite_test]`, via paired `cfg_attr`s (see `crates/wasm_lite_std/src/sync_tests.rs`).
-  `#[should_panic]` and `#[ignore]` are therefore *read* off the function and left on it, so
-  the same attribute keeps meaning what it says under libtest — never consume them. They
+- `#[wasm_lite_test]` registers a libtest `#[test]` off wasm32, so one function is a native
+  test and a browser test at once (see `examples/dual-demo/tests/dual.rs`). The older paired
+  `cfg_attr` idiom still works and is still in the tree —
+  `crates/wasm_lite_std/src/sync_tests.rs` — because off wasm32 the `cfg_attr` holding the
+  macro is false, so it never runs; do not "fix" those files on sight. A *literal* `#[test]`
+  alongside is only detected when written below the attribute: above it, rustc consumes it
+  before the macro runs and the case registers twice. That is undetectable from the macro,
+  so it is documented rather than guarded.
+  `#[should_panic]` and `#[ignore]` are *read* off the function and left on it, so the same
+  attribute keeps meaning what it says under libtest — never consume them. The one exception
+  is an `async fn`, whose body is not itself the libtest test: there they are moved onto the
+  generated test, or `#[ignore]` would run the case anyway. They
   travel to the runner as tab-separated fields on the harness-section record, which the
   codegen parses strictly: an unrecognised field is a hard error, because it means the macro
   and the parser are out of step.

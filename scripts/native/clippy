@@ -9,3 +9,8 @@ if [[ " $* " =~ " --relaxed " ]]; then
 fi
 
 RUSTFLAGS="$WARN_FLAGS" cargo clippy --workspace --all-targets
+
+# Its own workspace, and the one example meant to build for the host, so
+# `--workspace` above does not reach it and the wasm32 scripts would otherwise be
+# the only thing linting it.
+(cd examples/dual-demo && RUSTFLAGS="$WARN_FLAGS" cargo clippy --all-targets)

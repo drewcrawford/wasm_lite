@@ -7,9 +7,11 @@ edition = "2024"
 wasm_lite = { path = "../../crates/wasm_lite" }
 wasm_lite_std = { path = "../../crates/wasm_lite_std" }
 
-# `tests/mixed_harness.rs` is deliberately *not* declared here. Leaving it at
-# cargo's default `harness = true` is the whole point: libtest owns `main`, and
-# the fixture checks the runner still runs it.
+# None of the test targets here are declared, deliberately. For
+# `tests/mixed_harness.rs` that is the whole point: cargo's default
+# `harness = true` puts libtest in charge of `main`, and the fixture checks the
+# runner still runs it. `async_body.rs` and `async_hang.rs` only need to be
+# ordinary test targets.
 
 [profile.dev]
 panic = "abort"

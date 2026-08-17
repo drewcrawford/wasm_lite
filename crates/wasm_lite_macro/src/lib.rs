@@ -21,11 +21,57 @@ mod ty;
 use crate::export::build_export;
 use crate::js_class::{JsClass, build_js_class};
 
-/// Mark a function as a wasm_lite test (analogous to `#[test]`).
+/// Mark a function as a test, on every target.
 ///
-/// Generates an exported `__wl_test_<module_path>::<name>` entry point (which
-/// installs the panic hook and calls the test) and records the test's Rust path
-/// in the `__wasm_lite_tests` section so the runner discovers and drives it.
+/// On wasm32 this generates an exported `__wl_test_<module_path>::<name>` entry
+/// point (which installs the panic hook and drives the test) and records the
+/// test's Rust path in the `__wasm_lite_tests` section, so the runner discovers
+/// it and drives it in a fresh browser page. Everywhere else it registers an
+/// ordinary libtest `#[test]`, so `cargo test` runs the same suite on the host:
+///
+/// ```
+/// #[wasm_lite::wasm_lite_test]
+/// fn two_plus_two() {
+///     assert_eq!(2 + 2, 4);
+/// }
+/// # fn main() {}
+/// ```
+///
+/// One attribute therefore covers both targets. The
+/// `#[cfg_attr(not(target_arch = "wasm32"), test)]` pairing this documentation
+/// used to teach still works and needs no rewrite, since off wasm32 the
+/// `cfg_attr` holding this macro is false and it never runs.
+///
+/// A *literal* `#[test]` alongside is different: written below this attribute it
+/// is detected and no second registration is made, but written above it rustc
+/// expands and consumes it first, so this macro cannot see it and the case is
+/// registered twice. Drop the `#[test]`; it is redundant now.
+///
+/// # `async fn`
+///
+/// An `async fn` body is driven to completion rather than called:
+/// `wasm_lite_std::block_on` off wasm32, and on the event loop with a deferred
+/// verdict in the browser. It needs `wasm_lite_std` in scope.
+///
+/// ```
+/// #[wasm_lite::wasm_lite_test]
+/// async fn awaits_a_value() {
+///     assert_eq!(async { 42 }.await, 42);
+/// }
+/// # fn main() {}
+/// ```
+///
+/// The verdict is deferred for the reason `async_doctest!` exists: on wasm32
+/// the runner decides pass/fail by polling a still-live page, not by the entry
+/// point returning. A body that panics after an await, hangs, or is dropped
+/// therefore **fails**. That guarantee is what this macro used to secure by
+/// rejecting `async fn` outright, so it is checked from the failing side by the
+/// fixtures in `examples/must-fail-demo`; a passing suite cannot show it.
+///
+/// A body that returns a value is still rejected: the value would be discarded,
+/// so an `Err` would pass silently.
+///
+/// # `(worker)`
 ///
 /// By default the test body runs on the browser **main thread**, where
 /// `Atomics.wait`-based blocking APIs are unavailable. Pass `(worker)` to run the
@@ -46,11 +92,16 @@ use crate::js_class::{JsClass, build_js_class};
 /// a worker, await its join, propagate panics), so it requires `wasm_lite_std`
 /// in scope.
 ///
+/// `(worker)` combines with `async fn`, for a body that awaits *and* blocks:
+/// the future is driven by `block_on` on the worker — the one place it can
+/// block — while the main thread awaits that worker's join.
+///
+/// # Pointing at a re-export
+///
 /// A wrapper crate that re-exports the runtimes points each half at its own
 /// re-export, since its users depend on neither by name. `crate =` covers
-/// `wasm_lite` and `std_crate =` covers `wasm_lite_std`; the latter matters only
-/// for the `(worker)` form, which is the only expansion that mentions the
-/// veneer:
+/// `wasm_lite` and `std_crate =` covers `wasm_lite_std`; the latter matters for
+/// the expansions that mention the veneer — `(worker)` and any `async fn`:
 ///
 /// ```text
 /// #[wasm_lite_test(worker, crate = ::mycrate::wl, std_crate = ::mycrate::wls)]
@@ -59,22 +110,13 @@ use crate::js_class::{JsClass, build_js_class};
 pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as TestArgs);
     let krate = &args.krate;
-    let func = parse_macro_input!(item as ItemFn);
+    let std_krate = &args.std_krate;
+    let mut func = parse_macro_input!(item as ItemFn);
 
-    // Fail closed: an `async fn` body would be constructed and dropped unpolled
-    // by the generated entry (`#name()`), so a failing async test would silently
-    // pass. Likewise a returned value (e.g. `Result`) would be discarded, hiding
-    // an `Err`. Reject both instead of generating a test that can't fail.
-    if let Some(asyncness) = &func.sig.asyncness {
-        return Error::new_spanned(
-            asyncness,
-            "#[wasm_lite_test] does not support `async fn`: the future would be \
-             dropped without being polled and the test would always pass. Use a \
-             sync body that drives the future to completion instead.",
-        )
-        .to_compile_error()
-        .into();
-    }
+    // Fail closed: a returned value (e.g. a `Result`) would be discarded by
+    // every arm below, so an `Err` would silently pass. An `async fn` body is
+    // *driven* rather than rejected — see `drive` — but a value it resolves to
+    // would be dropped just the same, so the rule is the same for both.
     if let ReturnType::Type(_, ty) = &func.sig.output
         && !matches!(ty.as_ref(), Type::Tuple(t) if t.elems.is_empty())
     {
@@ -94,49 +136,151 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let fields = verdict.fields();
 
-    let name = &func.sig.ident;
+    let name = func.sig.ident.clone();
     let entry = format_ident!("__wl_test_{}", name);
+    let is_async = func.sig.asyncness.is_some();
+
+    // Don't hand a second `#[test]` to a function that already carries one.
+    //
+    // This only catches a `#[test]` written *below* this attribute. Above it,
+    // rustc expands the outer attribute first and libtest consumes it, so by the
+    // time this macro runs there is nothing left in `attrs` to find — and the
+    // case registers twice. It is not detectable from here, so the docs say so
+    // rather than the code pretending otherwise.
+    //
+    // The pairing that actually matters is the one this macro's documentation
+    // used to teach,
+    // `#[cfg_attr(not(target_arch = "wasm32"), test)] #[cfg_attr(…, wasm_lite_test)]`,
+    // and it is unaffected in either order: off wasm32 the `cfg_attr` holding
+    // *this* macro is false, so it never runs at all. `crates/wasm_lite_std/src/sync_tests.rs`
+    // is a suite full of them, and `scripts/native/tests` runs it.
+    let already_test = func.attrs.iter().any(|attr| attr.path().is_ident("test"));
+
+    // Off wasm32 the case is an ordinary libtest test, so that one attribute
+    // covers both targets and `cargo test` runs the same suite natively. What
+    // `#[test]` attaches to differs by shape:
+    //
+    // * A sync body *is* the test, so the attribute goes on it directly. The
+    //   reported name is the function's own, and `#[should_panic]`/`#[ignore]`
+    //   already sit where libtest reads them.
+    // * libtest rejects an `async fn`, so the body moves under a hidden name and
+    //   a generated sync test of the original name drives it. The verdict
+    //   attributes move with the *test*, not the body: they describe the case,
+    //   and libtest reads them off the function it runs.
+    let body_ident = if is_async {
+        format_ident!("__wl_async_body_{}", name)
+    } else {
+        name.clone()
+    };
+
+    let native_test = if is_async && !already_test {
+        let verdict_attrs: Vec<_> = func
+            .attrs
+            .iter()
+            .filter(|attr| is_verdict_attr(attr))
+            .cloned()
+            .collect();
+        func.attrs.retain(|attr| !is_verdict_attr(attr));
+        func.sig.ident = body_ident.clone();
+        quote! {
+            #[cfg(not(target_arch = "wasm32"))]
+            #[test]
+            #(#verdict_attrs)*
+            fn #name() {
+                #std_krate::block_on(#body_ident());
+            }
+        }
+    } else {
+        if is_async {
+            func.sig.ident = body_ident.clone();
+        } else if !already_test {
+            func.attrs
+                .push(syn::parse_quote!(#[cfg_attr(not(target_arch = "wasm32"), test)]));
+        }
+        quote! {}
+    };
 
     // Worker tests defer the verdict: mark pending, run the body on a worker, and
     // pass only once its join resolves (an awaited worker panic propagates through
     // `.unwrap()` and fails the test). Main-thread tests just call the body.
     //
+    // An async body is deferred for the same reason and by the same mechanism as
+    // `async_doctest!`: `main` returning is not the verdict, so the page is marked
+    // pending and passes only once the future settles. A body that panics, hangs,
+    // or is dropped therefore fails, rather than passing because the entry point
+    // returned.
+    //
     // The wasm32 arms carry the browser-runner integration (`set_panic_hook`, the
     // `__rt` pending/pass verdict hooks). Those symbols only exist on wasm32, so on
-    // other targets we emit a plain host-runnable fallback instead: a worker test
-    // spawns the body on a real thread and blocks on the join; a main-thread test
-    // just calls it. This keeps the generated entry compilable/linkable on the host
-    // (e.g. as a doctest) without changing the wasm32 expansion at all.
-    let entry_body = if args.worker {
-        // `std_crate =` for the same reason `crate =` exists: a wrapper crate's
-        // users have never heard of wasm_lite_std and do not depend on it, so an
-        // absolute `::wasm_lite_std` path in the expansion cannot resolve there.
-        let std_krate = &args.std_krate;
-        quote! {
+    // other targets we emit a plain host-runnable fallback instead. This keeps the
+    // generated entry compilable/linkable on the host (e.g. as a doctest) without
+    // changing the wasm32 expansion at all.
+    //
+    // `std_crate =` for the same reason `crate =` exists: a wrapper crate's users
+    // have never heard of wasm_lite_std and do not depend on it, so an absolute
+    // `::wasm_lite_std` path in the expansion cannot resolve there.
+    let entry_body = match (is_async, args.worker) {
+        (false, false) => quote! {
+            #[cfg(target_arch = "wasm32")]
+            #krate::set_panic_hook();
+            #body_ident();
+        },
+        (false, true) => quote! {
             #[cfg(target_arch = "wasm32")]
             {
                 #krate::set_panic_hook();
                 #std_krate::__rt::test_pending();
                 #std_krate::spawn_local(async {
-                    #std_krate::spawn(#name).join_async().await.unwrap();
+                    #std_krate::spawn(#body_ident).join_async().await.unwrap();
                     #std_krate::__rt::test_pass();
                 });
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
-                #std_krate::spawn(#name).join().unwrap();
+                #std_krate::spawn(#body_ident).join().unwrap();
             }
-        }
-    } else {
-        quote! {
+        },
+        (true, false) => quote! {
             #[cfg(target_arch = "wasm32")]
-            #krate::set_panic_hook();
-            #name();
-        }
+            {
+                #krate::set_panic_hook();
+                #std_krate::__rt::test_pending();
+                #std_krate::spawn_local(async {
+                    #body_ident().await;
+                    #std_krate::__rt::test_pass();
+                });
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                #std_krate::block_on(#body_ident());
+            }
+        },
+        // An async body that also blocks. The future cannot be driven on the
+        // main thread at all — `block_on` traps there — so a worker drives it
+        // and the main thread awaits that worker's join.
+        (true, true) => quote! {
+            #[cfg(target_arch = "wasm32")]
+            {
+                #krate::set_panic_hook();
+                #std_krate::__rt::test_pending();
+                #std_krate::spawn_local(async {
+                    #std_krate::spawn(|| #std_krate::block_on(#body_ident()))
+                        .join_async()
+                        .await
+                        .unwrap();
+                    #std_krate::__rt::test_pass();
+                });
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                #std_krate::block_on(#body_ident());
+            }
+        },
     };
 
     quote! {
         #func
+        #native_test
         #[unsafe(export_name = concat!("__wl_test_", module_path!(), "::", stringify!(#name)))]
         pub extern "C" fn #entry() {
             #entry_body
@@ -357,6 +501,16 @@ struct Verdict {
     ignored: bool,
     /// `None` absent; `Some(None)` bare; `Some(Some(msg))` an expected message.
     should_panic: Option<Option<String>>,
+}
+
+/// Is this one of the libtest attributes [`Verdict`] reads?
+///
+/// Only used for an `async fn`, whose body is not itself the libtest test: these
+/// have to move onto the generated one, or `#[ignore]` would run the case anyway
+/// and `#[should_panic]` would report a correct test as failing — the exact pair
+/// of bugs `Verdict` exists to prevent on wasm32.
+fn is_verdict_attr(attr: &Attribute) -> bool {
+    attr.path().is_ident("ignore") || attr.path().is_ident("should_panic")
 }
 
 impl Verdict {

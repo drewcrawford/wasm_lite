@@ -247,7 +247,7 @@ The `wasm_lite` crate provides the core binding surface:
 | `import!` | declare imported JavaScript functions grouped by namespace |
 | `#[export]` | export Rust functions to JavaScript callers |
 | `js_class!` | define typed `JsValue` wrappers |
-| `#[wasm_lite_test]` | register browser-driven wasm tests; `(worker)` runs the body on a Web Worker |
+| `#[wasm_lite_test]` | register a test on every target: browser-driven on wasm32, libtest elsewhere. An `async fn` body is driven fail-closed; `(worker)` runs the body on a Web Worker |
 | `#[wasm_lite_bench]` / `Bencher` | register and measure browser-driven benchmarks |
 | `JsValue` | opaque handle to a JavaScript value owned by the host value table |
 | `Closure` | pass Rust closures to JavaScript callbacks |
@@ -304,6 +304,7 @@ Each example is a standalone crate that builds to `wasm32-unknown-unknown`:
 | `examples/hello-rust` | imports, handles, strings, bytes, `js_class!` |
 | `examples/exports-demo` | Rust-to-JS exports |
 | `examples/tests-demo` | `#[wasm_lite_test]` |
+| `examples/dual-demo` | one `#[wasm_lite_test]` suite, run on both native and wasm32 |
 | `examples/doctest-demo` | browser-driven doctests |
 | `examples/reexport-demo` | forwarding the macros through a wrapper crate's re-exports |
 | `examples/must-fail-demo` | fixtures that must *fail*; driven by `scripts/wasm32/negative` |
