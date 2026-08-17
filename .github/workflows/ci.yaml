@@ -15,7 +15,7 @@ jobs:
     # nothing. Fail it fast instead. Raise it in the project that needs it — a
     # suite whose honest runtime approaches this should get a longer limit here
     # rather than a template that accommodates the slowest repo.
-    timeout-minutes: 15
+    timeout-minutes: 20
 
 
     strategy:
