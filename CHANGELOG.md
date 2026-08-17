@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **One async doctest finishing no longer passes the whole page.**
+  `__wl_async_pending` was a flag and `__wl_test_pass` published
+  `__wl_done = { ok: true }` unconditionally, which holds only while a page has
+  exactly one deferred body. An edition-2024 merged doctest bundle runs every
+  doctest in the crate against a single instance, so the first `async_doctest!`
+  to complete declared the page passed, the runner exited on it, and a sibling
+  that panicked afterwards was never seen.
+
+  The pair is now a count of outstanding bodies, and the verdict is published
+  only when the last one retires. That keeps the fail-closed property the macro
+  exists for: a body that is dropped or hangs leaves the count above zero, so the
+  page never reports done and the runner's timeout fires, rather than an
+  unrelated sibling passing on its behalf. Every reader already tested the value
+  in boolean context, where `0` and `undefined` are alike falsy, so nothing else
+  had to change.
+
 - **`wasm_lite_std` no longer breaks a nightly host build under `-D warnings`.**
   The `internal_output_capture` feature was gated on `nightly_rustc` alone, but
   its only caller — the `set_output_capture` call that routes `println!` to the

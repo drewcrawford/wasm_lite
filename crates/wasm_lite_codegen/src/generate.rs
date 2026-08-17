@@ -520,4 +520,36 @@ mod tests {
             "export { __wl_export_wrapper_0 as \"x\\\"); globalThis.pwned = true; //\" };"
         ));
     }
+
+    #[test]
+    fn the_async_test_verdict_counts_outstanding_bodies() {
+        // Regression: both halves used to be single-slot, so a page holding more
+        // than one async body — which is exactly an edition-2024 merged doctest
+        // bundle — had the first body to finish publish the verdict for all of
+        // them. The runner exited on it and a sibling that panicked afterwards
+        // was never seen.
+        let js = generate_glue(&[], &[], None);
+
+        // Pending counts, so N bodies are distinguishable from one.
+        assert!(js.contains(
+            "function __wl_test_pending() { globalThis.__wl_async_pending = (globalThis.__wl_async_pending || 0) + 1; }"
+        ));
+
+        // Pass retires one obligation; only the last one publishes a verdict.
+        let body = js
+            .split_once("function __wl_test_pass() {")
+            .expect("the runtime defines __wl_test_pass")
+            .1
+            .split_once("\n}")
+            .expect("__wl_test_pass has a body")
+            .0;
+        assert!(
+            body.contains("- 1) === 0"),
+            "__wl_test_pass must decrement the count: {body}"
+        );
+        assert!(
+            body.trim_start().starts_with("if ("),
+            "__wl_done must be published only on the last completion, not unconditionally: {body}"
+        );
+    }
 }

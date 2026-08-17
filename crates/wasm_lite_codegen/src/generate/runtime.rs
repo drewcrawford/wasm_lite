@@ -274,8 +274,25 @@ function __wl_spawn_unavailable(_work) {
 // when it actually completes. A panic in between fails via __wl_tick above, and
 // a hang falls to the runner's timeout — so an async test can never pass by
 // default.
-function __wl_test_pending() { globalThis.__wl_async_pending = true; }
-function __wl_test_pass() { globalThis.__wl_done = { ok: true, error: \"\" }; }
+//
+// This is a *count* of outstanding obligations, not a flag, because one page can
+// hold several: an edition-2024 merged doctest bundle runs every doctest in the
+// crate against a single instance. As a flag, the first body to finish published
+// the page's verdict and the runner exited while the rest were still pending — a
+// sibling that panicked afterwards was never seen. Publishing only on the last
+// completion keeps the fail-closed property for all of them: a body that is
+// dropped or hangs leaves the count above zero, so the page never reports done
+// and the runner's timeout fires.
+//
+// Readers elsewhere still test this in boolean context, which is why a count
+// works as a drop-in: 0 and undefined are both falsy, any outstanding count is
+// truthy.
+function __wl_test_pending() { globalThis.__wl_async_pending = (globalThis.__wl_async_pending || 0) + 1; }
+function __wl_test_pass() {
+    if ((globalThis.__wl_async_pending = (globalThis.__wl_async_pending || 1) - 1) === 0) {
+        globalThis.__wl_done = { ok: true, error: \"\" };
+    }
+}
 
 // Cross-realm log bridge. A worker is a separate JS realm, so its console output
 // is invisible to the (headless) test runner, which only captures the main realm.
