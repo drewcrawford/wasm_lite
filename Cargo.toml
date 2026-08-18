@@ -24,7 +24,7 @@ members = [
 exclude = ["backend-wasm-bindgen", "examples/hello-rust", "examples/atomics-demo", "examples/threads-demo", "examples/std-threads-demo", "examples/async-demo", "examples/async-mutex-demo", "examples/panic-demo", "examples/await-panic-demo", "examples/async-pass-demo", "examples/async-fail-demo", "examples/async-doctest-demo", "examples/worker-spawn-local-demo"]
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 rust-version = "1.95.0"
 authors = ["Drew Crawford <drew@sealedabstract.com>"]
@@ -50,9 +50,9 @@ homepage = "https://sealedabstract.com/code/wasm_lite"
 # that carries only a path, so leaving them bare is what makes the cycle
 # publishable.
 [workspace.dependencies]
-wasm_lite = { path = "crates/wasm_lite", version = "0.1.3" }
-wasm_lite_macro = { path = "crates/wasm_lite_macro", version = "0.1.3" }
-wasm_lite_codegen = { path = "crates/wasm_lite_codegen", version = "0.1.3" }
+wasm_lite = { path = "crates/wasm_lite", version = "0.1.4" }
+wasm_lite_macro = { path = "crates/wasm_lite_macro", version = "0.1.4" }
+wasm_lite_codegen = { path = "crates/wasm_lite_codegen", version = "0.1.4" }
 
 # NOTE: no dev-cycle self-patch here, deliberately. `test_executors` is the
 # obvious crate to reach for when a test needs to drive a future, but it depends

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.1.4 - 2026-08-18
 
 ### Changed
 
@@ -36,6 +36,9 @@ All notable changes to this project will be documented in this file.
 
   If your program wants output on the page, it has to put it there. `#output` no
   longer exists — `examples/hello.js` used it and now just calls `console.log`.
+
+- **The README is now a runnable example rather than a feature list.** The
+  project's status and what is not built yet moved to `docs/roadmap.md`.
 
 ### Fixed
 
