@@ -36,6 +36,9 @@ users assemble later.
   `console.error`, `console.warn`, and `console.info`; generated worker glue
   forwards worker console output to the main realm; and the test runner prints
   captured panic messages rather than leaving users with a bare wasm trap.
+  Interactively the same capture is *forwarded to the terminal* rather than
+  collected for a verdict, so `cargo run` puts the program in a window and its
+  output in the shell you started it from — see [Interactive logs](#interactive-logs).
 
 This is informed by the [`wasm_ffi`](https://github.com/drewcrawford/wasm_ffi)
 work on [wasm-bindgen](https://wasm-bindgen.github.io/wasm-bindgen/): that fork
@@ -57,6 +60,28 @@ runner = ["wasm_lite", "run"]
 
 Then `cargo test` runs headless and exits, while `cargo run` serves a bin
 interactively in the browser — the runner distinguishes them by path.
+
+## Interactive logs
+
+`cargo run` prints what the program logs, on the terminal that ran it, the way a
+native `cargo run` does. `console.log`/`.info` go to stdout and `console.warn`/
+`.error` to stderr, so `cargo run > out.txt` collects the program's output and
+leaves its complaints on screen. Worker output arrives too: generated worker
+glue bridges each worker's console into the main realm, which is where the
+forwarding is installed.
+
+The mechanism is a batched POST to `/__wl_log`, which the runner prints. Batched
+because a program logging once a frame would otherwise issue a request per line
+at 60Hz, and one request at a time because each connection is served on its own
+thread — overlapping requests would print out of order.
+
+**The shell adds no elements to the page.** It used to open `<body>` with a
+`<pre>` that mirrored console output onto the page, which made the runner a
+layout participant: a program that appends its own element to `<body>` — a
+`<canvas>` is the usual one — got it placed *below* the log, and every line
+logged pushed it further down. The page a program gets from the runner is now
+the same empty document it gets from the page it ships with. If you want output
+on the page, your program can put it there.
 
 ## Configure the runner
 
@@ -104,8 +129,10 @@ rather than an error, which is much harder to notice:
   page alive and always prints the log.
 
   Setting it also *selects* headless mode, so it works with `cargo run` — which
-  would otherwise take the interactive path, serve forever and print nothing at
-  all. If the program reports a failure, the reason it recorded is printed too:
+  would otherwise take the interactive path and serve until interrupted.
+  Interactive mode does print the program's log as it arrives (see
+  [Interactive logs](#interactive-logs)); what it will never do is *stop*, which
+  is what a script needs. If the program reports a failure, the reason it recorded is printed too:
   a bare `FAILED` under 60 000 lines of a program working normally is not a
   diagnosis.
 

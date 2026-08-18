@@ -145,9 +145,10 @@ wasm_lite build target/wasm32-unknown-unknown/debug/app.wasm -o glue.js
   non-atomic wasm it degrades to a local event-loop executor.
   → [threads, async & shared memory](./docs/threads-and-async.md)
 * **Panics and logs where you can see them.** Console output — from workers
-  too — is bridged to the CLI, and a panic prints its message instead of a bare
-  `unreachable` trap. Misconfigured threaded builds are diagnosed at build time
-  rather than as runtime mysteries.
+  too — is bridged to the CLI under `cargo test` *and* `cargo run`, so a browser
+  program prints on the terminal that started it, and a panic prints its message
+  instead of a bare `unreachable` trap. Misconfigured threaded builds are
+  diagnosed at build time rather than as runtime mysteries.
 * **wasm-bindgen interop, both ways.** The `wasm-bindgen` feature converts
   between the two `JsValue`s when `wasm_lite` owns final codegen. Two package
   substitution shims cover the host directions:

@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- **`cargo run` now prints the program's log on your terminal, and the runner's
+  page adds nothing to the DOM.** The interactive HTML shell opened `<body>`
+  with a `<pre>` that every `console.log` was appended to. That made the runner
+  a layout participant in the program's own page: `app_window` appends a
+  `100vw × 100vh` `<canvas>` to `<body>`, so the canvas laid out *below* the
+  log, and every line logged pushed the whole demo further down the page. Each
+  append also rewrote the accumulated log through `textContent +=` and reflowed
+  the document — on the same main thread that has to service
+  `requestAnimationFrame`, which makes it a frame-timing problem and not only a
+  cosmetic one.
+
+  The `<pre>` is gone; the shell is now two `<script>` elements and nothing
+  else, so a program's DOM lays out exactly as it will on the page it ships
+  with. Console output is instead batched and POSTed to a new `/__wl_log`
+  endpoint, which the runner prints: `console.log`/`.info` to stdout,
+  `console.warn`/`.error` to stderr. `cargo run --target wasm32-unknown-unknown`
+  therefore behaves like a native `cargo run` — program in the window, output in
+  the shell you started it from — including output from workers, which the
+  generated worker glue already bridges into the main realm.
+
+  Batching is not an optimization detail: a program logging once a frame would
+  otherwise issue an HTTP request per line at 60Hz. One request is in flight at
+  a time, because each connection is served on its own thread and overlapping
+  requests would print out of order; a record's newlines are escaped, so a
+  panic's multi-line stack trace stays one record; and the forwarding `fetch`
+  swallows its own rejection, because reporting it would go through
+  `console.error` and feed itself forever.
+
+  If your program wants output on the page, it has to put it there. `#output` no
+  longer exists — `examples/hello.js` used it and now just calls `console.log`.
+
 ### Fixed
 
 - **`extends` now gives you the upcast, not just the borrow.** The shim emitted
