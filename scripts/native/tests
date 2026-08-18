@@ -9,6 +9,8 @@ if [[ " $* " =~ " --relaxed " ]]; then
 fi
 
 RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test --workspace --lib --bins --tests
+RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test -p wasm_lite --features diagnostics --lib
+RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test -p wasm_lite_std --features diagnostics --lib
 RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test -p wasm_lite_std --features fs --lib --tests
 RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test -p wasm_lite_std --features fs --doc
 

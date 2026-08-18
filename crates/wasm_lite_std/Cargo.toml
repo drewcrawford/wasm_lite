@@ -18,6 +18,7 @@ rust-version.workspace = true
 
 [features]
 default = []
+diagnostics = ["wasm_lite/diagnostics"]
 # Async, read-only std::fs-shaped API. Its native pool and Priority type stay
 # out of existing users' dependency graphs until this is requested.
 fs = ["dep:blocking", "dep:priority"]

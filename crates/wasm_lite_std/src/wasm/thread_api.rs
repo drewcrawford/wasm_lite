@@ -288,6 +288,11 @@ impl Builder {
 
             let thread_for_worker = thread.clone();
 
+            #[cfg(feature = "diagnostics")]
+            let diagnostics = crate::diagnostics::register(self._name.clone());
+            #[cfg(feature = "diagnostics")]
+            let diagnostics_for_worker = diagnostics.clone();
+
             let finished = Arc::new(AtomicBool::new(false));
             let finished_for_worker = finished.clone();
 
@@ -295,6 +300,8 @@ impl Builder {
             let closure = move || {
                 // Mark this worker so is_main_thread()/atomic.wait gating works here.
                 mark_worker_thread();
+                #[cfg(feature = "diagnostics")]
+                diagnostics_for_worker.running();
 
                 // Set up TLS for current() before running user code
                 CURRENT_THREAD.with(|cell| {
@@ -306,7 +313,11 @@ impl Builder {
                 PANIC_SENDER.with(|cell| {
                     let send_clone = send.clone();
                     let finished_clone = finished_for_worker.clone();
+                    #[cfg(feature = "diagnostics")]
+                    let diagnostics_for_panic = diagnostics_for_worker.clone();
                     *cell.borrow_mut() = Some(Box::new(move |msg: String| {
+                        #[cfg(feature = "diagnostics")]
+                        diagnostics_for_panic.panicked();
                         finished_clone.store(true, Ordering::Release);
                         let _ = send_clone.send_sync(Err(msg));
                     }));
@@ -328,6 +339,8 @@ impl Builder {
                 flush_captured_prints_to_console_current_thread_impl();
 
                 // Mark as finished before sending result (Release pairs with Acquire in is_finished)
+                #[cfg(feature = "diagnostics")]
+                diagnostics_for_worker.finished();
                 finished_for_worker.store(true, Ordering::Release);
                 // Ignore send errors - receiver may have been dropped if JoinHandle wasn't joined
                 let _ = send.send_sync(Ok(result));

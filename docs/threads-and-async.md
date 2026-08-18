@@ -320,6 +320,40 @@ logs each panic exactly once with thread attribution and routes it to the join
 channel — so it owns the panic hook for threaded programs; install any custom hook
 (`set_panic_hook`) *before* the first spawn.
 
+### Inspecting live workers and recent console output
+
+Enable `wasm_lite_std`'s opt-in `diagnostics` feature when an in-page debugger
+needs state it cannot get from browser APIs:
+
+```toml
+[dependencies]
+wasm_lite_std = { version = "0.1", features = ["diagnostics"] }
+```
+
+`wasm_lite_std::diagnostics::threads()` returns a snapshot of threads spawned
+through this crate: a stable id, the optional `Builder` name, spawn time, and
+`Spawned`, `Running`, `Finished`, or `Panicked` state. `Spawned` specifically
+means the browser accepted the spawn request but the Worker has not entered its
+Rust closure yet. Finished threads disappear after their spawn trampoline is
+released, so this is a live registry rather than an unbounded history.
+
+The same feature enables the bounded console ring in `wasm_lite`:
+
+```rust
+let snapshot = wasm_lite::console::records_since(cursor);
+cursor = snapshot.next_cursor;
+for record in snapshot.records {
+    // Send record.level and record.message to your debugger.
+}
+if snapshot.dropped != 0 {
+    // The reader fell behind the 256-record ring.
+}
+```
+
+Calls through `wasm_lite::console` are recorded before they reach JavaScript,
+including panic messages written by `set_panic_hook`. With the feature off,
+neither the registry nor the ring and its spawn/log bookkeeping are compiled.
+
 On panics: `panic = "abort"` is the supported model. On wasm a panic is an
 `unreachable` **trap local to one instance** — verified: a panicking worker traps
 only itself; the main thread and other workers keep running and shared memory

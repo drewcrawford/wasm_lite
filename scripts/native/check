@@ -9,6 +9,8 @@ if [[ " $* " =~ " --relaxed " ]]; then
 fi
 
 RUSTFLAGS="$WARN_FLAGS" cargo check --workspace
+RUSTFLAGS="$WARN_FLAGS" cargo check -p wasm_lite --features diagnostics
+RUSTFLAGS="$WARN_FLAGS" cargo check -p wasm_lite_std --features diagnostics
 RUSTFLAGS="$WARN_FLAGS" cargo check -p wasm_lite_std --features fs
 
 # The fake-wasm-bindgen shim is its own workspace (it reuses the `wasm-bindgen`

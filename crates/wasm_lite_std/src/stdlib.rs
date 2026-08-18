@@ -210,6 +210,8 @@ impl fmt::Display for ThreadId {
 #[derive(Debug)]
 pub struct Builder {
     inner: thread::Builder,
+    #[cfg(feature = "diagnostics")]
+    name: Option<String>,
 }
 
 impl Builder {
@@ -217,11 +219,17 @@ impl Builder {
     pub fn new() -> Self {
         Builder {
             inner: thread::Builder::new(),
+            #[cfg(feature = "diagnostics")]
+            name: None,
         }
     }
 
     /// Sets the name of the thread.
     pub fn name(mut self, name: String) -> Self {
+        #[cfg(feature = "diagnostics")]
+        {
+            self.name = Some(name.clone());
+        }
         self.inner = self.inner.name(name);
         self
     }
@@ -244,12 +252,22 @@ impl Builder {
         T: Send + 'static,
     {
         let (sender, receiver) = mpsc::channel();
+        #[cfg(feature = "diagnostics")]
+        let diagnostics = crate::diagnostics::register(self.name);
         let std_handle = self.inner.spawn(move || {
             mark_worker_thread();
+            #[cfg(feature = "diagnostics")]
+            diagnostics.running();
             let result = catch_unwind(AssertUnwindSafe(|| {
                 crate::hooks::run_spawn_hooks();
                 f()
             }));
+            #[cfg(feature = "diagnostics")]
+            if result.is_ok() {
+                diagnostics.finished();
+            } else {
+                diagnostics.panicked();
+            }
             let _ = sender.send_sync(result);
         })?;
         let thread = Thread(std_handle.thread().clone());
@@ -273,21 +291,7 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    let (sender, receiver) = mpsc::channel();
-    let std_handle = thread::spawn(move || {
-        mark_worker_thread();
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            crate::hooks::run_spawn_hooks();
-            f()
-        }));
-        let _ = sender.send_sync(result);
-    });
-    let thread = Thread(std_handle.thread().clone());
-    JoinHandle {
-        std_handle,
-        receiver,
-        thread,
-    }
+    Builder::new().spawn(f).expect("failed to spawn thread")
 }
 
 pub(crate) fn redirect_println_eprintln_to_console_current_thread_impl() {}

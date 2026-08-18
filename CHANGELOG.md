@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## 0.1.4 - 2026-08-18
 
+### Added
+
+- **Browser threads and console output can now answer “what just happened?”**
+  Enable the opt-in `diagnostics` feature to get two bounded, dependency-free
+  inspection APIs. `wasm_lite_std::diagnostics::threads()` reports each live
+  spawned thread's stable id, optional name, spawn time, and lifecycle state;
+  importantly, a Web Worker that was created but never reached its Rust closure
+  remains visible as `Spawned` instead of impersonating an idle executor.
+
+  `wasm_lite::console::records_since(cursor)` retains the latest 256 calls to
+  `log`, `error`, `warn`, `info`, `debug`, and `trace`, including panic messages
+  routed through the wasm_lite hook. Its monotonic cursor and `dropped` count let
+  a debugger poll without duplicating messages or silently missing a wrapped
+  ring. The feature is empty when disabled: no registry, buffer, or spawn-path
+  bookkeeping lands in ordinary builds.
+
 ### Changed
 
 - **`cargo run` now prints the program's log on your terminal, and the runner's
@@ -41,6 +57,11 @@ All notable changes to this project will be documented in this file.
   project's status and what is not built yet moved to `docs/roadmap.md`.
 
 ### Fixed
+
+- **Installing wasm_lite's panic reporter no longer evicts an application's
+  panic hook.** The core backend now takes and chains the previous hook, matching
+  the wasm-bindgen compatibility backend. Call order no longer decides whether
+  a panic reaches the browser console or the program's own crash reporter.
 
 - **`extends` now gives you the upcast, not just the borrow.** The shim emitted
   `AsRef<Base>` and `Deref` for every `extends` entry, but not the

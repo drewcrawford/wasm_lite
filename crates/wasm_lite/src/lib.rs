@@ -302,9 +302,15 @@ pub use wasm_lite_macro::{export, import, js_class, wasm_lite_bench, wasm_lite_t
 ///
 /// [`wasm_lite_test`]: crate::wasm_lite_test
 pub fn set_panic_hook() {
-    std::panic::set_hook(Box::new(|info| {
-        crate::console::error(&format!("{info}"));
-    }));
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let prior = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            crate::console::error(&format!("{info}"));
+            prior(info);
+        }));
+    });
 }
 
 /// Allocate `len` bytes (align 1) for string/byte marshalling across the JS

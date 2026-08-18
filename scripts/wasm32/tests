@@ -114,7 +114,7 @@ for BROWSER in firefox chrome; do
     RUSTDOCFLAGS="$WASM32_ATOMICS_RUSTDOCFLAGS" \
     CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
     WASM_LITE_BROWSER="$BROWSER" \
-    cargo +nightly test -p wasm_lite_std --features fs --lib \
+    cargo +nightly test -p wasm_lite_std --features fs,diagnostics --lib \
         --target wasm32-unknown-unknown -Z build-std=std,panic_abort
 done
 

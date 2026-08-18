@@ -8,7 +8,9 @@ source "$(dirname "$0")/_env"
 cd "$REPO_ROOT"
 
 RUSTFLAGS="$WASM32_RUSTFLAGS" cargo clippy -p wasm_lite --target wasm32-unknown-unknown
+RUSTFLAGS="$WASM32_RUSTFLAGS" cargo clippy -p wasm_lite --features diagnostics --target wasm32-unknown-unknown
 RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly clippy -p wasm_lite_std --target wasm32-unknown-unknown
+RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly clippy -p wasm_lite_std --features diagnostics --target wasm32-unknown-unknown
 RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly clippy -p wasm_lite_std --features fs --target wasm32-unknown-unknown
 
 for example in \

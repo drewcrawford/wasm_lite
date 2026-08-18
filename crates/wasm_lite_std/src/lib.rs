@@ -27,6 +27,9 @@
 //! The optional `fs` feature adds `wasm_lite_std::fs`, an asynchronous, read-only
 //! `std::fs`-shaped API. Native operations use a blocking-I/O pool; browser
 //! wasm reads same-origin or CORS-enabled resources with HTTP range requests.
+//! The optional `diagnostics` feature adds `wasm_lite_std::diagnostics::threads()`
+//! and enables `wasm_lite`'s bounded, retrievable console history for in-page
+//! debuggers.
 //!
 //! This crate provides a unified threading API and synchronization primitives that work across both
 //! WebAssembly and native platforms. In practice, you can treat it as a cross-platform replacement
@@ -482,6 +485,10 @@ mod sync_tests;
 #[doc(hidden)]
 pub mod test_executor;
 pub mod time;
+
+/// Feature-gated snapshots of threads spawned through this crate.
+#[cfg(feature = "diagnostics")]
+pub mod diagnostics;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 mod wasm_support;
