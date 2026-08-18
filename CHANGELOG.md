@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- **`extends` now gives you the upcast, not just the borrow.** The shim emitted
+  `AsRef<Base>` and `Deref` for every `extends` entry, but not the
+  `From<Type> for Base` that wasm-bindgen emits beside them. Borrowing a base
+  worked; converting into one did not. js-sys declares
+  `#[wasm_bindgen(extends = Object)] pub type Uint8Array`, so
+  `js_sys::Uint8Array::view(bytes).into()` — where an `Object` is wanted — failed
+  to compile. Nothing in wgpu's own bindings converts that way, which is why this
+  went unnoticed until `glow`, the WebGL2 backend wgpu pulls in, hit it seven
+  times in one file and took the whole `wgpu/webgl` feature down with it.
+
+  One impl per *declared* base, matching upstream: web-sys spells out the full
+  ancestry on each type, so the transitive closure is covered without walking it
+  and without duplicate impls. Generic extern types carry their parameters
+  through. With this, unmodified `glow` compiles on the shim, and
+  `images_and_words` renders its demo through WebGL2 in a browser.
+
 ## 0.1.3 - 2026-08-17
 
 ### Added

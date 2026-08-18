@@ -85,6 +85,12 @@ rather than an error, which is much harder to notice:
   `WASM_LITE_BROWSER=chrome`. GPU mode enables unsafe WebGPU and explicitly
   selects Dawn's SwiftShader adapter, giving GPU-less CI hosts the same
   software-backed WebGPU device as developer machines.
+
+  It is read for *presence*, not value: `WASM_LITE_GPU=0` enables GPU mode
+  exactly as `=1` does. To get a browser without WebGPU, leave the variable
+  unset — and note that Chrome's `--disable-features=WebGPU` does not remove
+  `navigator.gpu`, so it cannot be used to make a WebGPU-capable Chrome pretend
+  otherwise.
 * **`WASM_LITE_SERVE_DIR`.** Without it the runner serves only the program's own
   files, so a fetch for a texture or a shader 404s and the program concludes its
   assets are missing — which they are, but not for the reason it will report.

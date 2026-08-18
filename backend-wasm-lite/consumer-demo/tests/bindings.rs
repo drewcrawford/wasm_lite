@@ -88,6 +88,17 @@ mod websys_grammar {
         assert_eq!(via_base, direct);
     }
 
+    /// `extends` also gives the *upcast* — `let base: JsObjectBase = url.into()`.
+    /// `Deref`/`AsRef` only lend a reference; `glow` and friends convert by
+    /// value, so the `From` has to be there too.
+    #[wasm_lite_test]
+    fn extends_upcasts_to_the_base_type() {
+        let url = Url::new("https://example.com/");
+        let direct = json_stringify(wasm_bindgen::JsObject::as_js(&url));
+        let base: JsObjectBase = url.into();
+        assert_eq!(json_stringify(wasm_bindgen::JsObject::as_js(&base)), direct);
+    }
+
     #[wasm_lite_test]
     fn static_method_indexing_and_length() {
         let arr = JsArray::of2(10.0, 20.0);

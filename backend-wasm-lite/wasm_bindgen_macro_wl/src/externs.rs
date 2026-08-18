@@ -114,6 +114,27 @@ pub(crate) fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
         }
     });
 
+    // The upcast the `AsRef` above does not give: `let o: Object = arr.into()`.
+    // wasm-bindgen emits one of these per declared `extends` next to the
+    // `AsRef`, and callers rely on it — `glow` writes
+    // `js_sys::Uint8Array::view(bytes).into()` where an `Object` is wanted.
+    // Emitted per *declared* base, exactly as upstream: web-sys spells out the
+    // whole ancestry on each type, so the transitive closure is covered without
+    // this walking it (which would duplicate impls).
+    let upcasts = opts.extends.iter().map(|base| {
+        quote! {
+            impl #impl_g ::wasm_bindgen::__rt::core::convert::From<#name #ty_g> for #base #where_g {
+                fn from(v: #name #ty_g) -> #base {
+                    // The claim is the same one `Deref`/`AsRef` above make, and
+                    // matches wasm-bindgen: an upcast is unchecked.
+                    <#base as ::wasm_bindgen::JsCast>::unchecked_from_js(
+                        ::wasm_bindgen::JsObject::into_js(v),
+                    )
+                }
+            }
+        }
+    });
+
     // The JS class this type names, for `instanceof`. web-sys renames freely
     // (`pub type HtmlElement` ↔ `HTMLElement`), so `js_name` wins.
     let js_class = opts.js_name.clone().unwrap_or_else(|| name.to_string());
@@ -218,6 +239,7 @@ pub(crate) fn extern_type(t: ForeignItemType) -> syn::Result<TokenStream2> {
         #root_deref
         #deref
         #(#as_refs)*
+        #(#upcasts)*
     })
 }
 
