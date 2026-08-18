@@ -1,8 +1,25 @@
-# Crate layering & roadmap
+# Status, crate layering & roadmap
 
 *(Part of the [wasm_lite](../README.md) docs. See also: [binding model](./binding-model.md),
 [testing](./testing.md), [threads & async](./threads-and-async.md),
 [interop](./interop.md), [migration guide](../MIGRATION.md).)*
+
+## Status
+
+* Modern-browser runner: **done** (WebDriver: Firefox/Chrome/Safari).
+* `+atomics` / shared-memory builds: **done**; threads spawn onto Web Workers.
+* Std-like thread/sync/time veneer: **done** in `wasm_lite_std` (sync and async).
+* Unit tests, doctests, and benchmarks in-browser: **done**.
+* Rust/JS imports and exports: **done** (`import!` / `#[export]`).
+* Logging and panic surfacing to the CLI: **done** for main-thread failures,
+  joined workers, detached-worker warnings, and doctests with `set_panic_hook`.
+* Simple, clean architecture: ongoing.
+* Avoid dependencies: **mostly held**. The core crate and codegen have zero
+  runtime dependencies. The proc-macro crate uses `syn`/`quote` at build time
+  for typed parsing and hygienic codegen.
+* Interop with wasm-bindgen crates: **done** behind the `wasm-bindgen` feature
+  when `wasm_lite` owns final codegen; bounded `[patch]` shims exist for both
+  host directions, while a general reverse glue post-pass remains roadmap work.
 
 ## Goals that shape the roadmap
 

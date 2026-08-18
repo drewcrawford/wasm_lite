@@ -210,85 +210,67 @@ pub fn wasm_lite_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     // or is dropped therefore fails, rather than passing because the entry point
     // returned.
     //
-    // The wasm32 arms carry the browser-runner integration (`set_panic_hook`, the
-    // `__rt` pending/pass verdict hooks). Those symbols only exist on wasm32, so on
-    // other targets we emit a plain host-runnable fallback instead. This keeps the
-    // generated entry compilable/linkable on the host (e.g. as a doctest) without
-    // changing the wasm32 expansion at all.
+    // The entry is emitted for wasm32 only (see below), so these arms use the
+    // browser-runner integration (`set_panic_hook`, the `__rt` pending/pass
+    // verdict hooks) unconditionally.
     //
     // `std_crate =` for the same reason `crate =` exists: a wrapper crate's users
     // have never heard of wasm_lite_std and do not depend on it, so an absolute
     // `::wasm_lite_std` path in the expansion cannot resolve there.
     let entry_body = match (is_async, args.worker) {
         (false, false) => quote! {
-            #[cfg(target_arch = "wasm32")]
             #krate::set_panic_hook();
             #body_ident();
         },
         (false, true) => quote! {
-            #[cfg(target_arch = "wasm32")]
-            {
-                #krate::set_panic_hook();
-                #std_krate::__rt::test_pending();
-                #std_krate::spawn_local(async {
-                    #std_krate::spawn(#body_ident).join_async().await.unwrap();
-                    #std_krate::__rt::test_pass();
-                });
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                #std_krate::spawn(#body_ident).join().unwrap();
-            }
+            #krate::set_panic_hook();
+            #std_krate::__rt::test_pending();
+            #std_krate::spawn_local(async {
+                #std_krate::spawn(#body_ident).join_async().await.unwrap();
+                #std_krate::__rt::test_pass();
+            });
         },
         (true, false) => quote! {
-            #[cfg(target_arch = "wasm32")]
-            {
-                #krate::set_panic_hook();
-                #std_krate::__rt::test_pending();
-                #std_krate::spawn_local(async {
-                    #body_ident().await;
-                    #std_krate::__rt::test_pass();
-                });
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                #std_krate::block_on(#body_ident());
-            }
+            #krate::set_panic_hook();
+            #std_krate::__rt::test_pending();
+            #std_krate::spawn_local(async {
+                #body_ident().await;
+                #std_krate::__rt::test_pass();
+            });
         },
         // An async body that also blocks. The future cannot be driven on the
         // main thread at all — `block_on` traps there — so a worker drives it
         // and the main thread awaits that worker's join.
         (true, true) => quote! {
-            #[cfg(target_arch = "wasm32")]
-            {
-                #krate::set_panic_hook();
-                #std_krate::__rt::test_pending();
-                #std_krate::spawn_local(async {
-                    #std_krate::spawn(|| #std_krate::block_on(#body_ident()))
-                        .join_async()
-                        .await
-                        .unwrap();
-                    #std_krate::__rt::test_pass();
-                });
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                #std_krate::block_on(#body_ident());
-            }
+            #krate::set_panic_hook();
+            #std_krate::__rt::test_pending();
+            #std_krate::spawn_local(async {
+                #std_krate::spawn(|| #std_krate::block_on(#body_ident()))
+                    .join_async()
+                    .await
+                    .unwrap();
+                #std_krate::__rt::test_pass();
+            });
         },
     };
 
+    // The entry point and its registration exist for the browser runner only.
+    // Off wasm32 they must not be emitted: a sync body carries `#[test]`, which
+    // strips it from any non-test build (a doctest, a lib's non-`cfg(test)`
+    // module), and an entry that still called it would then fail to compile.
     quote! {
         #func
         #native_test
+        #[cfg(target_arch = "wasm32")]
         #[unsafe(export_name = concat!("__wl_test_", module_path!(), "::", stringify!(#name)))]
         pub extern "C" fn #entry() {
             #entry_body
         }
+        #[cfg(target_arch = "wasm32")]
         const _: () = {
             const __WL_TEST_NAME_LEN: usize = concat!(module_path!(), "::", stringify!(#name), #fields, "\n").len();
             #[used]
-            #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "__wasm_lite_tests"))]
+            #[unsafe(link_section = "__wasm_lite_tests")]
             static __WL_TEST_NAME: [u8; __WL_TEST_NAME_LEN] = {
                 let bytes = concat!(module_path!(), "::", stringify!(#name), #fields, "\n").as_bytes();
                 let mut out = [0u8; __WL_TEST_NAME_LEN];
