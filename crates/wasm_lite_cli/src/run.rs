@@ -44,8 +44,8 @@ const LOG_PATH: &str = "/__wl_log";
 ///
 /// Only [`LOG_PATH`] has a body at all, and 512 console lines — the forwarder's
 /// own flush threshold — do not come close. A batch over this is pathological,
-/// and is clipped rather than refused: [`decode_log_batch`] ignores the
-/// resulting partial record, so the cost is the tail of one line.
+/// and is clipped rather than refused: the [`shell`] decoder ignores
+/// the resulting partial record, so the cost is the tail of one line.
 const MAX_REQUEST_BODY: u64 = 1 << 20;
 
 /// A single static resource served by the runner.
