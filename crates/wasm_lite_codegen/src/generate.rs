@@ -66,6 +66,11 @@ pub fn generate_glue_with_worker(
             "    imports[\"__wasm_lite\"] = Object.assign(Object.create(null), {{ __wl_drop: __wl_drop, __wl_spawn: __wl_spawn_unavailable, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_timer_arm: __wl_timer_arm, __wl_timer_cancel: __wl_timer_cancel, {test_rt} }});"
         );
     }
+    // Reserved, versioned structured observability transport. Unlike ordinary
+    // descriptors this ABI is supplied whenever a module asks for it.
+    js.push_str(
+        "    imports[\"logwise_v1\"] = Object.assign(Object.create(null), { emit: __wl_logwise_emit });\n",
+    );
 
     for d in imports {
         emit_shim(&mut js, d);
@@ -169,6 +174,14 @@ mod tests {
         // The value-table runtime import is always wired.
         assert!(js.contains("imports[\"__wasm_lite\"] = Object.assign(Object.create(null), { __wl_drop: __wl_drop, __wl_spawn: __wl_spawn_unavailable, __wl_schedule: __wl_schedule, __wl_wait_async: __wl_wait_async, __wl_timer_arm: __wl_timer_arm, __wl_timer_cancel: __wl_timer_cancel, __wl_test_pending: __wl_test_pending, __wl_test_pass: __wl_test_pass, __wl_closure_new: __wl_closure_new, __wl_clone: __wl_clone, __wl_num: __wl_num, __wl_bigint: __wl_bigint, __wl_ubigint: __wl_ubigint, __wl_bigint_str: __wl_bigint_str, __wl_str_val: __wl_str_val, __wl_as_f64: __wl_as_f64, __wl_as_bool: __wl_as_bool, __wl_as_str: __wl_as_str, __wl_eq: __wl_eq, __wl_binop: __wl_binop, __wl_unop: __wl_unop, __wl_cmp: __wl_cmp, __wl_is: __wl_is, __wl_checked_div: __wl_checked_div, __wl_num_str: __wl_num_str, __wl_memory_obj: __wl_memory_obj, __wl_module_obj: __wl_module_obj });"));
         assert!(js.contains("const __wl_timers = new Map();"));
+        assert!(js.contains(
+            "imports[\"logwise_v1\"] = Object.assign(Object.create(null), { emit: __wl_logwise_emit });"
+        ));
+        assert!(js.contains("function __wl_logwise_emit(ptr, len)"));
+        assert!(js.contains("const __WL_LOGWISE_MAX_RECORD = 64 * 1024;"));
+        assert!(js.contains("const __WL_LOGWISE_MAX_BYTES = 4 * 1024 * 1024;"));
+        assert!(js.contains("globalThis.__wl_logwise_dropped"));
+        assert!(js.contains("new CustomEvent(\"__wl_logwise\""));
     }
 
     #[test]
@@ -491,6 +504,9 @@ mod tests {
             !worker.contains("__wl_thread_free"),
             "worker must not deallocate the stack it is executing on: {worker}"
         );
+        assert!(glue.contains("m && m.__wl_logwise"));
+        assert!(glue.contains("__wl_sink_logwise(m.__wl_logwise)"));
+        assert!(worker.contains("[\"log\", \"error\", \"warn\", \"info\", \"debug\"]"));
     }
 
     #[test]

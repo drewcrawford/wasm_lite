@@ -91,7 +91,7 @@ pub(super) const CONSOLE_FORWARDER: &str = r#"
             });
     };
 
-    for (const level of ["log", "error", "warn", "info"]) {
+    for (const level of ["log", "error", "warn", "info", "debug"]) {
         const original = console[level].bind(console);
         console[level] = (...args) => {
             original(...args);
@@ -111,6 +111,47 @@ pub(super) const CONSOLE_FORWARDER: &str = r#"
         if (pending.length === 0) return;
         navigator.sendBeacon(ENDPOINT, pending.join(""));
         pending = [];
+    });
+
+    const LOGWISE_ENDPOINT = "/__wl_logwise";
+    const MAX_STRUCTURED_BYTES = 512 * 1024;
+    let structured = [];
+    let structuredBytes = 0;
+    let structuredInflight = false;
+    let structuredTimer = null;
+    const flushStructured = () => {
+        if (structuredInflight || structured.length === 0) return;
+        const body = new Blob(structured.map(bytes => new Uint8Array(bytes)));
+        structured = [];
+        structuredBytes = 0;
+        structuredInflight = true;
+        fetch(LOGWISE_ENDPOINT, { method: "POST", body })
+            .catch(() => {})
+            .then(() => {
+                structuredInflight = false;
+                if (structured.length) flushStructured();
+            });
+    };
+    addEventListener("__wl_logwise", event => {
+        structured.push(event.detail);
+        structuredBytes += event.detail.length;
+        if (structured.length >= MAX_PENDING || structuredBytes >= MAX_STRUCTURED_BYTES) {
+            flushStructured();
+        } else if (structuredTimer === null) {
+            structuredTimer = setTimeout(() => {
+                structuredTimer = null;
+                flushStructured();
+            }, FLUSH_MS);
+        }
+    });
+    addEventListener("pagehide", () => {
+        if (structured.length === 0) return;
+        navigator.sendBeacon(
+            LOGWISE_ENDPOINT,
+            new Blob(structured.map(bytes => new Uint8Array(bytes))),
+        );
+        structured = [];
+        structuredBytes = 0;
     });
 })();
 "#;
@@ -132,6 +173,77 @@ pub(super) fn print_log_batch(body: &[u8]) {
             _ => println!("{text}"),
         }
     }
+}
+
+/// Print a batch of concatenated, self-framed `logwise_v1` envelopes.
+pub(super) fn print_logwise_batch(mut body: &[u8]) {
+    while body.len() >= 12 {
+        let length = u32::from_le_bytes(body[8..12].try_into().unwrap()) as usize;
+        if length < 12 || length > body.len() {
+            break;
+        }
+        if let Some(summary) = summarize_logwise(&body[..length]) {
+            println!("{summary}");
+        }
+        body = &body[length..];
+    }
+}
+
+fn summarize_logwise(bytes: &[u8]) -> Option<String> {
+    if bytes.get(..4)? != b"LW1\0" || read_u16(bytes, 4)? != 1 {
+        return None;
+    }
+    let sequence = read_u64(bytes, 12)?;
+    let dropped = read_u64(bytes, 20)?;
+    let truncated = read_u64(bytes, 28)?;
+    let worker = read_u64(bytes, 36)?;
+    let context = read_u64(bytes, 44)?;
+    let mut position = 60;
+    let links = read_u16(bytes, position)? as usize;
+    position = position.checked_add(2 + links.checked_mul(16)?)?;
+    position = position.checked_add(3)?; // severity, class, kind
+    let event = read_text(bytes, &mut position)?;
+    read_text(bytes, &mut position)?; // package
+    read_text(bytes, &mut position)?; // target
+    read_text(bytes, &mut position)?; // module
+    if read_u8(bytes, &mut position)? != 0 {
+        read_text(bytes, &mut position)?; // optional domain
+    }
+    let test = if read_u8(bytes, &mut position)? != 0 {
+        Some(read_text(bytes, &mut position)?)
+    } else {
+        None
+    };
+    let test = test.map_or(String::new(), |test| format!(" test={test}"));
+    Some(format!(
+        "logwise[{sequence}] {event}{test} worker={worker} context={context} dropped={dropped} truncated={truncated}"
+    ))
+}
+
+fn read_u8(bytes: &[u8], position: &mut usize) -> Option<u8> {
+    let value = *bytes.get(*position)?;
+    *position = position.checked_add(1)?;
+    Some(value)
+}
+
+fn read_u16(bytes: &[u8], position: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(
+        bytes.get(position..position + 2)?.try_into().ok()?,
+    ))
+}
+
+fn read_u64(bytes: &[u8], position: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(
+        bytes.get(position..position + 8)?.try_into().ok()?,
+    ))
+}
+
+fn read_text<'a>(bytes: &'a [u8], position: &mut usize) -> Option<&'a str> {
+    let length = read_u16(bytes, *position)? as usize;
+    *position = position.checked_add(2)?;
+    let text = std::str::from_utf8(bytes.get(*position..position.checked_add(length)?)?).ok()?;
+    *position += length;
+    Some(text)
 }
 
 /// Split a forwarded batch into `(level, text)` records.
@@ -193,6 +305,21 @@ mod tests {
     #[test]
     fn forwarder_posts_to_the_log_path() {
         assert!(CONSOLE_FORWARDER.contains(&format!("\"{LOG_PATH}\"")));
+        assert!(CONSOLE_FORWARDER.contains(&format!("\"{}\"", crate::run::LOGWISE_PATH)));
+    }
+
+    #[test]
+    fn decodes_logwise_v1_golden_vector() {
+        const HEX: &str = "4c57310001000100c80000002a000000000000000300000000000000090000000000000007000000000000000b000000000000000c000000000000000100150000000000000016000000000000000302000c00676f6c64656e2e6576656e74070066697874757265050067756573740600676f6c64656e0001040063617365010900676f6c64656e2e727311000000040000000300000003000600616374697665000001010500636f756e74010103630000000000000005006c6162656c000005040068c3a96c00";
+        let bytes: Vec<u8> = HEX
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect();
+        assert_eq!(
+            summarize_logwise(&bytes).as_deref(),
+            Some("logwise[42] golden.event test=case worker=7 context=11 dropped=3 truncated=9")
+        );
     }
 
     /// The shell must contribute no elements, so a program's own DOM lays out

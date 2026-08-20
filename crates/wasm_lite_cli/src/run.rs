@@ -38,14 +38,15 @@ const WB_GLUE_JS: &str = "/wb_glue.js";
 /// Endpoint the interactive shell POSTs batched console output to. Not a
 /// [`Route`]: it has no body to serve, and is answered before the route table.
 const LOG_PATH: &str = "/__wl_log";
+/// Endpoint for concatenated, self-framed `logwise_v1` envelopes.
+const LOGWISE_PATH: &str = "/__wl_logwise";
 
 /// Ceiling on a request body, so a runaway or hostile client cannot make the
 /// runner allocate without bound.
 ///
-/// Only [`LOG_PATH`] has a body at all, and 512 console lines — the forwarder's
-/// own flush threshold — do not come close. A batch over this is pathological,
-/// and is clipped rather than refused: the [`shell`] decoder ignores
-/// the resulting partial record, so the cost is the tail of one line.
+/// Console and structured-log forwarding both stay below this limit. A batch
+/// over it is pathological and is clipped rather than refused: the [`shell`]
+/// decoders ignore a resulting partial text line or structured frame.
 const MAX_REQUEST_BODY: u64 = 1 << 20;
 
 /// A single static resource served by the runner.
@@ -474,6 +475,12 @@ fn handle(mut stream: TcpStream, routes: &[Route]) -> std::io::Result<()> {
     if request.path == LOG_PATH {
         if request.post {
             shell::print_log_batch(&request.body);
+        }
+        return respond(&mut stream, 200, "text/plain; charset=utf-8", b"", &request);
+    }
+    if request.path == LOGWISE_PATH {
+        if request.post {
+            shell::print_logwise_batch(&request.body);
         }
         return respond(&mut stream, 200, "text/plain; charset=utf-8", b"", &request);
     }

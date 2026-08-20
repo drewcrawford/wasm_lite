@@ -329,6 +329,7 @@ fn run_main(browser: &Browser, port: u16) -> Result<i32, String> {
     // On failure, prefer the captured console (the panic message, if a panic
     // hook was installed); fall back to the raw trap for the no-hook case.
     let console = browser.eval_string(CONSOLE_JOIN)?;
+    let structured = browser.eval_string(LOGWISE_JOIN)?;
     if !console.is_empty() {
         println!("{console}");
     } else {
@@ -336,6 +337,9 @@ fn run_main(browser: &Browser, port: u16) -> Result<i32, String> {
         if !error.is_empty() {
             eprintln!("{error}");
         }
+    }
+    if !structured.is_empty() {
+        println!("--- recent structured history ---\n{structured}");
     }
     println!("test result: FAILED");
     Ok(1)
@@ -427,7 +431,12 @@ fn run_suite(
             // usually the only clue to what happened, and if the page was
             // discarded this snapshot is the only copy left. The failure that
             // ended the run is normally in both, so print it once.
-            for line in watch.0.lines().filter(|l| !err.contains(*l)) {
+            for line in watch
+                .text
+                .lines()
+                .chain(watch.structured.lines())
+                .filter(|l| !err.contains(*l))
+            {
                 println!("    {line}");
             }
             continue;
@@ -438,6 +447,7 @@ fn run_suite(
         // page captured. It is both what we print on failure and what
         // `should_panic(expected = "…")` matches against.
         let output = browser.eval_string(CONSOLE_JOIN)?;
+        let structured = browser.eval_string(LOGWISE_JOIN)?;
 
         // A `#[should_panic]` test inverts the verdict: the module traps, and
         // only the runner can tell "trapped as intended" from "trapped". Each
@@ -456,6 +466,9 @@ fn run_suite(
                 println!("    expected: {expected}");
                 for line in output.lines() {
                     println!("    panicked: {line}");
+                }
+                for line in structured.lines() {
+                    println!("    {line}");
                 }
             } else {
                 println!("test {name} ... ok");
@@ -477,6 +490,9 @@ fn run_suite(
                 if !error.is_empty() {
                     println!("    {error}");
                 }
+            }
+            for line in structured.lines() {
+                println!("    {line}");
             }
         }
     }
@@ -517,7 +533,12 @@ fn run_entry_point(browser: &Browser, port: u16) -> Result<bool, String> {
         for line in err.lines() {
             println!("    {line}");
         }
-        for line in watch.0.lines().filter(|l| !err.contains(*l)) {
+        for line in watch
+            .text
+            .lines()
+            .chain(watch.structured.lines())
+            .filter(|l| !err.contains(*l))
+        {
             println!("    {line}");
         }
         return Ok(false);
@@ -531,6 +552,7 @@ fn run_entry_point(browser: &Browser, port: u16) -> Result<bool, String> {
 
     println!("test {ENTRY_POINT} ... FAILED");
     let output = browser.eval_string(CONSOLE_JOIN)?;
+    let structured = browser.eval_string(LOGWISE_JOIN)?;
     for line in output.lines() {
         println!("    {line}");
     }
@@ -539,6 +561,9 @@ fn run_entry_point(browser: &Browser, port: u16) -> Result<bool, String> {
         if !error.is_empty() {
             println!("    {error}");
         }
+    }
+    for line in structured.lines() {
+        println!("    {line}");
     }
     Ok(false)
 }
@@ -579,7 +604,7 @@ fn run_bench_suite(
             for line in err.lines() {
                 println!("    {line}");
             }
-            for line in watch.0.lines() {
+            for line in watch.text.lines().chain(watch.structured.lines()) {
                 println!("    {line}");
             }
             continue;
@@ -712,14 +737,20 @@ fn timeout_secs() -> u64 {
 /// discards the context where Chrome reports the exception, which is why the
 /// same crash used to be diagnosable in one browser and silent in the other.
 #[derive(Default)]
-struct Console(String);
+struct Console {
+    text: String,
+    structured: String,
+}
 
 impl Console {
     /// Refresh from the page, keeping the previous text if it can no longer be
     /// read (which is itself usually the interesting case).
     fn refresh(&mut self, browser: &Browser) {
         if let Ok(text) = browser.eval_string(CONSOLE_JOIN) {
-            self.0 = text;
+            self.text = text;
+        }
+        if let Ok(structured) = browser.eval_string(LOGWISE_JOIN) {
+            self.structured = structured;
         }
     }
 
@@ -728,15 +759,21 @@ impl Console {
         // The failure that ended the run is usually both the error and the last
         // console line; saying it twice reads like two problems.
         let rest: Vec<&str> = self
-            .0
+            .text
             .lines()
             .filter(|l| !already_said.contains(*l))
             .collect();
-        if rest.is_empty() {
+        if rest.is_empty() && self.structured.is_empty() {
             return;
         }
         eprintln!("{heading}");
-        eprintln!("{}", rest.join("\n"));
+        if !rest.is_empty() {
+            eprintln!("{}", rest.join("\n"));
+        }
+        if !self.structured.is_empty() {
+            eprintln!("--- recent structured history ---");
+            eprintln!("{}", self.structured);
+        }
     }
 }
 
@@ -819,6 +856,41 @@ fn plural(n: usize) -> &'static str {
 
 /// Script that returns all captured console output joined by newlines.
 const CONSOLE_JOIN: &str = "return (globalThis.__wl_console || []).join(\"\\n\");";
+const LOGWISE_JOIN: &str = r#"
+const retained = (globalThis.__wl_logwise || []).slice(-32).map(record => {
+    try {
+        const bytes = Uint8Array.from(record);
+        const view = new DataView(bytes.buffer);
+        const sequence = view.getBigUint64(12, true);
+        const dropped = view.getBigUint64(20, true);
+        const truncated = view.getBigUint64(28, true);
+        const worker = view.getBigUint64(36, true);
+        const context = view.getBigUint64(44, true);
+        let offset = 60;
+        const links = view.getUint16(offset, true);
+        offset += 2 + links * 16 + 3;
+        const text = () => {
+            const length = view.getUint16(offset, true);
+            offset += 2;
+            const value = new TextDecoder().decode(bytes.slice(offset, offset + length));
+            offset += length;
+            return value;
+        };
+        const event = text();
+        text(); // package
+        text(); // target
+        text(); // module
+        if (bytes[offset++]) text(); // optional domain
+        const test = bytes[offset++] ? ` test=${text()}` : "";
+        return `logwise[${sequence}] ${event}${test} worker=${worker} context=${context} dropped=${dropped} truncated=${truncated}`;
+    } catch (_) {
+        return "logwise: malformed retained envelope";
+    }
+});
+const overwritten = globalThis.__wl_logwise_dropped || 0;
+if (overwritten) retained.unshift(`logwise host ring overwrote ${overwritten} record(s)`);
+return retained.join("\n");
+"#;
 
 /// How long the page tolerates hearing nothing from the runner before it
 /// assumes the runner is gone and tears itself down.
@@ -847,7 +919,7 @@ fn test_html() -> String {
         <body>\n\
         <script>\n\
         globalThis.__wl_console = [];\n\
-        for (const level of [\"log\", \"error\", \"warn\", \"info\"]) {{\n\
+        for (const level of [\"log\", \"error\", \"warn\", \"info\", \"debug\"]) {{\n\
             const original = console[level].bind(console);\n\
             console[level] = (...args) => {{ original(...args); globalThis.__wl_console.push(args.join(\" \")); }};\n\
         }}\n\

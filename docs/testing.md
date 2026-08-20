@@ -33,7 +33,7 @@ users assemble later.
   a future panics, is dropped, or hangs, the runner reports failure or timeout
   instead of accepting `main` returning as success.
 * **CLI-visible logs and panics.** The HTML shell captures `console.log`,
-  `console.error`, `console.warn`, and `console.info`; generated worker glue
+  `console.error`, `console.warn`, `console.info`, and `console.debug`; generated worker glue
   forwards worker console output to the main realm; and the test runner prints
   captured panic messages rather than leaving users with a bare wasm trap.
   Interactively the same capture is *forwarded to the terminal* rather than
@@ -82,6 +82,27 @@ layout participant: a program that appends its own element to `<body>` — a
 logged pushed it further down. The page a program gets from the runner is now
 the same empty document it gets from the page it ships with. If you want output
 on the page, your program can put it there.
+
+### Structured logwise events
+
+Generated glue also reserves the versioned wasm import
+`logwise_v1.emit(ptr, len)`. A `logwise_runtime_wasm` guest uses it to lend one
+self-framed structured envelope to the host; wasm_lite copies the bytes before
+the call returns. The dependency remains one-way: wasm_lite implements the host
+ABI without depending on either `logwise` crate.
+
+Worker records are forwarded to the main realm with their original test,
+sequence, worker, context, drop, and truncation metadata intact. The realm keeps
+a bounded bundle of at most 2,048 records or 4 MiB and reports host-side
+overwrites separately. Individual envelopes are capped at 64 KiB. Interactive
+runs stream those frames incrementally to the CLI, while tests keep them quiet
+on success and print the latest 32 summaries on failure or timeout. That makes
+a partly hung scheduler diagnosable without waiting for the wasm instance to
+answer a final “give me your logs” call.
+
+The existing console bridge remains available for JavaScript and other foreign
+text. It deliberately does not patch `console.trace`, whose browser meaning is
+“capture a stack trace,” not “emit a trace-level record.”
 
 ## Configure the runner
 

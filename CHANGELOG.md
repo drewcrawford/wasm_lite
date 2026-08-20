@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- **Structured logwise history now makes it out of a stuck wasm worker.**
+  Generated glue implements the reserved `logwise_v1.emit(ptr, len)` host ABI,
+  copies each borrowed envelope, and forwards worker records to the main realm
+  without flattening their event name, context, sequence, drop, or truncation
+  metadata. Interactive runs batch the self-framed records to the CLI as they
+  arrive; test runs retain a bounded bundle and show a recent structured tail
+  on failures and timeouts while keeping passing output quiet. The console
+  monkeypatch remains the foreign-text path and now includes `console.debug`;
+  `console.trace` keeps its native stack-trace semantics.
+
 ## 0.1.4 - 2026-08-18
 
 ### Added

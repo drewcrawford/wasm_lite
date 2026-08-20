@@ -308,6 +308,52 @@ function __wl_sink_log(level, text) {
     }
 }
 
+// Structured logwise_v1 records are copied immediately: the guest only lends
+// its bytes for the import call. Workers stream each frame to the main realm;
+// the main realm keeps a bounded bundle for test failures/hangs and publishes
+// an event that the interactive shell batches to the CLI.
+const __WL_LOGWISE_MAX_RECORD = 64 * 1024;
+const __WL_LOGWISE_MAX_RECORDS = 2048;
+const __WL_LOGWISE_MAX_BYTES = 4 * 1024 * 1024;
+function __wl_sink_logwise(bytes) {
+    if (__wl_is_worker) {
+        const record = Uint8Array.from(bytes);
+        self.postMessage({ __wl_logwise: record }, [record.buffer]);
+        return;
+    }
+    const record = Uint8Array.from(bytes);
+    const records = globalThis.__wl_logwise || (globalThis.__wl_logwise = []);
+    let retainedBytes = globalThis.__wl_logwise_bytes || 0;
+    while (records.length >= __WL_LOGWISE_MAX_RECORDS ||
+           retainedBytes + record.length > __WL_LOGWISE_MAX_BYTES) {
+        const removed = records.shift();
+        retainedBytes -= removed.length;
+        globalThis.__wl_logwise_dropped = (globalThis.__wl_logwise_dropped || 0) + 1;
+    }
+    records.push(record);
+    globalThis.__wl_logwise_bytes = retainedBytes + record.length;
+    globalThis.dispatchEvent(new CustomEvent(\"__wl_logwise\", { detail: record }));
+}
+
+function __wl_logwise_emit(ptr, len) {
+    try {
+        const length = len >>> 0;
+        if (length > __WL_LOGWISE_MAX_RECORD) return 3;
+        const bytes = new Uint8Array(__wl_memory.buffer, ptr >>> 0, length).slice();
+        if (bytes.length < 12 || bytes[0] !== 0x4c || bytes[1] !== 0x57 ||
+            bytes[2] !== 0x31 || bytes[3] !== 0 || bytes[4] !== 1 || bytes[5] !== 0) {
+            return 2;
+        }
+        const declared = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+            .getUint32(8, true);
+        if (declared !== bytes.length) return 2;
+        __wl_sink_logwise(bytes);
+        return 0;
+    } catch (_e) {
+        return -1;
+    }
+}
+
 // A JS exception escaping a non-Result import unwinds the wasm frames without
 // running Rust destructors or restoring the shadow stack pointer — the
 // instance's state is as suspect as after a panic. Record the failure
@@ -489,6 +535,7 @@ function __wl_spawn_at(work, stackPtr, tlsPtr, tlsSize) {{
     w.onmessage = (e) => {{
         const m = e.data;
         if (m && m.__wl_log) {{ __wl_sink_log(m.__wl_log[0], m.__wl_log[1]); }}   // forward worker console up
+        else if (m && m.__wl_logwise) {{ __wl_sink_logwise(m.__wl_logwise); }}    // stream structured records
         else if (m && m.__wl_start_failed !== undefined) {{ __wl_worker_start_failed(m.__wl_start_failed); }}
         // A thread this worker spawned: create it here (or relay further up).
         // Its stack and TLS are already allocated in the shared memory.
@@ -538,7 +585,7 @@ globalThis.__wl_spawned_worker = true;
 
 // Forward this worker's console output to our parent so it reaches the main
 // realm (and the test runner / CLI). Still log locally for browser devtools.
-for (const __l of [\"log\", \"error\", \"warn\", \"info\"]) {{
+for (const __l of [\"log\", \"error\", \"warn\", \"info\", \"debug\"]) {{
     const __orig = console[__l] ? console[__l].bind(console) : function () {{}};
     console[__l] = (...a) => {{ __orig(...a); self.postMessage({{ __wl_log: [__l, a.join(\" \")] }}); }};
 }}
