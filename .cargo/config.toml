@@ -1,0 +1,5 @@
+[net]
+# The temporary pre-release `logwise` pin behind the optional `logwise` feature
+# is a Gitea SSH URL; cargo's built-in transport cannot use this checkout's
+# ssh-agent.
+git-fetch-with-cli = true

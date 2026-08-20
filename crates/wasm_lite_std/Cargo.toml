@@ -22,10 +22,21 @@ diagnostics = ["wasm_lite/diagnostics"]
 # Async, read-only std::fs-shaped API. Its native pool and Priority type stay
 # out of existing users' dependency graphs until this is requested.
 fs = ["dep:blocking", "dep:priority"]
+# Structured observation for `fs`, through the zero-dependency `logwise` facade.
+# Deliberately its own feature rather than part of `fs`: a consumer who wants
+# files should not acquire an observation facade they never asked for, and with
+# this off the call sites are not compiled at all. The facade is inert until a
+# runtime installs a dispatcher, so enabling this still emits nothing on its own.
+logwise = ["dep:logwise"]
 
 [dependencies]
 atomic-waker = "1.1.2"
 priority = { version = "0.1.1", optional = true }
+# Temporary pre-release pin for the coordinated breaking migration; switch to a
+# crates.io version once the facade release is published. Every crate sharing a
+# graph must name the *same* revision -- two git revisions of the facade are two
+# crates to cargo, hence two install-once dispatch globals.
+logwise = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/logwise.git", rev = "1be396ff30588ad32453596bbaa45afb568368f7", optional = true }
 
 [target.'cfg(not(target_arch="wasm32"))'.dependencies]
 blocking = { version = "1.6.2", optional = true }
@@ -51,6 +62,14 @@ harness = false
 name = "fs"
 harness = false
 required-features = ["fs"]
+
+# The observation contract for `fs`: event names, per-field privacy, and what a
+# view that asked for less is *not* given. Separate target because it needs the
+# `logwise` feature, which `fs` alone must not turn on.
+[[test]]
+name = "fs_logwise"
+harness = false
+required-features = ["fs", "logwise"]
 
 # `wasm_lite::websocket`'s browser suite, here for the same reason. Its peer is
 # the runner's own echo endpoint.

@@ -12,6 +12,7 @@ RUSTFLAGS="$WARN_FLAGS" cargo clippy --workspace --all-targets
 RUSTFLAGS="$WARN_FLAGS" cargo clippy -p wasm_lite --all-targets --features diagnostics
 RUSTFLAGS="$WARN_FLAGS" cargo clippy -p wasm_lite_std --all-targets --features diagnostics
 RUSTFLAGS="$WARN_FLAGS" cargo clippy -p wasm_lite_std --all-targets --features fs
+RUSTFLAGS="$WARN_FLAGS" cargo clippy -p wasm_lite_std --all-targets --features fs,logwise
 
 # Its own workspace, and the one example meant to build for the host, so
 # `--workspace` above does not reach it and the wasm32 scripts would otherwise be

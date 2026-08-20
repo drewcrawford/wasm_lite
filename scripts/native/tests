@@ -13,6 +13,10 @@ RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test -p wasm_lite --fea
 RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test -p wasm_lite_std --features diagnostics --lib
 RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test -p wasm_lite_std --features fs --lib --tests
 RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test -p wasm_lite_std --features fs --doc
+# The `fs_logwise` target is native-and-browser: `harness = false`, so its native
+# half is a `main()` that runs the cases rather than the no-op `tests/fs.rs` has.
+# It is where the event names and the per-field privacy policy are pinned.
+RUSTFLAGS="$WARN_FLAGS" RUSTDOCFLAGS="$WARN_FLAGS" cargo test -p wasm_lite_std --features fs,logwise --lib --tests
 
 # Each example is its own workspace, so the line above does not reach them. This
 # one has to run *here* rather than only under wasm32: it is the proof that

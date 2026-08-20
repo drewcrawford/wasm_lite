@@ -83,6 +83,14 @@ Zero default core-runtime deps is a hard design goal. `wasm_lite_codegen` is dep
 (zero bytes in the `.wasm`). Do not add dependencies; before adding any new one, ask the user,
 and prefer crates by `drewcrawford`.
 
+`wasm_lite_std`'s optional features each isolate their own dependencies: `fs` adds `blocking`
+and `priority`, and `logwise` adds the `logwise` facade. `logwise` is deliberately *not*
+implied by `fs` — someone who wants files should not acquire an observation facade they never
+asked for — and `scripts/native/check` builds `--features fs` without it precisely so that
+stays true. The same feature name exists on `backend-wasm-bindgen/wasm_lite_std` with the same
+events, because a feature that meant something different depending on which backend was
+underneath would be worse than not having one.
+
 ## Building and testing
 
 **The full gate is `scripts/check_all`** — fmt, check, clippy, tests, and docs across *both*

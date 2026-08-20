@@ -13,6 +13,75 @@ use wasm_lite::fetch::{Headers, RequestInit, fetch};
 
 static DEFAULT_ORIGIN: Mutex<Option<&'static str>> = Mutex::new(None);
 
+/// Observation, compiled only when the crate's `logwise` feature is on.
+///
+/// Nothing here is reachable otherwise: not the field expressions, not the call
+/// sites. Enabling the feature still emits nothing until a runtime installs a
+/// dispatcher.
+#[cfg(feature = "logwise")]
+mod obs {
+    use wasm_lite::fetch::Response;
+
+    /// Renders `Response::status_text()` only if a view actually asks for it.
+    ///
+    /// `status_text` allocates a `String`, which is exactly the work a `detail`
+    /// field exists to avoid at a call site nobody is listening to. Constructing
+    /// this borrow is free; the allocation happens in the sink.
+    ///
+    /// It has to be a named binding rather than an inline temporary: the
+    /// facade's field array outlives the statement that builds it, so a
+    /// temporary `String` would be dropped before the event is emitted.
+    struct StatusText<'a>(&'a Response);
+
+    impl core::fmt::Display for StatusText<'_> {
+        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            formatter.write_str(&self.0.status_text())
+        }
+    }
+
+    /// Reports a non-OK HTTP response.
+    ///
+    /// The status code is server-defined and support-safe. The URL and the
+    /// server's status text are caller-derived — a URL names an origin and a
+    /// resource — so both are `local` and `detail`.
+    pub(super) fn request_failed(operation: &'static str, url: &str, response: &Response) {
+        let status_text = StatusText(response);
+        logwise::event!(
+            class: operational,
+            severity: error,
+            name: "wasm_lite_std.fs.request.failed",
+            operation = support(operation),
+            status = support(response.status()),
+            detail url = local(url),
+            detail status_text = local(logwise::ValueRef::display(&status_text)),
+        );
+    }
+
+    /// Records that `exists` observed a non-OK response, which is how a missing
+    /// file normally reports itself. Not a failure, so it is diagnostic.
+    pub(super) fn exists_not_ok(url: &str, response: &Response) {
+        let status_text = StatusText(response);
+        logwise::event!(
+            class: diagnostic,
+            severity: debug,
+            name: "wasm_lite_std.fs.exists.not_ok",
+            status = support(response.status()),
+            detail url = local(url),
+            detail status_text = local(logwise::ValueRef::display(&status_text)),
+        );
+    }
+
+    /// An origin is configuration, but it names a host, so it is local-only.
+    pub(super) fn origin_set(origin: &str) {
+        logwise::event!(
+            class: operational,
+            severity: info,
+            name: "wasm_lite_std.fs.origin.set",
+            origin = local(origin),
+        );
+    }
+}
+
 #[derive(Debug)]
 pub struct File {
     path: String,
@@ -228,6 +297,10 @@ impl File {
             let init = RequestInit::new();
             init.set_method("HEAD");
             let response = fetch(&url, &init).await?;
+            if !response.ok() {
+                #[cfg(feature = "logwise")]
+                obs::request_failed("open", &url, &response);
+            }
             open_status(response.status(), response.ok())
         })
         .await?;
@@ -272,6 +345,8 @@ impl File {
                 return Ok(Vec::new());
             }
             if !response.ok() {
+                #[cfg(feature = "logwise")]
+                obs::request_failed("read", &url, &response);
                 return Err(Error::HttpStatus(response.status()));
             }
             if response.status() != 200 && response.status() != 206 {
@@ -396,6 +471,8 @@ impl File {
             init.set_method("HEAD");
             let response = fetch(&url, &init).await?;
             if !response.ok() {
+                #[cfg(feature = "logwise")]
+                obs::request_failed("metadata", &url, &response);
                 return Err(Error::HttpStatus(response.status()));
             }
             reject_compression(response.headers().get("content-encoding")?)?;
@@ -475,15 +552,35 @@ pub async fn exists(path: impl AsRef<Path>, _priority: Priority) -> bool {
     pin_current(async move {
         let init = RequestInit::new();
         init.set_method("HEAD");
-        fetch(&url, &init)
-            .await
-            .map(|response| response.ok())
-            .unwrap_or(false)
+        match fetch(&url, &init).await {
+            Ok(response) => {
+                if !response.ok() {
+                    #[cfg(feature = "logwise")]
+                    obs::exists_not_ok(&url, &response);
+                }
+                response.ok()
+            }
+            Err(_error) => {
+                // A transport failure means the same thing to the caller as a
+                // 404, but not to someone reading the log.
+                #[cfg(feature = "logwise")]
+                logwise::event!(
+                    class: operational,
+                    severity: warn,
+                    name: "wasm_lite_std.fs.exists.request_failed",
+                    detail url = local(url.as_str()),
+                    detail error = local(logwise::ValueRef::debug(&_error)),
+                );
+                false
+            }
+        }
     })
     .await
 }
 
 pub fn set_default_origin(origin: &'static str) {
+    #[cfg(feature = "logwise")]
+    obs::origin_set(origin);
     *DEFAULT_ORIGIN.lock().unwrap() = Some(origin);
 }
 

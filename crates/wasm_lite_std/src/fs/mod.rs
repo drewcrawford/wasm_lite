@@ -14,6 +14,42 @@
 //! backends accept it for API compatibility but do not guarantee priority
 //! ordering.
 //!
+//! # Observation
+//!
+//! With the crate's `logwise` feature on — it is **not** implied by `fs` — this
+//! module reports itself through the zero-dependency `logwise` facade (a plain
+//! code span, not an intra-doc link: the dependency is optional, so it is not in
+//! the graph when docs are built without the feature). Off,
+//! none of it is compiled: no clock is read, no field expression is evaluated,
+//! and the facade is not in the dependency graph at all. On, it still emits
+//! nothing until a runtime installs a dispatcher.
+//!
+//! Stable event names:
+//!
+//! | Name | Target | Meaning |
+//! |---|---|---|
+//! | `wasm_lite_std.fs.open.failed` | native | an open failed, with its `io::ErrorKind` |
+//! | `wasm_lite_std.fs.operation.failed` | native | a failure on an already-open handle |
+//! | `wasm_lite_std.fs.blocking_fallback` | native | measurement: which operation went to the pool, and for how long |
+//! | `wasm_lite_std.fs.blocking_fallback.slow` | native | that measurement exceeded 1ms |
+//! | `wasm_lite_std.fs.request.failed` | wasm32 | a non-OK HTTP response |
+//! | `wasm_lite_std.fs.exists.not_ok` | wasm32 | `exists` observed a non-OK response, which is how a missing file normally reports itself |
+//! | `wasm_lite_std.fs.exists.request_failed` | wasm32 | the request itself failed, which the caller cannot tell from a 404 |
+//! | `wasm_lite_std.fs.origin.set` | wasm32 | [`set_default_origin`] was called |
+//!
+//! The field policy is one rule: **caller-derived text is local-only and a
+//! detail field; only machine-defined discriminants are support-safe and core.**
+//! So `error_kind`, `status`, and `operation` are `support`/`core`, while
+//! `path`, `url`, `status_text`, and `origin` are `local` — and all but
+//! `origin` are `detail`, so a support-safe or core-only view never
+//! materializes them at all. `tests/fs_logwise.rs` pins that on both targets.
+//!
+//! Note for anyone extending this: the blocking-fallback guard holds a
+//! `std::time::Instant` rather than a `logwise::SpanGuard`, on purpose. A
+//! `SpanGuard` is `!Send` by design and would be held across the `await` in
+//! every `async fn` here, which would make these futures unspawnable —
+//! `tests/fs.rs` and `tests/fs_logwise.rs` both assert they stay `Send`.
+//!
 //! # Example
 //!
 //! ```no_run

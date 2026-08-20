@@ -44,6 +44,15 @@ for BROWSER in firefox chrome; do
         --target wasm32-unknown-unknown
 done
 
+# The observation contract for `fs`, in the same non-atomic build as the suite
+# above: event names, per-field privacy, and what a narrower view is withheld.
+echo "testing wasm_lite_std::fs logwise contract (stable non-atomic, firefox)"
+RUSTFLAGS="$WASM32_RUSTFLAGS" \
+RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" \
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER" \
+cargo +stable test -p wasm_lite_std --features fs,logwise --test fs_logwise \
+    --target wasm32-unknown-unknown
+
 echo "testing examples/tests-demo passing suite"
 (cd examples/tests-demo && RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo test --target wasm32-unknown-unknown --test passing)
 

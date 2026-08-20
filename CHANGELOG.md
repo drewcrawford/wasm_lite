@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **`wasm_lite_std::fs` can say what went wrong.** A new opt-in `logwise`
+  feature — not implied by `fs`, so a plain filesystem graph stays
+  facade-free — reports failed opens, failed requests, and the native blocking
+  fallback as stable structured events. One rule governs the fields:
+  caller-derived text (paths, URLs, a server's status text) is local-only and a
+  detail field, so a support-safe or core-only view never materializes it, while
+  machine-defined discriminants (`error_kind`, `status`, `operation`) stay
+  support-safe and core. The guard behind the blocking measurement holds an
+  `Instant` rather than a `logwise::SpanGuard`, because a `SpanGuard` is `!Send`
+  and would make every one of these futures unspawnable. The same feature, with
+  the same events, exists on the wasm-bindgen backend. `tests/fs_logwise.rs`
+  pins the whole contract on native and in the browser.
+
 - **Structured logwise history now makes it out of a stuck wasm worker.**
   Generated glue implements the reserved `logwise_v1.emit(ptr, len)` host ABI,
   copies each borrowed envelope, and forwards worker records to the main realm

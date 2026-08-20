@@ -12,6 +12,10 @@ RUSTFLAGS="$WARN_FLAGS" cargo check --workspace
 RUSTFLAGS="$WARN_FLAGS" cargo check -p wasm_lite --features diagnostics
 RUSTFLAGS="$WARN_FLAGS" cargo check -p wasm_lite_std --features diagnostics
 RUSTFLAGS="$WARN_FLAGS" cargo check -p wasm_lite_std --features fs
+# `logwise` is deliberately not implied by `fs`, so the fs-without-logwise line
+# above is what proves the facade stays out of a plain fs graph, and this one is
+# what compiles the observation call sites at all.
+RUSTFLAGS="$WARN_FLAGS" cargo check -p wasm_lite_std --features fs,logwise
 
 # The fake-wasm-bindgen shim is its own workspace (it reuses the `wasm-bindgen`
 # package name), so it needs its own invocation.

@@ -17,10 +17,14 @@ rust-version.workspace = true
 default = []
 # Keep feature spelling and dependency isolation identical to the real crate.
 fs = ["dep:blocking", "dep:priority", "dep:web-sys"]
+# Same spelling, same isolation, same events -- a feature that silently did
+# nothing under this backend would be worse than not having it.
+logwise = ["dep:logwise"]
 
 [dependencies]
 wasm_safe_thread = "0.1"
 priority = { version = "0.1.1", optional = true }
+logwise = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/logwise.git", rev = "1be396ff30588ad32453596bbaa45afb568368f7", optional = true }
 
 [target.'cfg(not(target_arch="wasm32"))'.dependencies]
 blocking = { version = "1.6.2", optional = true }
